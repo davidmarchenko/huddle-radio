@@ -371,6 +371,48 @@ export type GameOdds = {
   fetchedAt: string;
 };
 
+/**
+ * Beat-writer-grade analytics for a single player. Used by W12 to give
+ * the persona prompts (especially Maya, the analyst voice) something
+ * substantive to cite beyond raw fantasy points. All fields optional —
+ * a partial record is still useful if e.g. EPA isn't available for
+ * non-NFL sports.
+ */
+export type PlayerSeasonStats = {
+  /** Canonical (Sleeper-namespace) player id. */
+  canonicalId: string;
+  name: string;
+  sport: SportLeague;
+  /** Season the stats apply to (e.g. "2025"). */
+  season: string;
+  position?: string;
+  team?: string;
+  snapPercent?: number;
+  /** Estimated points added per play / drive — NFL/NCAAF. */
+  epaPerPlay?: number;
+  /** Defense-adjusted Value Over Average (Football Outsiders) — NFL only. */
+  dvoa?: number;
+  /** Target share for receivers / RBs (0–1). */
+  targetShare?: number;
+  /** Touches per game (RB) / receptions per game (WR/TE). */
+  usagePerGame?: number;
+  /** Fantasy points per game. */
+  pointsPerGame?: number;
+  /** Most recent meaningful trend, plain prose ("3-game heater," "QB1 last week"). */
+  note?: string;
+};
+
+export interface AdvancedStatsProvider {
+  id: string;
+  /**
+   * Look up season-to-date stats for a list of canonical player ids.
+   * Players without a record are silently dropped — the LLM should
+   * never cite a stat we don't have.
+   */
+  getPlayerSeason(input: { canonicalIds: string[]; sport: SportLeague; season?: string }): Promise<PlayerSeasonStats[]>;
+  health(): Promise<ProviderHealth>;
+}
+
 export interface OddsProvider {
   id: string;
   /**

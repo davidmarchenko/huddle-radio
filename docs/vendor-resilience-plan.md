@@ -317,6 +317,19 @@ Each workstream has:
 
 ---
 
+### W10 — Sportradar / SportsDataIO paid live-data backup — **shipped (2026-05-09)**
+
+**Shipped:**
+- `SportradarSportsDataProvider` — hits the Sportradar v7 NFL `summary.json` endpoint, parses `last_event` + competitors. Player IDs flow through the W1 resolver → canonical Sleeper-namespace.
+- `SportsDataIoProvider` — hits the SportsDataIO `PlayByPlayDelta` endpoint with the same shape contract. Player IDs same path.
+- `createSportsDataProvider` recognises `sportradar:<gameId>` and `sportsdataio:<scoreId>` prefixes on `sportsGameId` and swaps to the paid feed when the corresponding API key is set; falls through to ESPN otherwise.
+- New env: `SPORTRADAR_API_KEY`, `SPORTRADAR_ACCESS_LEVEL` (`trial|production`), `SPORTSDATAIO_API_KEY`.
+- Shared status / play-type mapping helpers (`statusFromSportradar`, `playTypeFromSportradar`, `playTypeFromText`) — exported and unit-tested.
+
+**Deferred:** Real fallback chain (try paid → ESPN → demo at runtime). Both providers maintain their own `recentPlays` state, which makes mid-show provider swaps lossy; the right design is a separate workstream once we actually have a paid contract live.
+
+(Original plan below.)
+
 ### W10 — Sportradar / SportsDataIO paid live-data backup
 
 **Goal:** Eliminate the ESPN-unofficial single point of failure for live game data. Only worth doing once production traffic justifies the bill (Sportradar starts ~$1k/mo).
@@ -364,6 +377,18 @@ Each workstream has:
 **Depends on:** **W2/W6/W10** for fallback paths to actually be usable when we hit caps.
 
 ---
+
+### W12 — Advanced stats integration (DVOA / EPA / target share) — **shipped (2026-05-09)**
+
+**Shipped:**
+- `AdvancedStatsProvider` interface + `PlayerSeasonStats` type (canonical id, snap%, EPA/play, target share, usage/game, points/game, free-form trend note).
+- `StaticAdvancedStatsProvider` hydrates from `src/server/data/advancedStats.json` (hand-curated 2025 NFL snapshot for the same five players in the player-id seed). Sport + season filtering.
+- `CommentaryDraftInput.analytics?` field; payload builder includes the first 6 records. Persona play prompt updated: "weave ONE stat in when it sharpens the call, never multiple, skip if forced."
+- WS handler fetches stats once at show start using the listener's roster ids and threads them into both opener and per-tick commentary.
+
+**Deferred:** Real refresh pipeline from nflfastR / Football Outsiders / Sportradar advanced stats; UI badge on the listener-stakes card. The provider seam is the swap point.
+
+(Original plan below.)
 
 ### W12 — Advanced stats integration (DVOA / EPA / target share)
 

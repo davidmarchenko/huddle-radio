@@ -49,7 +49,14 @@ const EnvSchema = z.object({
   // The Odds API (free tier 500 req/mo). Spread, total, moneyline. When
   // set, surfaces a Vegas-line card pregame and feeds the commentary
   // payload so persona prompts can cite the line.
-  THE_ODDS_API_KEY: z.string().optional()
+  THE_ODDS_API_KEY: z.string().optional(),
+  // W10: paid live-data backups for ESPN. Disabled by default. The
+  // operator points at one (or neither) — ESPN remains primary unless
+  // a paid key is set, at which point that takes precedence. Cost
+  // matters here, so this is opt-in only.
+  SPORTRADAR_API_KEY: z.string().optional(),
+  SPORTRADAR_ACCESS_LEVEL: z.enum(["trial", "production"]).default("trial"),
+  SPORTSDATAIO_API_KEY: z.string().optional()
 });
 
 const parsed = EnvSchema.parse(process.env);

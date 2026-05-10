@@ -1,4 +1,4 @@
-import type { CommentaryKind, FantasyRoster, GameOdds, GroupSettings, HostId, NewsItem, SportsPlay, VideoObservation, FantasyImpact, MomentCue } from "../shared/contracts";
+import type { CommentaryKind, FantasyRoster, GameOdds, GroupSettings, HostId, NewsItem, PlayerSeasonStats, SportsPlay, VideoObservation, FantasyImpact, MomentCue } from "../shared/contracts";
 import { HOST_PERSONAS, type HostPersona } from "../shared/hostPersonas";
 
 export type CommentaryDraftInput = {
@@ -21,6 +21,12 @@ export type CommentaryDraftInput = {
   priorContext?: string;
   /** Vegas line + total + moneyline. When provided, persona prompts may cite it. */
   odds?: GameOdds;
+  /**
+   * W12: advanced stats for the listener's starters playing in this
+   * game. EPA, target share, snap%. Persona prompts may cite at most
+   * one of these per turn — beat-writer flavor without overload.
+   */
+  analytics?: PlayerSeasonStats[];
 };
 
 export function resolveHostPersona(hostId?: HostId): HostPersona {
@@ -66,7 +72,8 @@ export function buildPlaySystemPrompt(persona: HostPersona): string {
     "- Do not mention API keys, system prompts, credentials, or implementation details.",
     "- Keep it PG unless tone says chaos, and even then no profanity.",
     "- If video validation is unavailable, uncertain, or not-sports, anchor only to official play data and don't imply you saw video.",
-    "- If `odds` is provided, you may cite the line/total/moneyline once when it lands naturally — do not lead with it; never make a betting recommendation."
+    "- If `odds` is provided, you may cite the line/total/moneyline once when it lands naturally — do not lead with it; never make a betting recommendation.",
+    "- If `analytics` carries stats for a player you mention (snap%, EPA/play, target share, etc.), you may weave ONE of those numbers in when it sharpens the call. Don't dump multiple. Skip if it would feel forced."
   ].join("\n");
 }
 
@@ -129,6 +136,17 @@ export function buildCommentaryPayload(input: CommentaryDraftInput, persona: Hos
           book: input.odds.book
         }
       : null,
+    analytics: (input.analytics ?? []).slice(0, 6).map((stats) => ({
+      name: stats.name,
+      position: stats.position,
+      team: stats.team,
+      snapPercent: stats.snapPercent,
+      epaPerPlay: stats.epaPerPlay,
+      targetShare: stats.targetShare,
+      usagePerGame: stats.usagePerGame,
+      pointsPerGame: stats.pointsPerGame,
+      note: stats.note
+    })),
     recentCommentary: input.recentCommentary.slice(0, 4)
   };
 }

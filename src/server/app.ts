@@ -27,6 +27,8 @@ import { createNewsProvider, describeNewsStack } from "./createNewsProvider";
 import { DemoSportsDataProvider } from "../providers/demoSportsDataProvider";
 import { EspnFantasyProvider } from "../providers/espnFantasyProvider";
 import { EspnSportsDataProvider, ESPN_SPORTS } from "../providers/espnSportsDataProvider";
+import { SportradarSportsDataProvider } from "../providers/sportradarSportsDataProvider";
+import { SportsDataIoProvider } from "../providers/sportsDataIoProvider";
 import { MockModelProvider } from "../providers/mockModelProvider";
 import { OpenAIVisionModelProvider } from "../providers/openAIVisionModelProvider";
 import { AnthropicVisionModelProvider } from "../providers/anthropicVisionModelProvider";
@@ -40,6 +42,8 @@ import { getDefaultShowHistoryStore, isValidListenerId } from "./showHistoryStor
 import { getDefaultYahooTokenStore } from "./yahooTokenStore";
 import { buildYahooAuthUrl, exchangeYahooAuthCode, refreshYahooAccessToken } from "../providers/yahooFantasyProvider";
 import { getDefaultClipStore } from "./clipStore";
+import { getDefaultAdvancedStatsProvider } from "./advancedStatsProvider";
+import type { PlayerSeasonStats } from "../shared/contracts";
 import { LocalCommentaryProvider } from "../providers/openAICommentaryProvider";
 import { SleeperFantasyProvider } from "../providers/sleeperFantasyProvider";
 import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProviders";
@@ -488,6 +492,23 @@ export async function buildApp() {
           app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Show-start odds fetch failed");
         }
 
+        // W12: fetch advanced stats for the listener's starters once
+        // at show start. Provider returns only known canonicalIds, so
+        // an empty list is the no-op fallback.
+        const showRoster = rosterForListener(fantasy, request.group.listener.rosterId);
+        const starterIds = (showRoster?.starters ?? []).map((player) => player.id);
+        let analytics: PlayerSeasonStats[] = [];
+        if (starterIds.length) {
+          try {
+            analytics = await getDefaultAdvancedStatsProvider().getPlayerSeason({
+              canonicalIds: starterIds,
+              sport: game.sport
+            });
+          } catch (error) {
+            app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Show-start advanced-stats fetch failed");
+          }
+        }
+
         // ---- SHOW OPENER ----
         // Emit the personalized welcome before any plays come in. This is
         // the highest-signal personalization moment per external research:
@@ -537,6 +558,7 @@ export async function buildApp() {
             kind: "opener",
             priorContext: request.priorContext,
             odds,
+            analytics,
             fallbackText: opener.text
           });
           opener.latency.endToEndMs = Math.round(performance.now() - openerStarted);
@@ -602,6 +624,7 @@ export async function buildApp() {
               hostId: commentary.hostId,
               listenerRoster: rosterForListener(fantasy, request.group.listener.rosterId),
               odds,
+              analytics,
               fallbackText: commentary.text
             });
             commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
@@ -838,6 +861,24 @@ function createFantasyProvider(providerMode: "demo" | "sleeper" | "espn" | undef
 }
 
 function createSportsDataProvider(sportsDataMode: "demo" | "espn" | undefined, sportsGameId?: string) {
+  // W10: paid live-data backups. Operators with Sportradar /
+  // SportsDataIO contracts pass `sportradar:<gameId>` or
+  // `sportsdataio:<scoreId>` in sportsGameId; the API key comes from
+  // env. Falls through to ESPN when the prefix isn't present so the
+  // free path is unchanged.
+  if (sportsGameId?.startsWith("sportradar:") && config.SPORTRADAR_API_KEY) {
+    return new SportradarSportsDataProvider({
+      apiKey: config.SPORTRADAR_API_KEY,
+      accessLevel: config.SPORTRADAR_ACCESS_LEVEL,
+      gameId: sportsGameId.slice("sportradar:".length)
+    });
+  }
+  if (sportsGameId?.startsWith("sportsdataio:") && config.SPORTSDATAIO_API_KEY) {
+    return new SportsDataIoProvider({
+      apiKey: config.SPORTSDATAIO_API_KEY,
+      scoreId: sportsGameId.slice("sportsdataio:".length)
+    });
+  }
   if (sportsDataMode === "espn") {
     const parsed = parseSportPrefixedGameId(sportsGameId);
     return new EspnSportsDataProvider(fetch, parsed?.eventId, parsed?.sportPath ?? ESPN_SPORTS[0]);

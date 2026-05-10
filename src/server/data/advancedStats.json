@@ -1,0 +1,68 @@
+{
+  "version": "2026-05-09-seed",
+  "source": "Hand-curated 2025 NFL snapshot. Refresh via the nflfastR / Football Outsiders pipeline once we wire it.",
+  "season": "2025",
+  "players": [
+    {
+      "canonicalId": "4046",
+      "name": "Patrick Mahomes",
+      "sport": "nfl",
+      "season": "2025",
+      "position": "QB",
+      "team": "KC",
+      "snapPercent": 0.99,
+      "epaPerPlay": 0.21,
+      "pointsPerGame": 22.4,
+      "note": "Volume QB1, top-5 EPA/play."
+    },
+    {
+      "canonicalId": "1466",
+      "name": "Travis Kelce",
+      "sport": "nfl",
+      "season": "2025",
+      "position": "TE",
+      "team": "KC",
+      "snapPercent": 0.86,
+      "targetShare": 0.21,
+      "usagePerGame": 5.8,
+      "pointsPerGame": 11.4,
+      "note": "Still seeing TE1 target share."
+    },
+    {
+      "canonicalId": "4034",
+      "name": "Christian McCaffrey",
+      "sport": "nfl",
+      "season": "2025",
+      "position": "RB",
+      "team": "SF",
+      "snapPercent": 0.83,
+      "usagePerGame": 19.2,
+      "pointsPerGame": 18.6,
+      "note": "Workload RB1 when active."
+    },
+    {
+      "canonicalId": "4881",
+      "name": "Lamar Jackson",
+      "sport": "nfl",
+      "season": "2025",
+      "position": "QB",
+      "team": "BAL",
+      "snapPercent": 0.99,
+      "epaPerPlay": 0.18,
+      "pointsPerGame": 24.1,
+      "note": "Rushing floor still league-leading among QBs."
+    },
+    {
+      "canonicalId": "4866",
+      "name": "Saquon Barkley",
+      "sport": "nfl",
+      "season": "2025",
+      "position": "RB",
+      "team": "PHI",
+      "snapPercent": 0.78,
+      "usagePerGame": 21.4,
+      "pointsPerGame": 20.2,
+      "note": "Snap-share king behind a top-3 line."
+    }
+  ]
+}
