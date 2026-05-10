@@ -217,6 +217,10 @@ function App() {
   const frameTimerRef = useRef<number | undefined>(undefined);
   const livecastSessionRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
+
+  const closeDrawer = useCallback(() => setShowAdvanced(false), []);
+  useDialogA11y(showAdvanced, drawerRef, closeDrawer);
 
   useEffect(() => {
     const params = new URLSearchParams({
@@ -1702,14 +1706,20 @@ function App() {
 
       </div>
       {showAdvanced && (
-        <aside className="producer-drawer" aria-label="Huddle settings">
+        <aside
+          className="producer-drawer"
+          ref={drawerRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="producer-drawer-title"
+        >
           <div className="drawer-head">
             <div>
               <p className="eyebrow">Settings</p>
-              <h2>{setupPaneTitle(setupPane)}</h2>
+              <h2 id="producer-drawer-title">{setupPaneTitle(setupPane)}</h2>
               <p>{setupPaneDescription(setupPane)}</p>
             </div>
-            <button className="secondary compact" onClick={() => setShowAdvanced(false)}>Close</button>
+            <button className="secondary compact" onClick={closeDrawer}>Close</button>
           </div>
 
           <nav className="setup-tabs" aria-label="Setup sections">
@@ -4278,25 +4288,6 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, di
         className="player-main-button"
         onClick={isLive ? onStop : onStart}
         aria-label={isLive ? "Stop show" : isEmpty ? "Try demo show" : isPregame ? "Start show" : "Play"}
-        style={{
-          width: "2.85rem",
-          height: "2.85rem",
-          minWidth: "2.85rem",
-          minHeight: "2.85rem",
-          maxWidth: "2.85rem",
-          maxHeight: "2.85rem",
-          padding: 0,
-          borderRadius: "50%",
-          border: 0,
-          background: "var(--hr-text)",
-          color: "#000",
-          fontSize: 0,
-          lineHeight: 0,
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          flexShrink: 0,
-        }}
       >
         <span className={`icon ${isLive ? "icon-stop" : "icon-play"}`} aria-hidden="true" />
       </button>
@@ -4307,7 +4298,7 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, di
         <button className="secondary compact">Roast opponent</button>
         <button className="secondary compact" onClick={onOpenStream}><span className="icon icon-broadcast" aria-hidden="true" />Stream</button>
       </div>
-      <p>{playerStatus}</p>
+      <p role="status" aria-live="polite">{playerStatus}</p>
     </footer>
   );
 }

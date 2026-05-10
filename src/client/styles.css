@@ -10,8 +10,6 @@
   --hr-text-base: 0.95rem;
   --hr-text-md: 1.05rem;
   --hr-text-lg: 1.25rem;
-  --hr-text-xl: clamp(1.5rem, 1.2rem + 1vw, 2rem);
-  --hr-text-2xl: clamp(2rem, 1.6rem + 1.4vw, 2.6rem);
   --hr-text-display: clamp(2.6rem, 2rem + 2.6vw, 4.6rem);
 
   --hr-leading-tight: 1.05;
@@ -21,6 +19,13 @@
   --hr-tracking-tight: -0.02em;
   --hr-tracking-display: -0.04em;
   --hr-tracking-eyebrow: 0.16em;
+
+  --hr-weight-regular: 400;
+  --hr-weight-medium: 500;
+  --hr-weight-semi: 600;
+  --hr-weight-bold: 700;
+  --hr-weight-heavy: 800;
+  --hr-weight-black: 900;
 
   --hr-bg-0: #06080f;
   --hr-bg-1: #0a0e1a;
@@ -53,10 +58,6 @@
   --hr-warn: #ffcc66;
   --hr-danger: #ff6b7a;
 
-  --hr-host-maya: var(--hr-violet);
-  --hr-host-theo: var(--hr-peach);
-  --hr-host-cam: var(--hr-gold);
-
   --hr-radius-xs: 8px;
   --hr-radius-sm: 16px;
   --hr-radius-md: 24px;
@@ -70,15 +71,12 @@
   --hr-radius-button: var(--hr-radius-md);
   --hr-radius-button-compact: var(--hr-radius-sm);
   --hr-radius-card: var(--hr-radius-lg);
-  --hr-radius-surface: var(--hr-radius-lg);
   --hr-radius-hero: var(--hr-radius-xl);
-  --hr-radius-modal: var(--hr-radius-xl);
 
   --hr-shadow-sm: 0 4px 14px rgba(2, 4, 12, 0.35);
   --hr-shadow-md: 0 14px 40px rgba(2, 4, 12, 0.45);
   --hr-shadow-lg: 0 28px 80px rgba(2, 4, 12, 0.55);
   --hr-shadow-glow: 0 18px 60px rgba(155, 108, 255, 0.28);
-  --hr-shadow-glow-peach: 0 18px 60px rgba(255, 128, 109, 0.24);
 
   --hr-space-1: 0.25rem;
   --hr-space-2: 0.5rem;
@@ -87,7 +85,6 @@
   --hr-space-5: 1.5rem;
   --hr-space-6: 2rem;
   --hr-space-7: 2.75rem;
-  --hr-space-8: 3.5rem;
 
   /* Component padding (semantic). Use these in component code rather
      than raw rem values so paddings stay consistent across surfaces.
@@ -100,8 +97,8 @@
   --hr-pad-input-x: 0.9rem;
   --hr-pad-chip-y: 0.4rem;
   --hr-pad-chip-x: 0.7rem;
-  --hr-pad-card: 1.25rem;
-  --hr-pad-card-tight: 1rem;
+  --hr-pad-card: 1.15rem;
+  --hr-pad-card-tight: 0.85rem;
   --hr-pad-card-loose: 1.75rem;
   --hr-pad-hero: 2rem;
   --hr-pad-nav-y: 0.55rem;
@@ -110,9 +107,6 @@
   /* Gap (semantic). For flex/grid containers. */
   --hr-gap-tight: var(--hr-space-2);
   --hr-gap-cozy: var(--hr-space-3);
-  --hr-gap-base: var(--hr-space-4);
-  --hr-gap-loose: var(--hr-space-5);
-  --hr-gap-spread: var(--hr-space-6);
 
   /* Concentric inner radius helpers. The principle: a child element's
      border-radius should equal (parent radius − parent padding) so the
@@ -137,17 +131,13 @@
   --hr-z-overlay: 20;
   --hr-z-player: 30;
   --hr-z-edge: 35;
-  --hr-z-modal: 60;
-  --hr-z-toast: 80;
+  --hr-z-modal: 90;
+  --hr-z-toast: 2147483647;
 
   --hr-bg-app:
     radial-gradient(circle at 70% 0%, rgba(155, 108, 255, 0.18), transparent 38%),
     radial-gradient(circle at 32% 28%, rgba(255, 128, 109, 0.10), transparent 34%),
     linear-gradient(155deg, #050912, var(--hr-bg-1) 42%, #060a14);
-
-  --hr-grid-overlay:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px) 0 0 / 88px 88px,
-    linear-gradient(0deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px) 0 0 / 88px 88px;
 
   font-family: var(--hr-font-body);
   background: var(--hr-bg-0);
@@ -224,7 +214,7 @@ button {
   background: transparent;
   color: inherit;
   font-family: var(--hr-font-body);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   padding: 0.72rem 0.9rem;
   cursor: pointer;
 }
@@ -304,7 +294,7 @@ label {
   color: #61dca3;
   text-transform: uppercase;
   font-size: 0.74rem;
-  font-weight: 800;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .mode-banner {
@@ -600,7 +590,7 @@ h2 {
   color: #d9e5ee;
   padding: 0.36rem 0.62rem;
   font-size: 0.76rem;
-  font-weight: 800;
+  font-weight: var(--hr-weight-heavy);
   text-transform: capitalize;
   white-space: nowrap;
 }
@@ -708,7 +698,7 @@ h2 {
   background: #22303a;
   color: #c8d1da;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .director-step[data-state="done"] > span {
@@ -870,7 +860,7 @@ video {
   color: #c8d1da;
   padding: 0.22rem 0.5rem;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
   text-transform: uppercase;
 }
 
@@ -1114,7 +1104,7 @@ video {
   border: 1px solid rgba(209, 223, 234, 0.2);
   background: #24303a;
   color: #e8f6ef;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
   font-size: 0.78rem;
 }
 
@@ -1313,8 +1303,8 @@ video {
   --studio-text: var(--hr-text);
   --studio-muted: var(--hr-text-soft);
   --studio-dim: var(--hr-text-muted);
-  --studio-green: var(--hr-violet);
-  --studio-blue: var(--hr-violet-soft);
+  --studio-accent: var(--hr-violet);
+  --studio-accent-soft: var(--hr-violet-soft);
   --studio-warn: var(--hr-warn);
   --studio-danger: var(--hr-danger);
   --studio-radius: var(--hr-radius-lg);
@@ -1377,7 +1367,7 @@ h1 {
 }
 
 .eyebrow {
-  color: var(--studio-green);
+  color: var(--studio-accent);
   letter-spacing: 0.08em;
 }
 
@@ -1425,7 +1415,7 @@ h1 {
 .session-card span {
   color: var(--studio-dim);
   font-size: 0.72rem;
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -1651,7 +1641,7 @@ h1 {
 .evidence-list span {
   background: rgba(255, 255, 255, 0.08);
   color: var(--studio-muted);
-  font-weight: 800;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .moment-banner b,
@@ -1659,7 +1649,7 @@ h1 {
 .impact-row b,
 .moment-row > b,
 .model-stack > strong {
-  color: var(--studio-green);
+  color: var(--studio-accent);
 }
 
 .panel {
@@ -1708,7 +1698,7 @@ h1 {
 .check-row > span[data-ok="true"],
 .check-row > span[data-level="ready"],
 .validation-status[data-status="sports-event"] > span {
-  background: var(--studio-green);
+  background: var(--studio-accent);
 }
 
 .health-row > span[data-status="error"],
@@ -1891,12 +1881,12 @@ h1 {
   border: 1px solid rgba(103, 245, 181, 0.28);
   border-radius: var(--hr-radius-pill);
   background: rgba(103, 245, 181, 0.1);
-  color: var(--studio-green);
+  color: var(--studio-accent);
   padding: 0.35rem 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.09em;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .studio-poster strong {
@@ -2588,7 +2578,7 @@ h1 {
   color: var(--accent);
   text-transform: uppercase;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
   letter-spacing: 0.12em;
   background: rgba(116, 240, 180, 0.1);
 }
@@ -2674,7 +2664,7 @@ h1 {
   color: var(--accent);
   text-transform: uppercase;
   font-size: 0.68rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
   letter-spacing: 0.12em;
 }
 
@@ -2844,7 +2834,7 @@ h1 {
   text-transform: uppercase;
   letter-spacing: 0.09em;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .story-card > strong {
@@ -2878,7 +2868,7 @@ h1 {
   padding: 0.28rem 0.52rem;
   color: rgba(247, 248, 251, 0.82);
   background: rgba(116, 240, 180, 0.07);
-  font-weight: 800;
+  font-weight: var(--hr-weight-heavy);
   font-size: 0.78rem;
 }
 
@@ -2920,7 +2910,7 @@ h1 {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--hr-z-modal);
   background: rgba(0, 0, 0, 0.48);
 }
 
@@ -3550,7 +3540,7 @@ h1 {
 
 .score-bug span {
   color: rgba(18, 19, 18, 0.8);
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .score-bug strong {
@@ -3890,8 +3880,8 @@ h1 {
   --studio-text: #f8fafc;
   --studio-muted: rgba(235, 241, 247, 0.68);
   --studio-dim: rgba(235, 241, 247, 0.48);
-  --studio-green: #7cf6b6;
-  --studio-blue: #8fc8ff;
+  --studio-accent: #7cf6b6;
+  --studio-accent-soft: #8fc8ff;
   --studio-gold: #f6d36f;
   --studio-rose: #ff8da1;
   color: var(--studio-text);
@@ -3927,7 +3917,7 @@ h1 {
 }
 
 .room-title .eyebrow {
-  color: var(--studio-green);
+  color: var(--studio-accent);
   font-size: 0.78rem;
 }
 
@@ -4013,7 +4003,7 @@ h1 {
   border: 1px solid rgba(124, 246, 182, 0.42);
   border-radius: var(--hr-radius-pill);
   background: rgba(124, 246, 182, 0.12);
-  color: var(--studio-green);
+  color: var(--studio-accent);
   box-shadow: none;
   backdrop-filter: blur(14px);
 }
@@ -4115,7 +4105,7 @@ h1 {
 }
 
 .rail-score .eyebrow {
-  color: var(--studio-green);
+  color: var(--studio-accent);
 }
 
 .rail-score > strong {
@@ -4135,7 +4125,7 @@ h1 {
 
 .rail-now span,
 .host-lower-third span {
-  color: var(--studio-green);
+  color: var(--studio-accent);
 }
 
 .rail-now strong,
@@ -4189,7 +4179,7 @@ h1 {
   position: absolute;
   inset: 0 0 auto;
   height: 3px;
-  background: linear-gradient(90deg, var(--studio-green), rgba(143, 200, 255, 0.9));
+  background: linear-gradient(90deg, var(--studio-accent), rgba(143, 200, 255, 0.9));
 }
 
 .story-card:nth-child(2),
@@ -4199,11 +4189,11 @@ h1 {
 }
 
 .story-card:nth-child(2)::before {
-  background: linear-gradient(90deg, var(--studio-blue), rgba(124, 246, 182, 0.72));
+  background: linear-gradient(90deg, var(--studio-accent-soft), rgba(124, 246, 182, 0.72));
 }
 
 .story-card:nth-child(3)::before {
-  background: linear-gradient(90deg, var(--studio-green), var(--studio-gold));
+  background: linear-gradient(90deg, var(--studio-accent), var(--studio-gold));
 }
 
 .story-card:nth-child(4)::before {
@@ -4256,7 +4246,7 @@ h1 {
 
 .producer-drawer .eyebrow,
 .producer-drawer .section-heading h2 {
-  color: var(--studio-green);
+  color: var(--studio-accent);
 }
 
 .producer-drawer .drawer-head h2,
@@ -4395,7 +4385,7 @@ h1 {
   color: rgba(248, 250, 252, 0.92);
   font-size: 1rem;
   line-height: 1;
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
   text-shadow: none;
 }
 
@@ -4585,7 +4575,7 @@ h1 {
   overflow: hidden;
   color: rgba(235, 241, 247, 0.72);
   font-size: 0.86rem;
-  font-weight: 800;
+  font-weight: var(--hr-weight-heavy);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4601,7 +4591,7 @@ h1 {
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   color: #a8ffc8;
   font-size: 0.84rem;
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
   white-space: nowrap;
 }
 
@@ -4647,7 +4637,7 @@ h1 {
 .feed-item span {
   color: rgba(168, 255, 200, 0.86);
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .feed-item[data-kind="Play"] span {
@@ -4775,7 +4765,7 @@ body:has(.huddle-app)::after {
   content: "";
   position: fixed;
   inset: 0 0 0 auto;
-  z-index: 2147483646;
+  z-index: var(--hr-z-toast);
   width: 72px;
   pointer-events: none;
   background: #070912;
@@ -5297,7 +5287,7 @@ body:has(.huddle-app.phase-empty)::after,
   padding-inline: 1rem;
   border-radius: var(--hr-radius-sm);
   font-size: 1.06rem;
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
 }
 
 .phase-empty .huddle-nav button::before {
@@ -5306,7 +5296,7 @@ body:has(.huddle-app.phase-empty)::after,
   width: 1.45rem;
   margin-right: 0.72rem;
   color: #b989ff;
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
 }
 
 .phase-empty .huddle-nav button:nth-child(1)::before { content: "⌂"; }
@@ -5375,7 +5365,7 @@ body:has(.huddle-app.phase-empty)::after,
   background: rgba(14, 21, 38, 0.72);
   box-shadow: none;
   color: var(--huddle-text);
-  font-weight: 650;
+  font-weight: var(--hr-weight-bold);
 }
 
 .empty-actions .icon-only {
@@ -5467,7 +5457,7 @@ body:has(.huddle-app.phase-empty)::after,
   border-left: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(255, 255, 255, 0.045);
   color: #b98dff;
-  font-weight: 950;
+  font-weight: var(--hr-weight-black);
 }
 
 .fantasy-art span:first-child {
@@ -5726,7 +5716,7 @@ body:has(.huddle-app.phase-empty)::after,
 
 .studio-art small {
   color: #c39cff;
-  font-weight: 800;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .phase-pregame .host-cards {
@@ -6031,7 +6021,7 @@ body:has(.huddle-app.phase-empty)::after,
 .live-host-strip > button.is-active span,
 .live-host-strip > div.is-active span {
   color: var(--hr-gold-soft);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.01em;
 }
 
@@ -6045,7 +6035,7 @@ body:has(.huddle-app.phase-empty)::after,
 
 .live-host-strip > button.is-queued span {
   color: var(--hr-violet-soft);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.01em;
 }
 
@@ -6291,7 +6281,7 @@ body:has(.huddle-app) {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 35;
+  z-index: var(--hr-z-edge);
   width: 54px;
   pointer-events: none;
   background: linear-gradient(90deg, rgba(7, 9, 18, 0), #070912 58%);
@@ -6304,7 +6294,7 @@ body:has(.huddle-app) {
   padding: 0.7rem 1.05rem;
   background: linear-gradient(135deg, var(--huddle-violet), #ec73b8 52%, var(--huddle-peach));
   color: white;
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
   box-shadow: 0 18px 44px rgba(155, 108, 255, 0.22);
 }
 
@@ -6325,7 +6315,7 @@ body:has(.huddle-app) {
   margin: 0;
   color: #b991ff;
   font-size: 0.76rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   display: inline-flex;
@@ -6492,7 +6482,7 @@ body:has(.huddle-app) {
   padding: 0.6rem 0.9rem;
   background: rgba(255, 255, 255, 0.045);
   color: var(--huddle-muted);
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .on-air-pill.is-live {
@@ -6509,7 +6499,7 @@ body:has(.huddle-app) {
   padding: var(--hr-pad-chip-y) var(--hr-pad-chip-x);
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-xs);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.01em;
   background: var(--hr-surface-glass);
   color: var(--hr-text-muted);
@@ -6634,7 +6624,7 @@ body:has(.huddle-app) {
 .league-room-card > span {
   color: var(--huddle-text);
   font-size: 1.05rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .empty-step p {
@@ -6699,7 +6689,7 @@ body:has(.huddle-app) {
   background: rgba(155, 108, 255, 0.16);
   color: #cfb8ff;
   font-size: 0.78rem;
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .host-card p {
@@ -6774,7 +6764,7 @@ body:has(.huddle-app) {
 .listener-stakes-vs {
   color: var(--hr-text-muted);
   font-size: var(--hr-text-sm);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
 }
 
 .listener-stakes-line {
@@ -6805,7 +6795,7 @@ body:has(.huddle-app) {
   letter-spacing: var(--hr-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--hr-text-muted);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
 }
 
 .listener-stakes-starters ul {
@@ -6848,7 +6838,7 @@ body:has(.huddle-app) {
   grid-row: 1 / span 2;
   align-self: center;
   font-size: var(--hr-text-sm);
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
   color: var(--hr-text);
   font-variant-numeric: tabular-nums;
 }
@@ -6910,7 +6900,7 @@ body:has(.huddle-app) {
 
 .listener-highlight-header b {
   font-size: var(--hr-text-md);
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
   font-variant-numeric: tabular-nums;
   color: var(--hr-success);
 }
@@ -6953,7 +6943,7 @@ body:has(.huddle-app) {
 }
 
 .huddle-app .listener-highlight-share {
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
   transition:
     background var(--hr-motion-base) var(--hr-ease-standard),
@@ -7004,7 +6994,7 @@ body:has(.huddle-app) {
 .tonight-glance-header h2 {
   margin: var(--hr-space-1) 0 0;
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: var(--hr-text-lg);
   letter-spacing: var(--hr-tracking-tight);
 }
@@ -7055,7 +7045,7 @@ body:has(.huddle-app) {
 .tonight-glance-tile > header strong {
   display: block;
   font-size: var(--hr-text-base);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
 }
 
@@ -7071,7 +7061,7 @@ body:has(.huddle-app) {
 .tonight-glance-margin {
   margin: 0;
   font-size: var(--hr-text-base);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
 }
 
@@ -7099,12 +7089,12 @@ body:has(.huddle-app) {
   letter-spacing: var(--hr-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--hr-gold-soft);
-  font-weight: 750;
+  font-weight: var(--hr-weight-bold);
 }
 
 .tonight-glance-swing strong {
   font-size: var(--hr-text-sm);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
 }
 
@@ -7203,7 +7193,7 @@ body:has(.huddle-app) {
   max-width: min(560px, calc(100% - 2rem));
   transform: translateX(-50%);
   border: 1px solid var(--huddle-line);
-  border-radius: var(--hr-radius-lg);
+  border-radius: var(--hr-radius-md);
   padding: 1rem 1.2rem;
   background: rgba(8, 12, 20, 0.72);
   color: var(--huddle-text);
@@ -7312,7 +7302,7 @@ body:has(.huddle-app) {
   border: 2px solid rgba(255, 255, 255, 0.16);
   border-radius: var(--hr-radius-circle);
   color: white;
-  font-weight: 950;
+  font-weight: var(--hr-weight-black);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.28);
 }
 
@@ -7345,7 +7335,7 @@ body:has(.huddle-app) {
   left: 275px;
   right: 4rem;
   bottom: 1rem;
-  z-index: 20;
+  z-index: var(--hr-z-overlay);
   display: grid;
   grid-template-columns: minmax(190px, 0.62fr) auto minmax(160px, 0.42fr) minmax(0, 1fr);
   gap: 1rem;
@@ -7584,7 +7574,7 @@ body:has(.huddle-app) {
   align-items: center;
   gap: 0.55rem;
   color: var(--studio-text);
-  font-weight: 850;
+  font-weight: var(--hr-weight-heavy);
 }
 
 .setup-guide li::before {
@@ -7595,7 +7585,7 @@ body:has(.huddle-app) {
   height: 1.75rem;
   border-radius: var(--hr-radius-pill);
   background: rgba(124, 246, 182, 0.14);
-  color: var(--studio-green);
+  color: var(--studio-accent);
   font-size: 0.78rem;
 }
 
@@ -7613,7 +7603,7 @@ body:has(.huddle-app) {
   color: var(--studio-muted);
   background: rgba(0, 0, 0, 0.18);
   font-size: 0.78rem;
-  font-weight: 750;
+  font-weight: var(--hr-weight-bold);
 }
 
 .producer-grid .control-group {
@@ -7722,7 +7712,7 @@ body:has(.huddle-app) {
 .setup-check > span {
   color: #9fffc3;
   font-size: 0.72rem;
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .first-run-hero h2 {
@@ -7792,7 +7782,7 @@ body:has(.huddle-app) {
   border-radius: var(--hr-radius-circle);
   background: rgba(255, 255, 255, 0.08);
   color: rgba(248, 250, 252, 0.86);
-  font-weight: 900;
+  font-weight: var(--hr-weight-black);
 }
 
 .setup-step strong {
@@ -8184,7 +8174,7 @@ body:has(.huddle-app)::after {
   content: "";
   position: fixed;
   inset: 0 0 0 auto;
-  z-index: 2147483646;
+  z-index: var(--hr-z-toast);
   width: 72px;
   pointer-events: none;
   background: #070912;
@@ -8550,7 +8540,7 @@ body:has(.huddle-app)::after,
   font-family: var(--hr-font-display);
   font-optical-sizing: auto;
   font-variation-settings: "opsz" 144, "SOFT" 30, "WONK" 0;
-  font-weight: 460;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: var(--hr-tracking-display);
   line-height: var(--hr-leading-tight);
   font-size: var(--hr-text-display);
@@ -8575,7 +8565,7 @@ body:has(.huddle-app)::after,
 .huddle-app .hr-eyebrow {
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-xs);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: var(--hr-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--hr-violet-soft);
@@ -8618,7 +8608,7 @@ body:has(.huddle-app)::after,
 
 .huddle-app button {
   font-family: var(--hr-font-body);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: -0.005em;
   transition: transform var(--hr-motion-fast) var(--hr-ease-standard),
     box-shadow var(--hr-motion-base) var(--hr-ease-standard),
@@ -8646,13 +8636,13 @@ body:has(.huddle-app)::after,
 .huddle-app .huddle-brand strong {
   font-family: var(--hr-font-display);
   font-variation-settings: "opsz" 72, "SOFT" 20, "WONK" 0;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: var(--hr-tracking-display);
 }
 
 .huddle-app .huddle-brand b {
   font-family: var(--hr-font-mono);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
 }
 
@@ -8660,7 +8650,7 @@ body:has(.huddle-app)::after,
 .huddle-app .status-pill {
   font-family: var(--hr-font-mono);
   letter-spacing: 0.12em;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   text-transform: uppercase;
 }
 
@@ -8763,14 +8753,14 @@ body:has(.huddle-app)::after,
   color: var(--hr-violet-soft);
   font-family: var(--hr-font-mono);
   font-size: 0.95rem;
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
 }
 
 .huddle-app.phase-empty .empty-step > span:not(.host-avatar):not(.play-orb) {
   font-family: var(--hr-font-display);
   font-variation-settings: "opsz" 72, "SOFT" 30;
   font-size: 1.4rem;
-  font-weight: 480;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: -0.015em;
   line-height: 1.15;
   color: var(--hr-text);
@@ -8814,7 +8804,7 @@ body:has(.huddle-app)::after,
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
   font-family: var(--hr-font-mono);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.04em;
   font-size: 0.82rem;
   color: var(--hr-text);
@@ -8923,7 +8913,7 @@ body:has(.huddle-app)::after,
   height: 3rem;
   font-size: 0.95rem;
   font-family: var(--hr-font-mono);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   border-width: 2px;
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.04), 0 12px 30px rgba(0, 0, 0, 0.32);
 }
@@ -8949,7 +8939,7 @@ body:has(.huddle-app)::after,
   background: linear-gradient(135deg, var(--hr-violet), var(--hr-violet-deep));
   border: 1px solid rgba(200, 168, 255, 0.28);
   color: white;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   font-size: 0.95rem;
   box-shadow: 0 12px 32px rgba(107, 63, 220, 0.4);
 }
@@ -8970,7 +8960,7 @@ body:has(.huddle-app)::after,
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid var(--hr-line);
   color: var(--hr-text-soft);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   box-shadow: none;
   padding-inline: 0.95rem;
 }
@@ -8986,7 +8976,7 @@ body:has(.huddle-app)::after,
   background: linear-gradient(120deg, var(--hr-violet), var(--hr-peach));
   border: 0;
   border-radius: var(--hr-radius-button);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   padding: 0.7rem 1.2rem;
   min-height: 2.85rem;
   box-shadow: var(--hr-shadow-glow);
@@ -9057,18 +9047,11 @@ body:has(.huddle-app)::after,
    ===================================================================== */
 
 :root {
-  --hr-radius-tier-1: var(--hr-radius-xl);
   --hr-radius-tier-2: var(--hr-radius-lg);
-  --hr-radius-tier-3: var(--hr-radius-md);
   --hr-radius-tier-4: var(--hr-radius-sm);
-
-  --hr-pad-card: 1.15rem;
-  --hr-pad-card-tight: 0.85rem;
 
   --hr-radius-card: var(--hr-radius-tier-2);
   --hr-radius-card-inner: max(6px, calc(var(--hr-radius-card) - var(--hr-pad-card)));
-
-  --hr-corner-smoothing: 0.62;
 }
 
 /* Continuous corners, applied universally. Every element inside the
@@ -9135,7 +9118,7 @@ body:has(.huddle-app)::after,
     linear-gradient(135deg, var(--hr-violet), var(--hr-violet-deep) 70%, var(--hr-peach));
   color: white;
   font-family: var(--hr-font-body);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   font-size: 0.95rem;
   letter-spacing: -0.005em;
   white-space: nowrap;
@@ -9228,7 +9211,7 @@ body:has(.huddle-app)::after,
   --hr-btn-pad-x: 0.85rem;
   border-radius: var(--hr-radius-sm);
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
 }
 
 /* Icon-only — square, equal inset, no text spacing */
@@ -9299,7 +9282,7 @@ body:has(.huddle-app)::after,
   background: transparent;
   color: var(--hr-text-soft);
   font-family: var(--hr-font-body);
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   font-size: 0.98rem;
   letter-spacing: -0.005em;
   text-align: left;
@@ -9347,7 +9330,7 @@ body:has(.huddle-app)::after,
    inside a card so dial it down further to feel like a row action. */
 .huddle-app .league-room-card .secondary {
   border-radius: var(--hr-radius-sm);
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
 }
 
 /* =====================================================================
@@ -9685,7 +9668,7 @@ body:has(.huddle-app)::after,
   min-height: 2.2rem;
   padding: 0.45rem 0.85rem;
   font-size: 0.84rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   color: var(--hr-text-soft);
   background: rgba(255, 255, 255, 0.035);
   border: 1px solid var(--hr-line-soft);
@@ -10039,7 +10022,7 @@ body:has(.huddle-app)::after,
   color: var(--hr-text);
   font-family: var(--hr-font-body);
   font-size: 0.92rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: -0.005em;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
   transition:
@@ -10562,11 +10545,9 @@ body:has(.huddle-app)::after,
   --hr-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
   --hr-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
   --hr-shadow-glow: none;
-  --hr-shadow-glow-peach: none;
 
   /* Flat app background — no radial gradients. */
   --hr-bg-app: var(--hr-bg-0);
-  --hr-grid-overlay: none;
 }
 
 /* Body + .huddle-app background: flat near-black, no atmospherics. */
@@ -10621,7 +10602,7 @@ body {
   color: white;
   border: 1px solid transparent;
   box-shadow: none;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
 }
 
 .huddle-app button::after {
@@ -10841,10 +10822,8 @@ body {
   --hr-shadow-md: 0 2px 6px rgba(0, 0, 0, 0.55);
   --hr-shadow-lg: 0 6px 18px rgba(0, 0, 0, 0.6);
   --hr-shadow-glow: none;
-  --hr-shadow-glow-peach: none;
 
   --hr-bg-app: var(--hr-bg-0);
-  --hr-grid-overlay: none;
 }
 
 /* Body / app background — flat. */
@@ -10901,7 +10880,7 @@ body {
   color: #000 !important;
   border: 1px solid transparent !important;
   box-shadow: none !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
 }
 
 .huddle-app button::after {
@@ -11137,7 +11116,7 @@ body {
   color: var(--hr-text-soft) !important;
   border: 1px solid transparent !important;
   box-shadow: none !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
 }
 
 .huddle-app .huddle-nav button:hover:not(:disabled) {
@@ -11664,7 +11643,7 @@ body {
 .huddle-app.phase-pregame .studio-art span strong {
   font-family: var(--hr-font-body);
   font-size: 0.86rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: -0.005em;
   text-transform: none;
 }
@@ -11672,7 +11651,7 @@ body {
 .huddle-app.phase-pregame .studio-art span small {
   color: var(--hr-text-soft);
   font-size: 0.66rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.08em;
 }
 
@@ -11690,7 +11669,7 @@ body {
 .huddle-app.phase-pregame .pregame-hero h1 span {
   font-family: var(--hr-font-mono);
   font-style: normal !important;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: -0.02em;
   background: none !important;
   color: var(--hr-text) !important;
@@ -11742,7 +11721,7 @@ body {
 }
 
 .huddle-app.phase-pregame .host-turn header strong {
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   font-size: 0.92rem;
   color: var(--hr-text);
 }
@@ -11754,7 +11733,7 @@ body {
   color: var(--hr-text-muted) !important;
   font-family: var(--hr-font-mono) !important;
   font-size: 0.7rem !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -11794,7 +11773,7 @@ body {
   color: var(--hr-text-muted);
   font-family: var(--hr-font-mono);
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -11854,7 +11833,7 @@ body {
 }
 
 .huddle-app.phase-pregame .studio-art span strong {
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   color: var(--hr-text);
   font-size: 0.82rem;
   text-transform: none;
@@ -11865,7 +11844,7 @@ body {
   position: relative;
   color: var(--hr-text-muted);
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   text-transform: none;
   letter-spacing: 0;
   padding-left: 0.55rem;
@@ -11888,7 +11867,7 @@ body {
 .huddle-app.phase-pregame .pregame-hero h1 span {
   font-family: var(--hr-font-display) !important;
   font-style: italic !important;
-  font-weight: 460;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: -0.02em;
   font-feature-settings: "tnum" off, "lnum" off;
   color: var(--hr-text-soft) !important;
@@ -12026,7 +12005,7 @@ body {
   border-radius: var(--hr-radius-circle) !important;
   background: var(--hr-text) !important;
   background-image: none !important;
-  color: #000 !important;
+  color: var(--hr-bg-0) !important;
   border: 0 !important;
   box-shadow: var(--hr-shadow-md) !important;
   font-size: 0 !important;
@@ -12046,7 +12025,7 @@ body {
 
 .huddle-app .player-main-button .icon {
   --icon-size: 1.05rem;
-  background-color: #000 !important;
+  background-color: var(--hr-bg-0) !important;
 }
 
 /* Mini-host-stack: small overlapping avatars. */
@@ -12061,7 +12040,7 @@ body {
   width: 2rem !important;
   height: 2rem !important;
   font-size: 0.62rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   font-family: var(--hr-font-mono) !important;
   letter-spacing: 0.02em;
   background: var(--hr-bg-1) !important;
@@ -12080,7 +12059,7 @@ body {
   left: 1rem;
   right: 1rem;
   bottom: 1rem;
-  z-index: 20;
+  z-index: var(--hr-z-overlay);
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   align-items: center;
@@ -12120,7 +12099,7 @@ body {
 
 .huddle-app .player-show strong {
   font-size: 0.92rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   color: var(--hr-text);
   white-space: nowrap;
   overflow: hidden;
@@ -12307,7 +12286,7 @@ body {
 .huddle-app.phase-live .moment-hero h1,
 .huddle-app.phase-live-audio .moment-hero h1 {
   font-family: var(--hr-font-display) !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   font-size: clamp(2.6rem, 4.4vw, 4.6rem) !important;
   line-height: 1 !important;
   letter-spacing: -0.02em !important;
@@ -12348,7 +12327,7 @@ body {
 .huddle-app.phase-live .live-scoreline b,
 .huddle-app.phase-live-audio .live-scoreline b {
   color: var(--hr-text-muted) !important;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
 }
 
 /* Eyebrow on hero — mono caps. */
@@ -12491,7 +12470,7 @@ body {
 .huddle-app.phase-live .host-turn header strong,
 .huddle-app.phase-live-audio .host-turn header strong {
   color: var(--hr-text) !important;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
 }
 
 .huddle-app.phase-live .host-turn header span,
@@ -12693,7 +12672,7 @@ body {
   color: rgba(255, 255, 255, 0.7) !important;
   font-family: var(--hr-font-mono);
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -12702,7 +12681,7 @@ body {
   color: var(--hr-text) !important;
   font-family: var(--hr-font-display);
   font-size: 1.4rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -12768,7 +12747,7 @@ body {
   color: rgba(255, 255, 255, 0.65) !important;
   font-family: var(--hr-font-mono);
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   text-overflow: ellipsis;
@@ -12779,7 +12758,7 @@ body {
   color: var(--hr-text) !important;
   font-family: var(--hr-font-display);
   font-size: 1.05rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   font-variant-numeric: tabular-nums;
 }
 
@@ -12790,7 +12769,7 @@ body {
   color: var(--hr-text) !important;
   font-family: var(--hr-font-mono);
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.02em;
   white-space: nowrap;
   text-transform: none;
@@ -12828,7 +12807,7 @@ body {
 
 .huddle-app.phase-live .on-air-panel .host-turn header strong {
   color: var(--hr-text) !important;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
 }
 
 .huddle-app.phase-live .on-air-panel .host-turn header span {
@@ -12916,7 +12895,7 @@ body {
 
 .huddle-app.phase-recap .recap-hero h1 {
   font-family: var(--hr-font-display) !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   font-size: clamp(2.6rem, 4.4vw, 4.4rem) !important;
   line-height: 1 !important;
   letter-spacing: -0.02em !important;
@@ -12932,7 +12911,7 @@ body {
   background-clip: initial !important;
   color: var(--hr-text-soft) !important;
   font-style: italic;
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
 }
 
 .huddle-app.phase-recap .recap-hero p {
@@ -12957,7 +12936,7 @@ body {
   color: var(--hr-text-soft) !important;
   font-family: var(--hr-font-mono);
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.02em;
   box-shadow: none !important;
 }
@@ -13093,7 +13072,7 @@ body {
 .huddle-app.phase-recap .matchup-line b {
   font-family: var(--hr-font-display);
   font-size: 1.8rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   font-variant-numeric: tabular-nums;
   color: var(--hr-text);
 }
@@ -13164,7 +13143,7 @@ body {
   gap: 0.75rem;
   font-family: var(--hr-font-mono) !important;
   font-size: 0.7rem !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
   color: var(--hr-text-muted) !important;
@@ -13178,7 +13157,7 @@ body {
   padding: 0.32rem var(--hr-space-3) !important;
   font-family: var(--hr-font-mono) !important;
   font-size: 0.7rem !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
   border-radius: var(--hr-radius-pill) !important;
@@ -13281,7 +13260,7 @@ body {
 
 .huddle-app .huddle-topbar strong {
   font-family: var(--hr-font-display) !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   font-size: clamp(1.4rem, 1.8vw, 2.1rem) !important;
   letter-spacing: -0.015em !important;
   line-height: 1.05 !important;
@@ -13292,7 +13271,7 @@ body {
   margin: 0;
   font-family: var(--hr-font-mono) !important;
   font-size: 0.78rem !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   color: var(--hr-text-muted) !important;
   letter-spacing: 0.02em;
 }
@@ -13361,7 +13340,7 @@ body {
   width: 1.7rem !important;
   height: 1.7rem !important;
   font-size: 0.6rem !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   font-family: var(--hr-font-mono) !important;
   letter-spacing: 0.02em !important;
   background: var(--hr-bg-2) !important;
@@ -13377,7 +13356,7 @@ body {
 /* Player bar typography — Fraunces title + mono meta. */
 .huddle-app .player-show strong {
   font-family: var(--hr-font-display) !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   font-size: 0.98rem !important;
   letter-spacing: -0.005em !important;
   color: var(--hr-text) !important;
@@ -13386,7 +13365,7 @@ body {
 .huddle-app .player-show span {
   font-family: var(--hr-font-mono) !important;
   font-size: 0.72rem !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   letter-spacing: 0.02em !important;
   color: var(--hr-text-muted) !important;
   text-transform: none !important;
@@ -13551,7 +13530,7 @@ body {
   color: var(--hr-text-soft) !important;
   border: 1px solid transparent !important;
   box-shadow: none !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
 }
 
 .huddle-app button:hover:not(:disabled) {
@@ -13726,7 +13705,7 @@ body {
   color: var(--hr-text-soft) !important;
   font-family: var(--hr-font-body) !important;
   font-size: 0.85rem !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   cursor: pointer !important;
   transition: background var(--hr-motion-fast) var(--hr-ease-standard),
               border-color var(--hr-motion-fast) var(--hr-ease-standard) !important;
@@ -13782,7 +13761,7 @@ body {
   margin-left: 0.35rem;
   font-family: var(--hr-font-mono);
   font-size: 0.62rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.04em;
   color: currentColor;
   opacity: 0.55;
@@ -13815,7 +13794,7 @@ body {
 
 .huddle-app .discover-banner strong {
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: clamp(1.2rem, 1rem + 0.5vw, 1.6rem);
   letter-spacing: -0.01em;
   color: var(--hr-text);
@@ -13871,7 +13850,7 @@ body {
 .huddle-app .discover-feed-notice strong {
   display: block;
   font-size: var(--hr-text-sm);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
   color: var(--hr-text);
 }
@@ -13911,7 +13890,7 @@ body {
 
 .storyline-news-item strong {
   font-size: var(--hr-text-sm);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
   line-height: var(--hr-leading-snug);
   color: var(--hr-text);
@@ -13925,7 +13904,7 @@ body {
 }
 
 .storyline-news-item--fallback strong {
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   color: var(--hr-text-soft);
 }
 
@@ -13969,13 +13948,13 @@ body {
   letter-spacing: var(--hr-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--hr-text-muted);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
 }
 
 .odds-card-list span {
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-sm);
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   color: var(--hr-text);
 }
 
@@ -14018,7 +13997,7 @@ body {
   grid-column: 1;
   grid-row: 1;
   font-size: var(--hr-text-sm);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   color: var(--hr-text);
   letter-spacing: 0.005em;
 }
@@ -14075,7 +14054,7 @@ body {
 .huddle-app .discover-section h2 {
   margin: 0;
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: clamp(1.4rem, 1.2rem + 0.6vw, 1.9rem);
   letter-spacing: -0.015em;
   color: var(--hr-text);
@@ -14230,7 +14209,7 @@ body {
 .huddle-app .game-card-logo--fallback {
   font-family: var(--hr-font-mono);
   font-size: 0.62rem;
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.04em;
   color: var(--hr-text-soft);
   background: transparent;
@@ -14239,7 +14218,7 @@ body {
 .huddle-app .game-card-abbr {
   font-family: var(--hr-font-display);
   font-size: 1.15rem;
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   letter-spacing: -0.01em;
   color: var(--hr-text-soft);
   line-height: 1;
@@ -14255,7 +14234,7 @@ body {
 
 .huddle-app .game-card-score {
   font-family: var(--hr-font-display);
-  font-weight: 300;
+  font-weight: var(--hr-weight-regular);
   font-size: 1.85rem;
   letter-spacing: -0.02em;
   color: var(--hr-text);
@@ -14281,7 +14260,7 @@ body {
   padding: 0.22rem 0.55rem;
   font-family: var(--hr-font-mono);
   font-size: 0.62rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
   border-radius: var(--hr-radius-pill);
   background: rgba(0, 0, 0, 0.55);
@@ -14321,7 +14300,7 @@ body {
   padding: 0.18rem 0.5rem;
   font-family: var(--hr-font-mono);
   font-size: 0.6rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.14em;
   border-radius: var(--hr-radius-pill);
   background: rgba(0, 0, 0, 0.4);
@@ -14342,7 +14321,7 @@ body {
   padding: 0.18rem var(--hr-space-2);
   font-family: var(--hr-font-mono);
   font-size: 0.6rem;
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.12em;
   border-radius: var(--hr-radius-pill);
   background: color-mix(in srgb, var(--hr-gold) 14%, transparent);
@@ -14394,7 +14373,7 @@ body {
   align-items: center;
   gap: var(--hr-space-2);
   font-size: var(--hr-text-sm);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.005em;
   color: var(--hr-gold-soft);
   white-space: nowrap;
@@ -14435,7 +14414,7 @@ body {
 
 .huddle-app .discover-empty strong {
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: 1.2rem;
   color: var(--hr-text);
 }
@@ -14465,7 +14444,7 @@ body {
   position: fixed;
   right: var(--hr-space-5);
   bottom: var(--hr-space-5);
-  z-index: 30;
+  z-index: var(--hr-z-player);
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--hr-space-3);
@@ -14555,7 +14534,7 @@ body {
 
 .huddle-app .mini-player-score {
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: 0.95rem;
   color: var(--hr-text);
   font-variant-numeric: tabular-nums;
@@ -14580,7 +14559,7 @@ body {
   padding: 0.12rem 0.4rem;
   font-family: var(--hr-font-mono);
   font-size: 0.6rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
   border-radius: var(--hr-radius-pill);
   background: rgba(255, 60, 60, 0.95);
@@ -14603,7 +14582,7 @@ body {
 
 .huddle-app .mini-player-meta strong {
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: 0.95rem;
   color: var(--hr-text);
   white-space: nowrap;
@@ -14674,7 +14653,7 @@ body {
 
 .huddle-app .empty-step-title {
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: 1.15rem;
   letter-spacing: -0.01em;
   color: var(--hr-text);
@@ -14738,7 +14717,7 @@ body {
 .huddle-app .empty-step-field > span {
   font-family: var(--hr-font-mono);
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--hr-text-muted);
@@ -14794,7 +14773,7 @@ body {
   background-image: none !important;
   color: var(--hr-text-soft) !important;
   font-family: var(--hr-font-body) !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   font-size: 0.92rem !important;
   cursor: pointer !important;
   box-shadow: none !important;
@@ -14885,7 +14864,7 @@ body {
   cursor: pointer !important;
   font-family: var(--hr-font-body) !important;
   font-size: 0.88rem !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   text-align: center !important;
   box-shadow: none !important;
   transform: none !important;
@@ -14970,7 +14949,7 @@ body {
   cursor: pointer !important;
   font-size: 0.78rem !important;
   font-family: var(--hr-font-mono) !important;
-  font-weight: 500 !important;
+  font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.04em !important;
   box-shadow: none !important;
   transform: none !important;
@@ -15014,7 +14993,7 @@ body {
   color: var(--hr-text-soft) !important;
   cursor: pointer !important;
   font-family: var(--hr-font-body) !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   text-align: left !important;
   box-shadow: none !important;
   transform: none !important;
@@ -15078,7 +15057,7 @@ body {
   gap: var(--hr-space-2);
   font-family: var(--hr-font-display);
   font-size: 1.05rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   color: var(--hr-text);
   letter-spacing: -0.005em;
 }
@@ -15102,7 +15081,7 @@ body {
 .huddle-app .game-row-status {
   font-family: var(--hr-font-mono);
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 0.18rem 0.5rem;
@@ -15152,7 +15131,7 @@ body {
 
 .huddle-app .host-roster li strong {
   font-family: var(--hr-font-display);
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   font-size: 1.05rem;
   color: var(--hr-text);
 }
@@ -15200,7 +15179,7 @@ body {
   padding: 0.32rem var(--hr-space-3);
   font-family: var(--hr-font-mono);
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--hr-text);
@@ -15233,7 +15212,7 @@ body {
 .huddle-app .pregame-checklist > .eyebrow {
   font-family: var(--hr-font-mono);
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--hr-text-muted);
@@ -15436,7 +15415,7 @@ body {
   transform: none !important;
   min-height: 0 !important;
   font-family: var(--hr-font-body) !important;
-  font-weight: 400 !important;
+  font-weight: var(--hr-weight-regular) !important;
   white-space: normal !important;
   transition: background var(--hr-motion-fast) var(--hr-ease-standard),
               border-color var(--hr-motion-fast) var(--hr-ease-standard);
@@ -15459,7 +15438,7 @@ body {
 .huddle-app .user-card.user-card--button strong {
   display: block;
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   color: var(--hr-text);
   font-size: 1rem;
   line-height: 1.15;
@@ -15493,7 +15472,7 @@ body {
   padding: 0.14rem var(--hr-space-2);
   font-family: var(--hr-font-mono);
   font-size: 0.6rem;
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.1em;
   border-radius: var(--hr-radius-pill);
   border: 1px solid var(--hr-line);
@@ -15521,7 +15500,7 @@ body {
   gap: var(--hr-space-2);
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-xs);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: var(--hr-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--hr-text-muted);
@@ -15559,7 +15538,7 @@ body {
 .huddle-app .show-history-item strong {
   display: block;
   font-size: var(--hr-text-sm);
-  font-weight: 700;
+  font-weight: var(--hr-weight-bold);
   letter-spacing: 0.01em;
   color: var(--hr-text);
   overflow: hidden;
@@ -15657,7 +15636,7 @@ body {
 .profile-modal-header h2 {
   margin: var(--hr-space-2) 0 0;
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   font-size: clamp(1.4rem, 1.2rem + 0.5vw, 1.7rem);
   letter-spacing: -0.015em;
   color: var(--hr-text);
@@ -15683,7 +15662,7 @@ body {
 .profile-field > span {
   font-family: var(--hr-font-mono);
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: var(--hr-weight-medium);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--hr-text-muted);
@@ -15746,7 +15725,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: var(--hr-space-2);
-  font-weight: 750;
+  font-weight: var(--hr-weight-bold);
   font-size: var(--hr-text-base);
   letter-spacing: 0.005em;
 }
@@ -15805,7 +15784,7 @@ body {
 
 .huddle-app .profile-roster-option strong {
   font-family: var(--hr-font-display);
-  font-weight: 400;
+  font-weight: var(--hr-weight-regular);
   color: var(--hr-text);
   font-size: 0.95rem;
   grid-column: 1;
@@ -15828,7 +15807,7 @@ body {
   font-style: normal;
   font-family: var(--hr-font-mono);
   font-size: 0.62rem;
-  font-weight: 600;
+  font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   padding: 0.18rem 0.5rem;
