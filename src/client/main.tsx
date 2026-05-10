@@ -1,5 +1,6 @@
+"use client";
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createRoot } from "react-dom/client";
 import type {
   ActiveProviderSummary,
   ClientServerEvent,
@@ -67,7 +68,6 @@ import {
   type HuddlePhase,
   type HuddleSetupStep
 } from "./huddleViewModel";
-import "./styles.css";
 
 const defaultGroup: GroupSettings = {
   listener: { name: "Alex", rosterId: "roster-alex", favoriteTeam: "KC" },
@@ -469,13 +469,20 @@ function App() {
   // Sport-keyed dedupe so a custom NFL league replaces the demo NFL one.
   const allLeagues = useMemo<FantasyLeagueState[]>(() => {
     if (providerMode === "demo") {
+      // Demo leagues seed a fictional roster ("Alex", "Maya") with real
+      // player rosters. Surfacing them before the user has a profile
+      // leaks demo identity into the listener-stakes, matchup totals,
+      // and friend chips. Gate so brand-new users see an empty fantasy
+      // state until they either set up a profile or explicitly start
+      // the demo show — at which point we accept the demo persona.
+      if (!profile && !demoMode) return [];
       const map = new Map<string, FantasyLeagueState>();
       for (const league of demoLeagues) map.set(league.sport, league);
       if (customLeague) map.set(customLeague.sport, customLeague);
       return Array.from(map.values());
     }
     return connectedLeagues;
-  }, [providerMode, customLeague, connectedLeagues]);
+  }, [providerMode, customLeague, connectedLeagues, profile, demoMode]);
   // Hoist applyProfileToGroup into a single memo. Five view-models
   // below all need the same merged listener identity; calling the
   // resolver in each one re-scans the league rosters per memo on
@@ -2376,12 +2383,14 @@ function HuddleSidebar({ fantasy, allLeagues, group, phase, profile, pastShows, 
         <button className={phase === "empty" ? "active" : ""} onClick={onGoHome}>Home</button>
         <button onClick={onOpenSettings}>Settings</button>
       </nav>
-      <section className="league-room-card">
-        <span>League room</span>
-        <strong>{fantasy?.leagueName ?? "Redraft League"}</strong>
-        <p>{group.friends.length} friends ready for the show.</p>
-        <button className="secondary compact" onClick={onOpenFriends}><span className="icon icon-league" aria-hidden="true" />Invite friends</button>
-      </section>
+      {profile && (
+        <section className="league-room-card">
+          <span>League room</span>
+          <strong>{fantasy?.leagueName ?? "Redraft League"}</strong>
+          <p>{group.friends.length} friends ready for the show.</p>
+          <button className="secondary compact" onClick={onOpenFriends}><span className="icon icon-league" aria-hidden="true" />Invite friends</button>
+        </section>
+      )}
       {pastShows.length > 0 && (
         <section className="show-history-card" aria-label="Your past shows">
           <span className="show-history-eyebrow">
@@ -5905,13 +5914,4 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
   }
 }
 
-const rootElement = document.getElementById("root")!;
-const rootWindow = window as Window & { __fantasyLivecastRoot?: ReturnType<typeof createRoot> };
-const root = rootWindow.__fantasyLivecastRoot ?? createRoot(rootElement);
-rootWindow.__fantasyLivecastRoot = root;
-
-root.render(
-  <AppErrorBoundary>
-    <App />
-  </AppErrorBoundary>
-);
+export { App, AppErrorBoundary };
