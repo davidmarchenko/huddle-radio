@@ -482,6 +482,67 @@ export interface MultimodalModelProvider {
   health(): Promise<ProviderHealth>;
 }
 
+/**
+ * A short slice of broadcast or microphone audio captured client-side
+ * (MediaRecorder) or extracted server-side. Sent to ASR providers.
+ *
+ * `dataUrl` is the canonical transport — base64 keeps the route
+ * handler stateless and survives a JSON round-trip. We accept short
+ * (≤30s) chunks; longer audio gets split client-side so each request
+ * fits under the 8 MB body limit.
+ */
+export type AudioClip = {
+  id: string;
+  capturedAt: string;
+  /** Source of the audio — used for prompt selection + UI labelling. */
+  source: "broadcast" | "microphone";
+  /** Mime type returned by MediaRecorder, e.g. "audio/webm;codecs=opus". */
+  mimeType: string;
+  /** "data:audio/webm;base64,..." */
+  dataUrl: string;
+  /** Best-effort wall-clock duration. */
+  durationMs?: number;
+  /** Source-specific note, e.g. screen-share tab title or mic device label. */
+  label?: string;
+};
+
+export type AsrWord = {
+  text: string;
+  /** Start offset within the clip, in milliseconds. */
+  startMs: number;
+  endMs: number;
+  /** Provider-reported per-word confidence in [0, 1] when available. */
+  confidence?: number;
+};
+
+export type AsrTranscript = {
+  id: string;
+  /** Plain-text transcript with normal casing + light punctuation. */
+  text: string;
+  /** Optional word-level timing — Nemotron Nano Omni emits these natively. */
+  words?: AsrWord[];
+  /** Detected spoken language tag, e.g. "en". */
+  language?: string;
+  /** Aggregate provider confidence in [0, 1]. */
+  confidence?: number;
+  /** Provider id that produced the transcript. */
+  provider: string;
+  observedAt: string;
+  latencyMs: number;
+  /** Raw provider response when debugging is helpful. */
+  raw?: unknown;
+};
+
+export interface AsrProvider {
+  id: string;
+  /**
+   * Transcribe a single short audio clip. Pass `play` so the prompt
+   * can bias the model toward the right roster names + game state.
+   */
+  transcribe(input: { audio: AudioClip; play?: SportsPlay }): Promise<AsrTranscript>;
+  health(): Promise<ProviderHealth>;
+}
+
 export interface TTSProvider {
   id: string;
   /**
