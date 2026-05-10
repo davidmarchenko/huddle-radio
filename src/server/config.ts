@@ -27,7 +27,10 @@ const EnvSchema = z.object({
   OPENAI_REALTIME_FAST_MODEL: z.string().default(recommendedModelDefaults.realtimeFastModel),
   MODEL_PROVIDER: z.enum(["mock", "openai-vision", "nemotron", "openai-realtime"]).default("openai-vision"),
   NEMOTRON_MODEL: z.string().default(recommendedModelDefaults.multimodalLocalModel),
-  NEMOTRON_ENDPOINT: z.string().optional(),
+  // Nvidia's hosted OpenAI-compatible endpoint at build.nvidia.com.
+  // Override only when self-hosting via NIM or pointing at a private
+  // catalog mirror.
+  NEMOTRON_ENDPOINT: z.string().default("https://integrate.api.nvidia.com/v1"),
   NEMOTRON_API_KEY: z.string().optional(),
   TTS_PROVIDER: z.enum(["auto", "mock", "elevenlabs"]).default("auto"),
   ELEVENLABS_API_KEY: z.string().optional(),

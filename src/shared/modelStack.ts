@@ -36,5 +36,5 @@ export const recommendedModelDefaults = {
   realtimeFastModel: "gpt-realtime-mini",
   ttsLowLatencyModel: "eleven_flash_v2_5",
   ttsExpressiveModel: "eleven_v3",
-  multimodalLocalModel: "nvidia/nemotron-3-nano-omni"
+  multimodalLocalModel: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 };

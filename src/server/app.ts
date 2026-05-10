@@ -33,6 +33,7 @@ import { MockModelProvider } from "../providers/mockModelProvider";
 import { OpenAIVisionModelProvider } from "../providers/openAIVisionModelProvider";
 import { AnthropicVisionModelProvider } from "../providers/anthropicVisionModelProvider";
 import { GeminiVisionModelProvider } from "../providers/geminiVisionModelProvider";
+import { NemotronVisionProvider } from "../providers/nemotronVisionProvider";
 import { VisionModelProviderChain } from "../providers/visionModelProviderChain";
 import type { MultimodalModelProvider } from "../shared/contracts";
 import { createCommentaryProvider, describeCommentaryStack } from "./createCommentaryProvider";
@@ -1022,6 +1023,18 @@ function createModelProvider(): MultimodalModelProvider {
   if (config.RESOLVED_MODEL_PROVIDER === "mock") return new MockModelProvider();
 
   const providers: MultimodalModelProvider[] = [];
+  // Nemotron Nano Omni first when keyed — it's the differentiated
+  // model for this app (omni-modal vision + ASR via the same key)
+  // and Nvidia is positioning it explicitly for live video
+  // understanding in M&E pipelines. Falls through to OpenAI /
+  // Anthropic / Gemini if it errors or times out.
+  if (config.NEMOTRON_API_KEY) {
+    providers.push(new NemotronVisionProvider(
+      config.NEMOTRON_API_KEY,
+      config.NEMOTRON_MODEL,
+      config.NEMOTRON_ENDPOINT
+    ));
+  }
   if (config.RESOLVED_MODEL_PROVIDER === "openai-vision" && config.OPENAI_API_KEY) {
     providers.push(new OpenAIVisionModelProvider(config.OPENAI_API_KEY, config.RESOLVED_OPENAI_MODEL));
   }
@@ -1045,6 +1058,10 @@ function createModelProvider(): MultimodalModelProvider {
 }
 
 function modelProviderLabel() {
+  // Reflect the actual primary in the chain. Nemotron wins whenever
+  // its key is set, regardless of MODEL_PROVIDER, because that's
+  // what createModelProvider() does above.
+  if (config.NEMOTRON_API_KEY) return `Nemotron ${config.NEMOTRON_MODEL}`;
   if (config.RESOLVED_MODEL_PROVIDER === "openai-vision") return `OpenAI Vision ${config.RESOLVED_OPENAI_MODEL}`;
   if (config.RESOLVED_MODEL_PROVIDER === "nemotron") return `Nemotron ${config.NEMOTRON_MODEL}`;
   if (config.RESOLVED_MODEL_PROVIDER === "openai-realtime") return `OpenAI Realtime ${config.RESOLVED_REALTIME_MODEL}`;
