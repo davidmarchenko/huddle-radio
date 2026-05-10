@@ -468,39 +468,34 @@ function App() {
     }
     return connectedLeagues;
   }, [providerMode, customLeague, connectedLeagues]);
-  const listenerStakes = useMemo(() => {
-    const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
-    return buildListenerStakes({ group: effectiveGroup, leagues: allLeagues, game });
-  }, [group, profile, allLeagues, game]);
-  const listenerSpotlights = useMemo(() => {
-    const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
-    return buildListenerGameSpotlights({
-      games: sportsGames,
-      leagues: allLeagues,
-      group: effectiveGroup
-    });
-  }, [group, profile, allLeagues, sportsGames, game?.sport]);
-  const listenerRecapHighlight = useMemo(() => {
-    const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
-    return buildListenerRecapHighlight({
-      commentary,
-      group: effectiveGroup,
-      leagues: allLeagues,
-      game
-    });
-  }, [group, profile, allLeagues, commentary, game]);
-  const tonightGlance = useMemo(() => {
-    const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
-    return buildTonightAtAGlance({
-      group: effectiveGroup,
-      leagues: allLeagues,
-      games: sportsGames
-    });
-  }, [group, profile, allLeagues, sportsGames, game?.sport]);
-  const friendMatchups = useMemo(() => {
-    const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
-    return buildFriendMatchups({ group: effectiveGroup, leagues: allLeagues, game });
-  }, [group, profile, allLeagues, game]);
+  // Hoist applyProfileToGroup into a single memo. Five view-models
+  // below all need the same merged listener identity; calling the
+  // resolver in each one re-scans the league rosters per memo on
+  // every state change.
+  const effectiveGroup = useMemo(
+    () => applyProfileToGroup(group, profile, allLeagues, game?.sport),
+    [group, profile, allLeagues, game?.sport]
+  );
+  const listenerStakes = useMemo(
+    () => buildListenerStakes({ group: effectiveGroup, leagues: allLeagues, game }),
+    [effectiveGroup, allLeagues, game]
+  );
+  const listenerSpotlights = useMemo(
+    () => buildListenerGameSpotlights({ games: sportsGames, leagues: allLeagues, group: effectiveGroup }),
+    [effectiveGroup, allLeagues, sportsGames]
+  );
+  const listenerRecapHighlight = useMemo(
+    () => buildListenerRecapHighlight({ commentary, group: effectiveGroup, leagues: allLeagues, game }),
+    [effectiveGroup, allLeagues, commentary, game]
+  );
+  const tonightGlance = useMemo(
+    () => buildTonightAtAGlance({ group: effectiveGroup, leagues: allLeagues, games: sportsGames }),
+    [effectiveGroup, allLeagues, sportsGames]
+  );
+  const friendMatchups = useMemo(
+    () => buildFriendMatchups({ group: effectiveGroup, leagues: allLeagues, game }),
+    [effectiveGroup, allLeagues, game]
+  );
 
   // Pregame storylines: fetch the latest beat-writer items for the
   // active game's sport / teams whenever the user picks a new game.
@@ -765,9 +760,24 @@ function App() {
           // provides bytes, so this only fills for the real ElevenLabs
           // path — exactly the audio worth sharing.
           const entry = clipChunksRef.current.get(message.audio.commentaryId) ?? { mimeType: message.audio.mimeType, chunks: [] };
-          entry.chunks.push(message.audio.base64Audio);
+          // Per-show memory cap: ~6MB of base64 (≈4.5MB binary) per
+          // commentary. Beyond that we silently stop appending so a
+          // runaway TTS stream doesn't OOM the tab; the share blurb
+          // falls back to text-only.
+          const SOFT_CAP_CHARS = 6_000_000;
+          const totalChars = entry.chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+          if (totalChars + message.audio.base64Audio.length <= SOFT_CAP_CHARS) {
+            entry.chunks.push(message.audio.base64Audio);
+          }
           if (!clipChunksRef.current.has(message.audio.commentaryId)) {
             clipChunksRef.current.set(message.audio.commentaryId, entry);
+          }
+          // Across-show cap: keep at most 12 commentary's worth of
+          // audio in memory. Older commentaries are dropped — the
+          // listener can only share the most recent few highlights.
+          if (clipChunksRef.current.size > 12) {
+            const oldestKey = clipChunksRef.current.keys().next().value;
+            if (oldestKey) clipChunksRef.current.delete(oldestKey);
           }
           audioQueueRef.current = audioQueueRef.current.then(() => {
             if (livecastSessionRef.current !== sessionId) return;
@@ -1402,8 +1412,18 @@ function App() {
     return matched?.teamName;
   }, [profile, allLeagues, game?.sport]);
 
+  // Live region for audio playback state — visually hidden but read
+  // by screen readers when audioPlaying flips. Without this, AT users
+  // never hear that the show went live.
+  const audioStatusMessage = livecastActive
+    ? audioPlaying
+      ? "Audio playing"
+      : "Audio paused"
+    : "Stream stopped";
+
   return (
     <main className={showAdvanced ? `huddle-app phase-${huddlePhase} producer-open` : `huddle-app phase-${huddlePhase}`}>
+      <div role="status" aria-live="polite" className="hr-sr-only">{audioStatusMessage}</div>
       <HuddleExperience
         phase={huddlePhase}
         game={game}
@@ -2552,9 +2572,8 @@ function EmptyStepLeague({
     <article
       className={`empty-step${met ? " is-complete" : ""}${expanded ? " is-expanded" : ""}`}
       data-met={met ? "true" : "false"}
-      aria-expanded={expanded}
     >
-      <div className="empty-step-toggle" role="button" tabIndex={0} onClick={onToggle} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onToggle(); } }} aria-label={expanded ? "Collapse step" : "Expand step"}>
+      <button type="button" className="empty-step-toggle" onClick={onToggle} aria-label={expanded ? "Collapse step" : "Expand step"} aria-expanded={expanded}>
         <b aria-hidden="true">{met ? "" : "1"}</b>
         <div className="empty-step-summary">
           <span className="empty-step-title">Connect your fantasy</span>
@@ -2563,7 +2582,7 @@ function EmptyStepLeague({
             : "Link your league so we can talk about your team, your matchups, and what matters most."}</p>
         </div>
         <span className="empty-step-chevron" aria-hidden="true" />
-      </div>
+      </button>
       {expanded && (
         <div className="empty-step-form">
           <div className="provider-chips" role="radiogroup" aria-label="Fantasy provider">
@@ -2649,9 +2668,8 @@ function EmptyStepStream({
     <article
       className={`empty-step${met ? " is-complete" : ""}${expanded ? " is-expanded" : ""}`}
       data-met={met ? "true" : "false"}
-      aria-expanded={expanded}
     >
-      <div className="empty-step-toggle" role="button" tabIndex={0} onClick={onToggle} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onToggle(); } }} aria-label={expanded ? "Collapse step" : "Expand step"}>
+      <button type="button" className="empty-step-toggle" onClick={onToggle} aria-label={expanded ? "Collapse step" : "Expand step"} aria-expanded={expanded}>
         <b aria-hidden="true">{met ? "" : "2"}</b>
         <div className="empty-step-summary">
           <span className="empty-step-title">Choose what you’re watching</span>
@@ -2664,7 +2682,7 @@ function EmptyStepStream({
             : "Pick a live game from the schedule, paste a stream URL, or share your screen."}</p>
         </div>
         <span className="empty-step-chevron" aria-hidden="true" />
-      </div>
+      </button>
       {expanded && (
         <div className="empty-step-form">
           <div className="stream-tabs" role="tablist">
@@ -2757,6 +2775,54 @@ function EmptyStepStream({
 
 type ProfileModalIntent = "edit" | "demo" | "sync";
 
+/**
+ * Modal a11y: Escape closes the modal, focus is trapped while open,
+ * and focus returns to the previously-focused element on close.
+ *
+ * Pass a ref pointing at the dialog root. Call site is responsible for
+ * `role="dialog"` / `aria-modal="true"` on that element.
+ */
+function useDialogA11y(open: boolean, dialogRef: React.RefObject<HTMLElement | null>, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const node = dialogRef.current;
+
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !node) return;
+      const focusables = Array.from(
+        node.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
+      ).filter((element) => !element.hasAttribute("disabled") && element.getAttribute("tabindex") !== "-1");
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      // Restore focus to whatever the user had before opening the
+      // modal — without this, keyboard users land on <body> after
+      // close and lose their place in the page.
+      if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
+    };
+  }, [open, dialogRef, onClose]);
+}
+
 function ProfileModal({
   open,
   profile,
@@ -2778,6 +2844,8 @@ function ProfileModal({
   onConnectFantasy: (provider: "sleeper" | "espn", leagueId: string) => Promise<boolean>;
   onPrepareDemo: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useDialogA11y(open, dialogRef, onClose);
   const [name, setName] = useState(profile?.name ?? "");
   const [favoriteTeam, setFavoriteTeam] = useState(profile?.favoriteTeam ?? "");
   // Multi-sport: rosterId per sport, keyed by SportLeague. Profile may
@@ -2892,8 +2960,8 @@ function ProfileModal({
   })();
 
   return (
-    <div className="profile-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title" onMouseDown={onClose}>
-      <div className="profile-modal" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="profile-modal-backdrop" onMouseDown={onClose}>
+      <div className="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title" ref={dialogRef} onMouseDown={(event) => event.stopPropagation()}>
         <header className="profile-modal-header">
           <div>
             <span className="eyebrow"><span className="icon icon-user" aria-hidden="true" />{headerCopy.eyebrow}</span>
@@ -4225,7 +4293,17 @@ function HostStudio({ hosts, turns }: { hosts: typeof HUDDLE_HOSTS; turns: Huddl
 
 function HostTurns({ turns, compact = false }: { turns: HuddleHostTurn[]; compact?: boolean }) {
   return (
-    <div className={compact ? "host-turns compact" : "host-turns"}>
+    // role=log + aria-live=polite tells screen readers each new
+    // commentary turn is content that should be announced as it
+    // arrives. atomic=false so only the new turn is read, not the
+    // whole transcript on every update.
+    <div
+      className={compact ? "host-turns compact" : "host-turns"}
+      role="log"
+      aria-live="polite"
+      aria-atomic="false"
+      aria-relevant="additions"
+    >
       {turns.map((turn) => (
         <article className="host-turn" data-accent={turn.host.accent} key={turn.id}>
           <HostAvatar label={turn.host.name} accent={turn.host.accent} />

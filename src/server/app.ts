@@ -1119,7 +1119,7 @@ export function buildFantasyPreview(league: FantasyLeagueState, providerMode: "d
   };
 }
 
-async function buildDiagnostics(sportsDataMode: "demo" | "espn" = config.SPORTS_DATA_PROVIDER): Promise<ProviderDiagnostics> {
+export async function buildDiagnostics(sportsDataMode: "demo" | "espn" = config.SPORTS_DATA_PROVIDER): Promise<ProviderDiagnostics> {
   const health = await getHealth();
   const mediaManifestPath = path.join(process.cwd(), "public", "media-cache", "manifest.json");
   const mediaExists = existsSync(mediaManifestPath);

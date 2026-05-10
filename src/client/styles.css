@@ -33,9 +33,13 @@
   --hr-line-soft: rgba(212, 222, 244, 0.06);
 
   --hr-text: #f7f8ff;
-  --hr-text-soft: rgba(231, 235, 249, 0.72);
-  --hr-text-muted: rgba(231, 235, 249, 0.52);
-  --hr-text-dim: rgba(231, 235, 249, 0.32);
+  /* Bumped from 0.72 / 0.52 / 0.32 to clear WCAG AA contrast (4.5:1)
+     for normal text on the #0a0e1a background. The original values
+     felt visually right but failed the contrast bar — particularly
+     `--hr-text-muted` which is used for body-sized eyebrows. */
+  --hr-text-soft: rgba(231, 235, 249, 0.82);
+  --hr-text-muted: rgba(231, 235, 249, 0.68);
+  --hr-text-dim: rgba(231, 235, 249, 0.5);
 
   --hr-violet: #9b6cff;
   --hr-violet-soft: #c8a8ff;
@@ -172,6 +176,20 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Visually hidden but exposed to AT — used for live regions that
+   announce audio state, status changes, etc. Standard sr-only pattern. */
+.hr-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 html,
