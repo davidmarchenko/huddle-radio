@@ -160,16 +160,12 @@ export async function buildApp() {
   });
 
   app.post("/api/history/shows", async (request, reply) => {
-    const body = request.body as { listenerId?: string; entry?: ShowHistoryEntry };
-    if (!isValidListenerId(body?.listenerId)) {
+    const parsed = HistoryArchiveBodySchema.safeParse(request.body);
+    if (!parsed.success) {
       reply.code(400);
-      return { error: "Invalid listenerId." };
+      return { error: parsed.error.issues[0]?.message ?? "Invalid history archive body." };
     }
-    if (!body?.entry || typeof body.entry !== "object" || typeof body.entry.id !== "string" || typeof body.entry.startedAt !== "string" || typeof body.entry.endedAt !== "string") {
-      reply.code(400);
-      return { error: "Invalid history entry." };
-    }
-    await getDefaultShowHistoryStore().archive({ listenerId: body.listenerId, entry: body.entry });
+    await getDefaultShowHistoryStore().archive({ listenerId: parsed.data.listenerId, entry: parsed.data.entry });
     return { ok: true };
   });
 
@@ -265,27 +261,23 @@ export async function buildApp() {
 
   // ---- W9: Clip archival ----
   app.post("/api/clips", async (request, reply) => {
-    const body = request.body as { listenerId?: string; commentaryId?: string; mimeType?: string; audioBase64?: string };
-    if (!isValidListenerId(body?.listenerId)) {
+    const parsed = ClipUploadBodySchema.safeParse(request.body);
+    if (!parsed.success) {
       reply.code(400);
-      return { error: "Invalid listenerId." };
-    }
-    if (!body?.mimeType || typeof body.audioBase64 !== "string" || body.audioBase64.length === 0) {
-      reply.code(400);
-      return { error: "Missing audio payload." };
+      return { error: parsed.error.issues[0]?.message ?? "Invalid clip upload body." };
     }
     let buffer: Buffer;
     try {
-      buffer = Buffer.from(body.audioBase64, "base64");
+      buffer = Buffer.from(parsed.data.audioBase64, "base64");
     } catch {
       reply.code(400);
       return { error: "Invalid base64 audio." };
     }
     try {
       const metadata = await getDefaultClipStore().put({
-        listenerId: body.listenerId,
-        commentaryId: body.commentaryId,
-        mimeType: body.mimeType,
+        listenerId: parsed.data.listenerId,
+        commentaryId: parsed.data.commentaryId,
+        mimeType: parsed.data.mimeType,
         data: buffer
       });
       return { id: metadata.id, url: `/api/clips/${metadata.id}`, mimeType: metadata.mimeType, byteLength: metadata.byteLength };
@@ -407,7 +399,22 @@ export async function buildApp() {
     // burning vendor budget on a runaway tick loop.
     const budget = new ShowUsageBudget();
 
-    socket.on("message", async (raw) => {
+    socket.on("message", (raw) => {
+      // Wrap the async work in an IIFE with a top-level catch so a
+      // throw before the inner try/catch (e.g. parseSocketMessage on a
+      // pathological payload) can't bubble up as an unhandled
+      // rejection. Surface as an `error` event so the client sees it.
+      void (async () => {
+        try {
+          await handleSocketMessage(raw);
+        } catch (error) {
+          app.log.error({ err: error instanceof Error ? error.message : String(error) }, "WS message handler crashed");
+          send(socket, { type: "error", message: redactSecret(error instanceof Error ? error.message : "Internal socket error.") });
+        }
+      })();
+    });
+
+    const handleSocketMessage = async (raw: unknown) => {
       const incoming = parseSocketMessage(String(raw));
       if (incoming.type === "frame") {
         latestFrame = incoming.frame;
@@ -495,6 +502,17 @@ export async function buildApp() {
         // W12: fetch advanced stats for the listener's starters once
         // at show start. Provider returns only known canonicalIds, so
         // an empty list is the no-op fallback.
+        const matchKind = rosterMatchKind(fantasy, request.group.listener.rosterId);
+        if (matchKind === "fallback-first" && request.group.listener.rosterId) {
+          // The listener has a claimed rosterId but it doesn't appear
+          // in the league. Surface so the operator catches stale
+          // profile state instead of the listener getting another
+          // person's roster narrated to them.
+          app.log.warn(
+            { listenerRosterId: request.group.listener.rosterId, leagueId: fantasy.leagueId, sport: fantasy.sport },
+            "rosterForListener fallback: claimed rosterId not found in league"
+          );
+        }
         const showRoster = rosterForListener(fantasy, request.group.listener.rosterId);
         const starterIds = (showRoster?.starters ?? []).map((player) => player.id);
         let analytics: PlayerSeasonStats[] = [];
@@ -658,13 +676,17 @@ export async function buildApp() {
 
         await tick();
         timer = setInterval(tick, request.cadenceMs ?? 5000);
-        healthTimer = setInterval(async () => {
-          send(socket, { type: "health", health: await getHealth() });
+        healthTimer = setInterval(() => {
+          // Async work inside setInterval can't reject upward — wrap so a
+          // failed health check doesn't surface as an unhandled rejection.
+          getHealth()
+            .then((health) => send(socket, { type: "health", health }))
+            .catch((error) => app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Periodic health check failed"));
         }, 15000);
       } catch (error) {
         send(socket, { type: "error", message: redactSecret(error instanceof Error ? error.message : "Unable to start livecast.") });
       }
-    });
+    };
 
     socket.on("close", () => {
       incrementCounter("webSocketsClosed");
@@ -682,12 +704,24 @@ export async function buildApp() {
  * Find the listener's roster in the league. Falls back to the first
  * roster if no rosterId is set so the LLM still has *some* lineup to
  * reference. Without this the show falls back to generic third person.
+ *
+ * Returns `match: true` only when the rosterId was found. Callers in
+ * the live-show path log a warning when `match: false` so the operator
+ * can spot misconfigured profiles instead of seeing the listener get
+ * a stranger's roster narrated to them.
  */
 function rosterForListener(league: FantasyLeagueState, rosterId?: string) {
   const allRosters = league.matchups.flatMap((matchup) => matchup.rosters);
   if (!allRosters.length) return undefined;
   const matched = rosterId ? allRosters.find((roster) => roster.id === rosterId) : undefined;
   return matched ?? allRosters[0];
+}
+
+function rosterMatchKind(league: FantasyLeagueState, rosterId?: string): "exact" | "fallback-first" | "no-rosters" {
+  const allRosters = league.matchups.flatMap((matchup) => matchup.rosters);
+  if (!allRosters.length) return "no-rosters";
+  if (rosterId && allRosters.some((roster) => roster.id === rosterId)) return "exact";
+  return "fallback-first";
 }
 
 /**
@@ -732,6 +766,53 @@ async function getHealth(): Promise<ProviderHealth[]> {
   ];
   return Promise.all(providers.map((provider) => provider.health()));
 }
+
+// Body validation for the listener-history backend (W8). Built off the
+// shared `ShowHistoryEntry` shape so the runtime check matches the
+// type contract instead of the looser hand-rolled property checks the
+// route had originally.
+const ShowHistoryEntrySchema = z.object({
+  id: z.string().min(1).max(128),
+  startedAt: z.string().min(1),
+  endedAt: z.string().min(1),
+  sport: z.enum(["nfl", "nba", "wnba", "mlb", "nhl", "ncaaf", "ncaab", "soccer", "other"]),
+  gameId: z.string().min(1).max(256),
+  gameLabel: z.string().min(1).max(256),
+  listenerName: z.string().min(1).max(64),
+  listenerTeamName: z.string().max(128).optional(),
+  finalScore: z.object({ away: z.number(), home: z.number() }).optional(),
+  topMoment: z
+    .object({
+      playerName: z.string().min(1).max(128),
+      pointsDelta: z.number(),
+      hostText: z.string().max(2000)
+    })
+    .optional(),
+  marginShift: z.number().optional(),
+  totalCommentary: z.number().int().nonnegative()
+});
+
+const HistoryArchiveBodySchema = z.object({
+  listenerId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  entry: ShowHistoryEntrySchema
+});
+
+// Audio clip upload body (W9). 8MB cap is enforced at the store layer
+// too, but bound the base64 string here so a multi-GB string can't
+// burn memory before we get to the buffer check.
+const ClipUploadBodySchema = z.object({
+  listenerId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  commentaryId: z.string().max(256).optional(),
+  mimeType: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[A-Za-z0-9.+/_-]+$/),
+  audioBase64: z
+    .string()
+    .min(1)
+    .max(12_000_000) // ~8MB binary after base64 decode
+});
 
 const LivecastRequestSchema = z.object({
   providerMode: z.enum(["demo", "sleeper", "espn"]).default("demo"),

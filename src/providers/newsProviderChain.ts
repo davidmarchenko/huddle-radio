@@ -24,28 +24,17 @@ export class NewsProviderChain implements NewsProvider {
   ) {}
 
   async getLatest(input: { playerIds: string[]; teams: string[]; sport?: SportLeague }): Promise<NewsItem[]> {
-    let lastError: unknown;
     for (const provider of this.providers) {
       try {
         const items = await this.withTimeout(provider.getLatest(input));
         if (items && items.length > 0) return items;
       } catch (error) {
-        lastError = error;
         this.recordFallback(provider.id, error);
       }
     }
-    if (lastError) {
-      // Bubble through to the last provider one more time without timing
-      // out — this gives the demo provider a chance to still return.
-      const terminal = this.providers[this.providers.length - 1];
-      if (terminal) {
-        try {
-          return await terminal.getLatest(input);
-        } catch {
-          /* swallow */
-        }
-      }
-    }
+    // Every provider either threw or returned empty. The empty case is
+    // legitimate (e.g. no team-relevant news today) so we don't treat
+    // it as an error — just propagate the empty list.
     return [];
   }
 

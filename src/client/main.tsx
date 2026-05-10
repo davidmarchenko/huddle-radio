@@ -884,6 +884,27 @@ function App() {
     }
   }, []);
 
+  // Unmount cleanup. Without this, navigating away or closing the tab
+  // mid-show leaves the WebSocket open server-side and the ESPN/TTS
+  // tick interval running. Using refs (no deps) so the effect runs
+  // exactly once on mount/unmount.
+  useEffect(() => {
+    return () => {
+      socketRef.current?.close(1000, "Component unmounted");
+      socketRef.current = null;
+      if (frameTimerRef.current) {
+        window.clearInterval(frameTimerRef.current);
+        frameTimerRef.current = undefined;
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        audioContextRef.current.close().catch(() => undefined);
+      }
+      audioContextRef.current = null;
+      window.speechSynthesis?.cancel();
+      clipChunksRef.current.clear();
+    };
+  }, []);
+
   const stopLivecast = () => {
     livecastSessionRef.current += 1;
     const socket = socketRef.current;
@@ -893,6 +914,10 @@ function App() {
       window.clearInterval(frameTimerRef.current);
       frameTimerRef.current = undefined;
     }
+    // Reset cross-show refs so a fresh `Start` doesn't reuse old state.
+    clipChunksRef.current.clear();
+    showStartRef.current = undefined;
+    archivedShowRef.current = undefined;
     audioQueueRef.current = Promise.resolve();
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();

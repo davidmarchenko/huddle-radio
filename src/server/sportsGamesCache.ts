@@ -27,6 +27,12 @@ export type SportsGamesCacheOptions = {
   freshMs?: number;
   staleMs?: number;
   now?: () => number;
+  /**
+   * Called when a background SWR refresh fails. Defaults to a no-op so
+   * tests don't need to wire it; production passes a real logger so
+   * silent ESPN outages stop being silent.
+   */
+  onBackgroundRefreshError?: (sport: SportLeague, error: unknown) => void;
 };
 
 export type SportGamesFetcher = (sportPath: EspnSportPath) => Promise<SportsGameOption[]>;
@@ -40,9 +46,11 @@ export class SportsGamesCache {
   private readonly freshMs: number;
   private readonly staleMs: number;
   private readonly now: () => number;
+  private readonly onBackgroundRefreshError?: (sport: SportLeague, error: unknown) => void;
   private hitCount = 0;
   private staleCount = 0;
   private missCount = 0;
+  private backgroundRefreshErrors = 0;
 
   constructor(
     private readonly fetchGames: SportGamesFetcher,
@@ -51,6 +59,7 @@ export class SportsGamesCache {
     this.freshMs = options.freshMs ?? DEFAULT_FRESH_MS;
     this.staleMs = options.staleMs ?? DEFAULT_STALE_MS;
     this.now = options.now ?? (() => Date.now());
+    this.onBackgroundRefreshError = options.onBackgroundRefreshError;
   }
 
   async get(sportPath: EspnSportPath): Promise<SportsGameOption[]> {
@@ -63,10 +72,12 @@ export class SportsGamesCache {
     if (cached && cached.staleUntil > now) {
       this.staleCount++;
       // Kick off a refresh but return the stale value immediately so a
-      // brief ESPN hiccup never surfaces. Background errors are
-      // swallowed because the next caller will retry.
-      this.refresh(sportPath).catch(() => {
-        /* swallow background refresh errors */
+      // brief ESPN hiccup never surfaces. Errors are reported via the
+      // optional callback so the operator sees outages instead of
+      // wondering why the cache went stale forever.
+      this.refresh(sportPath).catch((error) => {
+        this.backgroundRefreshErrors++;
+        this.onBackgroundRefreshError?.(sportPath.sport, error);
       });
       return cached.games;
     }
@@ -107,6 +118,7 @@ export class SportsGamesCache {
       hits: this.hitCount,
       stale: this.staleCount,
       misses: this.missCount,
+      backgroundRefreshErrors: this.backgroundRefreshErrors,
       sports: [...this.entries.keys()]
     };
   }
@@ -116,8 +128,20 @@ let defaultCache: SportsGamesCache | undefined;
 
 export function getDefaultSportsGamesCache(): SportsGamesCache {
   if (defaultCache) return defaultCache;
-  defaultCache = new SportsGamesCache((sportPath) =>
-    new EspnSportsDataProvider(fetch, undefined, sportPath).listGames()
+  defaultCache = new SportsGamesCache(
+    (sportPath) => new EspnSportsDataProvider(fetch, undefined, sportPath).listGames(),
+    {
+      onBackgroundRefreshError: (sport, error) => {
+        // structured stderr — operators can tail without colour theory.
+        console.warn(
+          JSON.stringify({
+            event: "sports-games-cache.background-refresh-failed",
+            sport,
+            error: error instanceof Error ? error.message : String(error)
+          })
+        );
+      }
+    }
   );
   return defaultCache;
 }

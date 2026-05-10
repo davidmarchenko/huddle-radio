@@ -71,5 +71,8 @@ export const config = {
   RESOLVED_REALTIME_MODEL: parsed.MODEL_PRESET === "fast" ? parsed.OPENAI_REALTIME_FAST_MODEL : parsed.OPENAI_REALTIME_MODEL,
   RESOLVED_TTS_PROVIDER:
     isTest ? "mock" : parsed.TTS_PROVIDER === "auto" ? (parsed.ELEVENLABS_API_KEY && parsed.MODEL_PRESET !== "local" ? "elevenlabs" : "mock") : parsed.TTS_PROVIDER,
-  RESOLVED_ELEVENLABS_MODEL_ID: parsed.MODEL_PRESET === "sota" ? parsed.ELEVENLABS_MODEL_ID : parsed.ELEVENLABS_MODEL_ID
+  // sota → expressive (eleven_v3 quality), fast/local → low-latency
+  // (eleven_flash_v2_5). Earlier this ternary picked the same model
+  // on both branches, silently negating the preset switch.
+  RESOLVED_ELEVENLABS_MODEL_ID: parsed.MODEL_PRESET === "sota" ? parsed.ELEVENLABS_EXPRESSIVE_MODEL_ID : parsed.ELEVENLABS_MODEL_ID
 };

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -60,8 +60,26 @@ export class FileClipStore implements ClipStore {
       byteLength: data.byteLength,
       storedAt: Date.now()
     };
-    await writeFile(audioFile, data);
-    await writeFile(metaFile, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+    // Atomic write: tmp + rename for both files. Audio first; metadata
+    // last so a partial write leaves no record from `read()` (which
+    // gates on the metadata file) while still allowing cleanup of the
+    // orphaned audio at the GC layer.
+    const audioTmp = `${audioFile}.${process.pid}.${Date.now()}.tmp`;
+    const metaTmp = `${metaFile}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(audioTmp, data);
+    try {
+      await rename(audioTmp, audioFile);
+    } catch (error) {
+      await unlink(audioTmp).catch(() => undefined);
+      throw error;
+    }
+    await writeFile(metaTmp, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+    try {
+      await rename(metaTmp, metaFile);
+    } catch (error) {
+      await Promise.all([unlink(audioFile).catch(() => undefined), unlink(metaTmp).catch(() => undefined)]);
+      throw error;
+    }
     return metadata;
   }
 
