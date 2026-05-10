@@ -13,6 +13,7 @@ import type {
   GameOdds,
   GroupSettings,
   HostId,
+  ListenerCue,
   LivecastCommentary,
   NewsItem,
   ProviderDiagnostics,
@@ -39,6 +40,7 @@ import { buildProductReadiness } from "../shared/productReadiness";
 import { buildSessionDirector, type SessionDirectorPlan, type SessionDirectorStepState } from "../shared/sessionDirector";
 import { buildTranscriptExport } from "../shared/transcriptExport";
 import { createYouTubeEmbedUrl, isYouTubeUrl } from "../shared/videoLinks";
+import { startMicRecording, type MicRecording } from "./audioCapture";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -825,6 +827,11 @@ function App() {
         // briefly in the existing status string.
         setStatus(message.message);
       }
+      if (message.type === "cue-ack") {
+        // The host folded our cues into a turn. Surface the answer link
+        // for a beat so the listener sees it landed.
+        setStatus(`Cue answered: ${message.commentaryId.slice(0, 8)}`);
+      }
       if (message.type === "error") {
         setStatus(message.message);
       }
@@ -869,6 +876,19 @@ function App() {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ type: "nudge", hostId }));
   };
+
+  // W18: Cue host. The button captures a short mic clip, ships it to
+  // /api/asr/transcribe (Nemotron Nano Omni), then forwards the
+  // transcript to the live show as a cue the persona may answer on
+  // the next tick. We hand the button the post-transcribe submitter
+  // and let it own its own recording state — App just relays the
+  // websocket payload.
+  const submitListenerCue = useCallback((cue: ListenerCue) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    socket.send(JSON.stringify({ type: "cue", cue }));
+    return true;
+  }, []);
 
   // W9: archive a moment's audio as a clip and return the public URL.
   // Returns undefined when no audio was captured (mock TTS path) or
@@ -1553,6 +1573,7 @@ function App() {
         pastShows={pastShows}
         tonightGlance={tonightGlance}
         onNudgeHost={nudgeHost}
+        onSubmitCue={submitListenerCue}
         onArchiveClip={archiveClip}
         pregameNews={pregameNews}
         pregameOdds={pregameOdds}
@@ -2147,6 +2168,7 @@ function HuddleExperience({
   pastShows,
   tonightGlance,
   onNudgeHost,
+  onSubmitCue,
   onArchiveClip,
   pregameNews,
   pregameOdds,
@@ -2209,6 +2231,7 @@ function HuddleExperience({
   pastShows: ShowHistoryEntry[];
   tonightGlance?: ReturnType<typeof buildTonightAtAGlance>;
   onNudgeHost: (hostId: HostId) => void;
+  onSubmitCue?: (cue: ListenerCue) => boolean;
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
   pregameNews: NewsItem[];
   pregameOdds?: GameOdds;
@@ -2295,6 +2318,7 @@ function HuddleExperience({
             onStop={onStop}
             listenerStakes={listenerStakes}
             onNudgeHost={onNudgeHost}
+            onSubmitCue={onSubmitCue}
             profile={profile}
           />
         )}
@@ -4076,6 +4100,150 @@ function HuddleLiveWithStream({
   );
 }
 
+type CueState =
+  | { kind: "idle" }
+  | { kind: "recording"; recording: MicRecording }
+  | { kind: "transcribing" }
+  | { kind: "delivered"; text: string; clearedAt: number }
+  | { kind: "error"; message: string };
+
+/**
+ * Push-to-talk cue button. Hold to record, release to transcribe and
+ * forward to the live show. Self-contained — owns its mic state and
+ * the call to /api/asr/transcribe so the parent only needs to relay
+ * the resulting cue to the websocket.
+ *
+ * The button auto-resets a few seconds after a delivered cue so the
+ * UI doesn't permanently display an old transcript. Errors stick
+ * around longer (mic denial, network) so the listener notices.
+ */
+function CueHostButton({ onSubmit }: { onSubmit: (cue: ListenerCue) => boolean }) {
+  const [state, setState] = useState<CueState>({ kind: "idle" });
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  // Auto-clear the "delivered" preview after a few seconds so the
+  // button is fresh for the next cue without forcing the listener to
+  // dismiss.
+  useEffect(() => {
+    if (state.kind !== "delivered") return;
+    const timer = window.setTimeout(() => {
+      setState((current) => (current.kind === "delivered" ? { kind: "idle" } : current));
+    }, 6000);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
+  const begin = useCallback(async () => {
+    if (stateRef.current.kind !== "idle" && stateRef.current.kind !== "delivered" && stateRef.current.kind !== "error") {
+      return;
+    }
+    try {
+      const recording = await startMicRecording({ label: "Cue host", maxDurationMs: 18000 });
+      setState({ kind: "recording", recording });
+    } catch (error) {
+      setState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Microphone unavailable."
+      });
+    }
+  }, []);
+
+  const finish = useCallback(async () => {
+    const current = stateRef.current;
+    if (current.kind !== "recording") return;
+    setState({ kind: "transcribing" });
+    try {
+      const audio = await current.recording.stop();
+      // Drop sub-300ms taps — usually accidental. Keeps the cue queue
+      // free of junk transcripts.
+      if ((audio.durationMs ?? 0) < 300) {
+        setState({ kind: "idle" });
+        return;
+      }
+      const response = await fetch("/api/asr/transcribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audio })
+      });
+      if (!response.ok) throw new Error(`ASR failed (${response.status}).`);
+      const transcript = (await response.json()) as { id: string; text: string; confidence?: number };
+      const text = transcript.text.trim();
+      if (!text) {
+        setState({ kind: "error", message: "Didn't catch that — try again." });
+        return;
+      }
+      const cue: ListenerCue = {
+        id: transcript.id || crypto.randomUUID(),
+        text,
+        capturedAt: audio.capturedAt,
+        confidence: transcript.confidence
+      };
+      const sent = onSubmit(cue);
+      if (!sent) {
+        setState({ kind: "error", message: "Show isn't live — start the show to send cues." });
+        return;
+      }
+      setState({ kind: "delivered", text, clearedAt: Date.now() });
+    } catch (error) {
+      setState({
+        kind: "error",
+        message: error instanceof Error ? error.message : "Cue failed."
+      });
+    }
+  }, [onSubmit]);
+
+  const cancel = useCallback(() => {
+    if (stateRef.current.kind !== "recording") return;
+    stateRef.current.recording.cancel();
+    setState({ kind: "idle" });
+  }, []);
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    void begin();
+  };
+  const handlePointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    void finish();
+  };
+
+  const isHot = state.kind === "recording";
+  const label =
+    state.kind === "recording"
+      ? "Listening…"
+      : state.kind === "transcribing"
+        ? "Transcribing…"
+        : state.kind === "delivered"
+          ? `Cue sent: "${state.text}"`
+          : state.kind === "error"
+            ? state.message
+            : "Hold to talk to the hosts";
+
+  return (
+    <div className={`cue-host-button-wrap${isHot ? " is-hot" : ""}`} role="group" aria-label="Cue the hosts">
+      <button
+        type="button"
+        className={`cue-host-button${isHot ? " is-recording" : ""}`}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerLeave={() => {
+          // Treat leaving the button mid-press as a cancel — the user
+          // changed their mind. Releasing inside still submits.
+          if (stateRef.current.kind === "recording") cancel();
+        }}
+        aria-pressed={isHot}
+        disabled={state.kind === "transcribing"}
+      >
+        <span className="cue-host-mic" aria-hidden="true">●</span>
+        <span className="cue-host-label">{isHot ? "Hold and speak" : "Cue host"}</span>
+      </button>
+      <p className="cue-host-status">{label}</p>
+    </div>
+  );
+}
+
 function HuddleLiveAudio({
   game,
   fantasy,
@@ -4088,6 +4256,7 @@ function HuddleLiveAudio({
   onStop,
   listenerStakes,
   onNudgeHost,
+  onSubmitCue,
   profile
 }: {
   game?: SportsGameState;
@@ -4101,6 +4270,7 @@ function HuddleLiveAudio({
   onStop: () => void;
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   onNudgeHost: (hostId: HostId) => void;
+  onSubmitCue?: (cue: ListenerCue) => boolean;
   profile?: UserProfile;
 }) {
   const latestPlay = plays[0] ?? game?.currentPlay;
@@ -4200,6 +4370,7 @@ function HuddleLiveAudio({
             );
           })}
         </div>
+        {onSubmitCue && <CueHostButton onSubmit={onSubmitCue} />}
       </div>
       <section className="live-conversation">
         <header>

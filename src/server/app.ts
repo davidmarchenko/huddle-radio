@@ -12,6 +12,7 @@ import type {
   FrameValidationResponse,
   GameOdds,
   GroupSettings,
+  ListenerCue,
   LivecastRequest,
   ProviderDiagnostics,
   ProviderHealth,
@@ -392,6 +393,10 @@ export async function buildApp() {
     // the upcoming turn instead of the deterministic selectHost pick.
     // Cleared after one use so a nudge can't keep monopolizing one voice.
     let pendingNextHostId: "maya" | "theo" | "cam" | undefined;
+    // W18: push-to-talk cues queued from the listener since the last
+    // commentary tick. Drained on each draft and acked to the client
+    // so the UI can mark them as "answered."
+    let pendingCues: ListenerCue[] = [];
     // Per-show usage budget. When exceeded, callers below swap commentary
     // → local templates and TTS → mock so the show can finish without
     // burning vendor budget on a runaway tick loop.
@@ -421,6 +426,13 @@ export async function buildApp() {
       if (incoming.type === "nudge") {
         pendingNextHostId = incoming.hostId;
         send(socket, { type: "status", message: `Up next: ${incoming.hostId}`, level: "info" });
+        return;
+      }
+      if (incoming.type === "cue") {
+        // Cap the queue so a chatty listener can't bloat the prompt
+        // payload past the model's tolerance — keep the freshest 3.
+        pendingCues = [incoming.cue, ...pendingCues].slice(0, 3);
+        send(socket, { type: "status", message: `Cue heard: ${incoming.cue.text.slice(0, 80)}`, level: "info" });
         return;
       }
       if (timer) clearInterval(timer);
@@ -617,6 +629,11 @@ export async function buildApp() {
             // deterministic selectHost pick.
             const forcedHost = pendingNextHostId;
             pendingNextHostId = undefined;
+            // W18: drain queued cues for this turn. The engine reads
+            // them once and we ack the ids back so the UI can clear
+            // them from the "queued" list.
+            const cuesForTurn = pendingCues;
+            pendingCues = [];
             const commentary = createLivecastCommentary({
               league: fantasy,
               play,
@@ -641,6 +658,7 @@ export async function buildApp() {
               listenerRoster: rosterForListener(fantasy, request.group.listener.rosterId),
               odds,
               analytics,
+              listenerCues: cuesForTurn,
               fallbackText: commentary.text
             });
             commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
@@ -655,6 +673,13 @@ export async function buildApp() {
             recentCommentary = [commentary.text, ...recentCommentary].slice(0, 5);
             recentHostIds = [...recentHostIds, commentary.hostId].slice(-5);
             send(socket, { type: "commentary", commentary });
+            if (cuesForTurn.length > 0) {
+              send(socket, {
+                type: "cue-ack",
+                cueIds: cuesForTurn.map((c) => c.id),
+                commentaryId: commentary.id
+              });
+            }
 
             if (request.ttsEnabled) {
               budget.recordTts(commentary.text);
@@ -865,14 +890,18 @@ export function parseLivecastRequest(raw: string): { ok: true; request: Livecast
 export function parseSocketMessage(raw: string):
   | { type: "start"; rawRequest: string }
   | { type: "frame"; frame: VideoFrameSnapshot }
-  | { type: "nudge"; hostId: "maya" | "theo" | "cam" } {
+  | { type: "nudge"; hostId: "maya" | "theo" | "cam" }
+  | { type: "cue"; cue: ListenerCue } {
   try {
-    const parsed = JSON.parse(raw) as { type?: string; request?: unknown; frame?: unknown; hostId?: unknown };
+    const parsed = JSON.parse(raw) as { type?: string; request?: unknown; frame?: unknown; hostId?: unknown; cue?: unknown };
     if (parsed.type === "frame" && isVideoFrameSnapshot(parsed.frame)) {
       return { type: "frame", frame: parsed.frame };
     }
     if (parsed.type === "nudge" && (parsed.hostId === "maya" || parsed.hostId === "theo" || parsed.hostId === "cam")) {
       return { type: "nudge", hostId: parsed.hostId };
+    }
+    if (parsed.type === "cue" && isListenerCue(parsed.cue)) {
+      return { type: "cue", cue: parsed.cue };
     }
     if (parsed.type === "start" && parsed.request) {
       return { type: "start", rawRequest: JSON.stringify(parsed.request) };
@@ -881,6 +910,18 @@ export function parseSocketMessage(raw: string):
     // Legacy clients send the livecast request directly; parseLivecastRequest handles validation.
   }
   return { type: "start", rawRequest: raw };
+}
+
+function isListenerCue(value: unknown): value is ListenerCue {
+  if (!value || typeof value !== "object") return false;
+  const cue = value as Partial<ListenerCue>;
+  return Boolean(
+    cue.id &&
+    cue.capturedAt &&
+    typeof cue.text === "string" &&
+    cue.text.trim().length > 0 &&
+    cue.text.length <= 600
+  );
 }
 
 function createFantasyProvider(providerMode: "demo" | "sleeper" | "espn" | undefined, customLeague?: FantasyLeagueState) {

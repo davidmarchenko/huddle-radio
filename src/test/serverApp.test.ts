@@ -99,6 +99,42 @@ describe("parseSocketMessage", () => {
     expect(result.type).toBe("start");
   });
 
+  it("recognizes a well-formed listener cue", () => {
+    const cue = {
+      id: "c1",
+      text: "What's happening with Mahomes?",
+      capturedAt: new Date().toISOString(),
+      confidence: 0.82
+    };
+    const result = parseSocketMessage(JSON.stringify({ type: "cue", cue }));
+    expect(result.type).toBe("cue");
+    if (result.type === "cue") {
+      expect(result.cue.id).toBe("c1");
+      expect(result.cue.text).toContain("Mahomes");
+    }
+  });
+
+  it("falls back to start when a cue is missing required fields or has empty text", () => {
+    // Empty text would create a phantom cue that wastes a turn — the
+    // server-side predicate filters these out at the protocol layer.
+    const blank = parseSocketMessage(
+      JSON.stringify({ type: "cue", cue: { id: "c1", text: "   ", capturedAt: new Date().toISOString() } })
+    );
+    expect(blank.type).toBe("start");
+    const malformed = parseSocketMessage(JSON.stringify({ type: "cue", cue: { text: "no id" } }));
+    expect(malformed.type).toBe("start");
+  });
+
+  it("rejects pathologically long cue text so a runaway transcript can't bloat the prompt", () => {
+    const cue = {
+      id: "c1",
+      text: "x".repeat(601),
+      capturedAt: new Date().toISOString()
+    };
+    const result = parseSocketMessage(JSON.stringify({ type: "cue", cue }));
+    expect(result.type).toBe("start");
+  });
+
   it("recognizes a wrapped start message", () => {
     const result = parseSocketMessage(JSON.stringify({ type: "start", request: { providerMode: "demo" } }));
     expect(result.type).toBe("start");

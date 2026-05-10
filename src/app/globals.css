@@ -15906,3 +15906,86 @@ body {
   justify-self: end;
   margin-top: 0;
 }
+
+/* W18: Cue host push-to-talk control. Sits beneath the live host
+   strip so the listener's voice action lives next to the host
+   selection — same conceptual unit. */
+.cue-host-button-wrap {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--hr-space-2);
+  margin-top: var(--hr-space-3);
+}
+
+.cue-host-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hr-space-3);
+  padding: var(--hr-space-3) var(--hr-space-5);
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hr-gold) 32%, transparent);
+  background: color-mix(in srgb, var(--hr-gold) 6%, var(--hr-surface));
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color var(--hr-motion-base) var(--hr-ease-standard),
+    background var(--hr-motion-base) var(--hr-ease-standard),
+    transform var(--hr-motion-fast) var(--hr-ease-standard),
+    box-shadow var(--hr-motion-base) var(--hr-ease-standard);
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.cue-host-button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hr-gold) 60%, transparent);
+  transform: translateY(-1px);
+}
+
+.cue-host-button:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.cue-host-button.is-recording {
+  border-color: color-mix(in srgb, #ff4f5e 70%, transparent);
+  background: color-mix(in srgb, #ff4f5e 14%, var(--hr-surface));
+  box-shadow: 0 0 0 4px color-mix(in srgb, #ff4f5e 22%, transparent);
+  animation: cue-host-pulse 900ms infinite ease-in-out;
+}
+
+.cue-host-mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hr-gold) 80%, transparent);
+  color: transparent;
+}
+
+.cue-host-button.is-recording .cue-host-mic {
+  background: #ff4f5e;
+}
+
+.cue-host-status {
+  font-size: 0.85rem;
+  color: var(--hr-text-muted);
+  text-align: center;
+  margin: 0;
+  min-height: 1.2em;
+}
+
+@keyframes cue-host-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, #ff4f5e 22%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, #ff4f5e 30%, transparent);
+  }
+}

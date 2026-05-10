@@ -251,6 +251,26 @@ export type LivecastRequest = {
   cadenceMs?: number;
   /** Cross-show memory derived from the client's localStorage history. */
   priorContext?: string;
+  /**
+   * W18: pending listener cues — push-to-talk transcripts the
+   * listener has spoken since the last commentary tick. The next
+   * draft can fold them in (e.g. "you asked about Mahomes — he's
+   * 4-for-7 right now"). Capped client-side to the most recent few.
+   */
+  listenerCues?: ListenerCue[];
+};
+
+/**
+ * A single push-to-talk message captured from the listener and
+ * already transcribed by ASR. Lives long enough to ride along on the
+ * next LivecastRequest, then is acked by the server.
+ */
+export type ListenerCue = {
+  id: string;
+  text: string;
+  capturedAt: string;
+  /** ASR confidence in [0, 1]; pass through so prompts can hedge. */
+  confidence?: number;
 };
 
 export type ActiveProviderSummary = {
@@ -352,6 +372,12 @@ export type ClientServerEvent =
   | { type: "tts"; audio: TTSAudioChunk }
   | { type: "health"; health: ProviderHealth[] }
   | { type: "status"; message: string; level: "info" | "warn" }
+  /**
+   * W18: server confirms it folded one or more cues into the most
+   * recent commentary turn. The UI uses these ids to clear them
+   * from the "queued cues" indicator.
+   */
+  | { type: "cue-ack"; cueIds: string[]; commentaryId: string }
   | { type: "error"; message: string };
 
 export interface FantasyProvider {
