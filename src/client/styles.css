@@ -6960,8 +6960,8 @@ body:has(.huddle-app) {
 
 .tonight-glance-card {
   display: grid;
-  gap: var(--hr-space-4);
-  padding: var(--hr-pad-card-loose);
+  gap: var(--hr-space-3);
+  padding: var(--hr-pad-card);
   border-radius: var(--hr-radius-card);
   border: 1px solid color-mix(in srgb, var(--hr-gold) 28%, transparent);
   background:

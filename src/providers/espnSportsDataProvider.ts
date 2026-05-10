@@ -163,6 +163,13 @@ export class EspnSportsDataProvider implements SportsDataProvider {
     // sports contribute genuine "next 7 days" upcoming games.
     const dates = scoreboardDateRange(new Date(), 7);
     const response = await this.fetcher(`${this.baseUrl}?limit=${limit}&dates=${dates}`);
+    // 404 from the scoreboard date-range endpoint means the sport has
+    // no events scheduled in this window — typically because it's the
+    // offseason (e.g. NCAAM in May). Treat it as an empty slate rather
+    // than a hard failure, otherwise the discover page surfaces a
+    // misleading "temporarily unavailable" notice for sports that are
+    // simply not in season.
+    if (response.status === 404) return { events: [] };
     if (!response.ok) throw new Error(`ESPN scoreboard request failed: ${response.status} ${response.statusText}`);
     return (await response.json()) as EspnScoreboard;
   }

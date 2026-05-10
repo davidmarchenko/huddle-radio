@@ -172,6 +172,10 @@ function App() {
   // Sports whose ESPN scoreboard fetch failed on the last refresh.
   // Surfaced as a discover-page notice so missing games aren't silent.
   const [failedSports, setFailedSports] = useState<Array<{ sport: SportLeague; label: string }>>([]);
+  // Per-set dismissal: keyed by the sorted list of failing sport IDs,
+  // so dismissing one set of failures doesn't suppress later notices
+  // about a different set.
+  const [dismissedFailedSportsKey, setDismissedFailedSportsKey] = useState<string>("");
   // Pregame storylines fetched fresh per game pick. Empty until a game
   // is selected; refreshed when sport/teams change.
   const [pregameNews, setPregameNews] = useState<NewsItem[]>([]);
@@ -1507,6 +1511,11 @@ function App() {
           videoUrl,
           hasScreenShare: Boolean(screenStream),
           failedSports,
+          dismissedFailedSportsKey,
+          onDismissFailedSports: () =>
+            setDismissedFailedSportsKey(
+              [...failedSports].map((entry) => entry.sport).sort().join("|")
+            ),
           onConnectFantasy: connectFantasyInline,
           onSetSportsDataMode: setSportsDataModeInline,
           onPickSportsGame: pickSportsGameInline,
@@ -2504,6 +2513,8 @@ type EmptyStateSetup = {
   videoUrl: string;
   hasScreenShare: boolean;
   failedSports: Array<{ sport: SportLeague; label: string }>;
+  dismissedFailedSportsKey: string;
+  onDismissFailedSports: () => void;
   onConnectFantasy: (provider: "sleeper" | "espn", leagueId: string) => Promise<boolean>;
   onSetSportsDataMode: (mode: "demo" | "espn") => void;
   onPickSportsGame: (gameId: string) => void;
@@ -3431,22 +3442,33 @@ function HuddleDiscover({
         </article>
       )}
 
-      {setup.failedSports.length > 0 && (
-        <article className="notice is-warn" role="status" aria-live="polite">
-          <span className="icon icon-warning" aria-hidden="true" />
-          <div>
-            <strong>
-              {setup.failedSports.length === 1
-                ? `${setup.failedSports[0].label} scoreboard temporarily unavailable.`
-                : `${setup.failedSports.length} scoreboards temporarily unavailable: ${setup.failedSports.map((entry) => entry.label).join(", ")}.`}
-            </strong>
-            <p>Other sports loaded normally. Tap refresh to retry.</p>
-          </div>
-          <button className="secondary compact" onClick={setup.onRefreshGames}>
-            <span className="icon icon-loop" aria-hidden="true" />Retry
-          </button>
-        </article>
-      )}
+      {(() => {
+        const failedKey = [...setup.failedSports].map((entry) => entry.sport).sort().join("|");
+        if (failedKey === "" || failedKey === setup.dismissedFailedSportsKey) return null;
+        return (
+          <article className="notice is-warn" role="status" aria-live="polite">
+            <span className="icon icon-warning" aria-hidden="true" />
+            <div>
+              <strong>
+                {setup.failedSports.length === 1
+                  ? `${setup.failedSports[0].label} scoreboard temporarily unavailable.`
+                  : `${setup.failedSports.length} scoreboards temporarily unavailable: ${setup.failedSports.map((entry) => entry.label).join(", ")}.`}
+              </strong>
+              <p>Other sports loaded normally. Tap refresh to retry.</p>
+            </div>
+            <button className="secondary compact" onClick={setup.onRefreshGames}>
+              <span className="icon icon-loop" aria-hidden="true" />Retry
+            </button>
+            <button
+              className="secondary compact icon-only"
+              onClick={setup.onDismissFailedSports}
+              aria-label="Dismiss notice"
+            >
+              <span className="icon icon-close" aria-hidden="true" />
+            </button>
+          </article>
+        );
+      })()}
 
       {tonightGlance && tonightGlance.perSport.length > 0 && (
         <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
@@ -3497,10 +3519,9 @@ function TonightAtAGlanceCard({ glance, onPickGame }: { glance: NonNullable<Retu
           {glance.listenerName}, your fantasy week
         </span>
         <h2>Your week at a glance</h2>
-        <p>{glance.perSport.length === 1
-          ? `One league in play. Here's how it sets up.`
-          : `${glance.perSport.length} leagues across ${new Set(glance.perSport.map((entry) => entry.sport)).size} sports — biggest stakes first.`}
-        </p>
+        {glance.perSport.length > 1 && (
+          <p>{`${glance.perSport.length} leagues across ${new Set(glance.perSport.map((entry) => entry.sport)).size} sports — biggest stakes first.`}</p>
+        )}
       </header>
       <div className="tonight-glance-grid">
         {glance.perSport.map((entry) => {
