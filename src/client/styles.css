@@ -4835,10 +4835,6 @@ body:has(.huddle-app.phase-empty)::after,
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.empty-step {
-  min-height: 220px;
-}
-
 .empty-step.is-ready {
   border-color: rgba(116, 240, 176, 0.24);
   background:
@@ -6602,15 +6598,6 @@ body:has(.huddle-app) {
   text-align: left;
 }
 
-.empty-step {
-  display: grid;
-  align-content: space-between;
-  gap: 0.9rem;
-  min-height: 250px;
-  border-radius: var(--hr-radius-lg);
-  padding: 1.25rem;
-}
-
 .empty-step b {
   display: grid;
   place-items: center;
@@ -8252,13 +8239,6 @@ body:has(.huddle-app)::after,
   gap: 0.8rem;
 }
 
-.empty-step {
-  min-height: 168px;
-  gap: 0.5rem;
-  border-radius: var(--hr-radius-lg);
-  padding: 1rem;
-}
-
 .empty-step p {
   display: -webkit-box;
   overflow: hidden;
@@ -8620,19 +8600,6 @@ body:has(.huddle-app)::after,
 
 .huddle-app button:hover:not(:disabled) {
   transform: translateY(-1px);
-}
-
-.huddle-app button:focus-visible {
-  outline: 2px solid var(--hr-violet-soft);
-  outline-offset: 3px;
-}
-
-.huddle-app a:focus-visible,
-.huddle-app input:focus-visible,
-.huddle-app select:focus-visible,
-.huddle-app textarea:focus-visible {
-  outline: 2px solid var(--hr-violet-soft);
-  outline-offset: 2px;
 }
 
 .huddle-app .huddle-brand strong {
@@ -9172,11 +9139,6 @@ body:has(.huddle-app)::after,
   color: var(--hr-text-soft);
   border-color: var(--hr-line);
   box-shadow: none;
-}
-
-.huddle-app button:focus-visible {
-  outline: 2px solid var(--hr-violet-soft);
-  outline-offset: 3px;
 }
 
 /* Secondary — slate ghost */
@@ -10068,12 +10030,6 @@ body:has(.huddle-app)::after,
   overflow: visible;
 }
 
-.huddle-app.phase-empty .empty-step {
-  height: auto;
-  min-height: 0;
-  overflow: visible;
-}
-
 /* Hero illustration — narrower vertical band so cards inherit the
    freed-up vertical budget. */
 .huddle-app.phase-empty .empty-host-art {
@@ -10131,11 +10087,6 @@ body:has(.huddle-app)::after,
   align-items: stretch;
 }
 
-.huddle-app.phase-empty .empty-step {
-  height: auto;
-  min-height: 0;
-}
-
 /* =====================================================================
    Stage 1.m — Final fix for body-text clipping.
 
@@ -10167,12 +10118,6 @@ body:has(.huddle-app)::after,
    tallest card needs and shorter cards stretch up to match. */
 .huddle-app.phase-empty .empty-steps.is-reference-layout {
   align-items: stretch;
-}
-
-.huddle-app.phase-empty .empty-step {
-  height: auto;
-  min-height: 0;
-  overflow: visible;
 }
 
 .huddle-app.phase-empty .empty-step p {
@@ -11093,16 +11038,6 @@ body {
   background-image: none !important;
   border-color: var(--hr-line-strong);
   color: var(--hr-text-soft) !important;
-}
-
-/* Focus rings — neutral white. */
-.huddle-app button:focus-visible,
-.huddle-app a:focus-visible,
-.huddle-app input:focus-visible,
-.huddle-app select:focus-visible,
-.huddle-app textarea:focus-visible {
-  outline: 2px solid var(--hr-text) !important;
-  outline-offset: 3px;
 }
 
 /* Stage 2.c — Re-scope ghost surfaces.
@@ -13825,46 +13760,6 @@ body {
   border-top: 1px solid var(--hr-line);
 }
 
-/* Per-sport scoreboard failure notice. Lower-key than discover-banner —
-   it's a status nudge, not a primary CTA. */
-.huddle-app .discover-feed-notice {
-  display: flex;
-  align-items: center;
-  gap: var(--hr-space-3);
-  padding: var(--hr-space-3) var(--hr-space-4);
-  border-radius: var(--hr-radius-md);
-  border: 1px solid color-mix(in srgb, var(--hr-warn) 32%, transparent);
-  background: color-mix(in srgb, var(--hr-warn) 8%, var(--hr-bg-1));
-  color: var(--hr-text);
-}
-
-.huddle-app .discover-feed-notice > .icon {
-  --icon-size: 1.25rem;
-  background-color: var(--hr-warn);
-  flex-shrink: 0;
-}
-
-.huddle-app .discover-feed-notice > div {
-  flex: 1;
-  min-width: 0;
-}
-
-.huddle-app .discover-feed-notice strong {
-  display: block;
-  font-size: var(--hr-text-sm);
-  font-weight: var(--hr-weight-bold);
-  letter-spacing: 0.005em;
-  color: var(--hr-text);
-}
-
-.huddle-app .discover-feed-notice p {
-  margin: 0.18rem 0 0;
-  font-family: var(--hr-font-mono);
-  font-size: var(--hr-text-xs);
-  letter-spacing: 0.04em;
-  color: var(--hr-text-muted);
-}
-
 /* =====================================================================
    .notice — the inline-status primitive.
 
@@ -13889,7 +13784,7 @@ body {
 .huddle-app .notice {
   --notice-accent: var(--hr-text-soft);
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--hr-space-3);
   padding: var(--hr-space-3) var(--hr-space-4);
   border-radius: var(--hr-radius-md);
@@ -13907,7 +13802,6 @@ body {
   --icon-size: 1.25rem;
   background-color: var(--notice-accent);
   flex-shrink: 0;
-  margin-top: 0.1rem;
 }
 
 .huddle-app .notice > div {

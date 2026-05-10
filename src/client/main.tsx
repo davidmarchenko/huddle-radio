@@ -3432,7 +3432,7 @@ function HuddleDiscover({
       )}
 
       {setup.failedSports.length > 0 && (
-        <article className="discover-feed-notice" role="status" aria-live="polite">
+        <article className="notice is-warn" role="status" aria-live="polite">
           <span className="icon icon-warning" aria-hidden="true" />
           <div>
             <strong>
