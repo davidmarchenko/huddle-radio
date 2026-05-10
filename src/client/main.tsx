@@ -1483,7 +1483,6 @@ function App() {
         audioPlaying={audioPlaying}
         audioLevels={audioLevels}
         ttsEnabled={ttsEnabled}
-        directorScore={directorPlan.score}
         onPrepareDemo={prepareDemoRehearsal}
         onStart={startLivecast}
         onStop={stopLivecast}
@@ -2104,7 +2103,6 @@ function HuddleExperience({
   audioPlaying,
   audioLevels,
   ttsEnabled,
-  directorScore,
   onPrepareDemo,
   onStart,
   onStop,
@@ -2167,7 +2165,6 @@ function HuddleExperience({
   audioPlaying: boolean;
   audioLevels: number[];
   ttsEnabled: boolean;
-  directorScore: number;
   onPrepareDemo: () => void;
   onStart: () => void;
   onStop: () => void;
@@ -2317,7 +2314,6 @@ function HuddleExperience({
           hostTurns={hostTurns}
           audioPlaying={audioPlaying}
           audioLevels={audioLevels}
-          directorScore={directorScore}
           onStart={onStart}
           onStop={onStop}
           onOpenStream={onOpenStream}
@@ -4297,7 +4293,7 @@ function HuddleRecap({
   );
 }
 
-function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, directorScore, onStart, onStop, onOpenStream }: { phase: HuddlePhase; game?: SportsGameState; hostTurns: HuddleHostTurn[]; audioPlaying: boolean; audioLevels: number[]; directorScore: number; onStart: () => void; onStop: () => void; onOpenStream: () => void }) {
+function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, onStart, onStop, onOpenStream }: { phase: HuddlePhase; game?: SportsGameState; hostTurns: HuddleHostTurn[]; audioPlaying: boolean; audioLevels: number[]; onStart: () => void; onStop: () => void; onOpenStream: () => void }) {
   const isLive = phase === "live" || phase === "live-audio";
   const isEmpty = phase === "empty";
   const isPregame = phase === "pregame";
@@ -4305,8 +4301,8 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, di
     ? "Connect your league, pick a game, and choose how you watch."
     : hostTurns[0]?.text ?? "Ready for the first call.";
   const showLabel = isEmpty
-    ? "Setup preview"
-    : game ? `${game.awayTeam} vs ${game.homeTeam}` : "Personalized sports talk";
+    ? "Not playing"
+    : game ? `${game.awayTeam} vs ${game.homeTeam}` : (isPregame ? "Pregame" : isLive ? "Live show" : "Not playing");
   return (
     <footer className="huddle-player">
       <div className="player-show">
@@ -4315,7 +4311,7 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, di
         </div>
         <div>
           <strong>Huddle Radio</strong>
-          <span>{showLabel} · readiness {directorScore}</span>
+          <span>{showLabel}</span>
         </div>
       </div>
       <button
