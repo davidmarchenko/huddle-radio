@@ -1,4 +1,4 @@
-import type { CommentaryKind, FantasyRoster, GameOdds, GroupSettings, HostId, NewsItem, PlayerSeasonStats, SportsPlay, VideoObservation, FantasyImpact, MomentCue } from "../shared/contracts";
+import type { CommentaryKind, FantasyRoster, GameOdds, GroupSettings, HostId, MarketSnapshot, NewsItem, PlayerSeasonStats, SportsPlay, VideoObservation, FantasyImpact, MomentCue } from "../shared/contracts";
 import { HOST_PERSONAS, type HostPersona } from "../shared/hostPersonas";
 
 export type CommentaryDraftInput = {
@@ -27,6 +27,34 @@ export type CommentaryDraftInput = {
    * one of these per turn — beat-writer flavor without overload.
    */
   analytics?: PlayerSeasonStats[];
+  /**
+   * W13/W14: live prediction-market snapshots from Kalshi /
+   * Polymarket. Pass at most 4-6 most-relevant entries — the
+   * commentary engine should already have pre-filtered via
+   * pickRelevantMarketsForGame. Hosts can quote a price ("Polymarket
+   * has the Chiefs at 64 cents") and call out moves
+   * (`recentDeltaCents`) when one is meaningful.
+   */
+  markets?: MarketSnapshot[];
+  /**
+   * High-confidence swing event derived from market history. When
+   * the engine detects a >5pt move in the last 5 min, it can pass
+   * this so the host opens with the move rather than burying it.
+   * See marketSwingDetector below.
+   */
+  marketSwing?: MarketSwing;
+};
+
+/**
+ * A single market that just moved enough to be call-out worthy.
+ * Produced by detectMarketSwings() on each commentary tick.
+ */
+export type MarketSwing = {
+  market: MarketSnapshot;
+  /** Cents change from the snapshot we last cited on-air. */
+  deltaCents: number;
+  /** Negative = market cooled on this side; positive = warming. */
+  direction: "warming" | "cooling";
 };
 
 export function resolveHostPersona(hostId?: HostId): HostPersona {
@@ -73,7 +101,9 @@ export function buildPlaySystemPrompt(persona: HostPersona): string {
     "- Keep it PG unless tone says chaos, and even then no profanity.",
     "- If video validation is unavailable, uncertain, or not-sports, anchor only to official play data and don't imply you saw video.",
     "- If `odds` is provided, you may cite the line/total/moneyline once when it lands naturally — do not lead with it; never make a betting recommendation.",
-    "- If `analytics` carries stats for a player you mention (snap%, EPA/play, target share, etc.), you may weave ONE of those numbers in when it sharpens the call. Don't dump multiple. Skip if it would feel forced."
+    "- If `analytics` carries stats for a player you mention (snap%, EPA/play, target share, etc.), you may weave ONE of those numbers in when it sharpens the call. Don't dump multiple. Skip if it would feel forced.",
+    "- If `markets` carries live prediction-market prices, you may cite ONE per turn when it sharpens the call. Speak the price as cents ('Kalshi has them at 64 cents to win'); attribute the source ('Polymarket' / 'Kalshi'). Never recommend a trade.",
+    "- If `marketSwing` is set, lead with it: a market just moved meaningfully on this story. Name the side, the source, the direction, and the magnitude in cents."
   ].join("\n");
 }
 
@@ -147,8 +177,65 @@ export function buildCommentaryPayload(input: CommentaryDraftInput, persona: Hos
       pointsPerGame: stats.pointsPerGame,
       note: stats.note
     })),
+    markets: (input.markets ?? []).slice(0, 6).map((market) => ({
+      source: market.source,
+      kind: market.marketKind,
+      title: market.title,
+      outcome: market.outcomeLabel,
+      yesCents: market.yesPriceCents,
+      moveCents: market.recentDeltaCents ?? 0,
+      volume24h: market.volume24hUsd ?? null
+    })),
+    marketSwing: input.marketSwing
+      ? {
+          source: input.marketSwing.market.source,
+          title: input.marketSwing.market.title,
+          outcome: input.marketSwing.market.outcomeLabel,
+          fromCents: input.marketSwing.market.yesPriceCents - input.marketSwing.deltaCents,
+          toCents: input.marketSwing.market.yesPriceCents,
+          direction: input.marketSwing.direction
+        }
+      : null,
     recentCommentary: input.recentCommentary.slice(0, 4)
   };
+}
+
+/**
+ * Compare a fresh batch of MarketSnapshots against the last batch
+ * we cited on-air, and surface any market that moved by more than
+ * `thresholdCents` (default 5). Used per commentary tick to decide
+ * whether to lead with a market story.
+ *
+ * Returns at most one swing — the largest absolute move — so the
+ * host doesn't get pulled in two directions at once. Sorts by
+ * absolute delta so the loudest signal wins.
+ */
+export function detectMarketSwings(
+  current: MarketSnapshot[],
+  previous: MarketSnapshot[],
+  thresholdCents = 5
+): MarketSwing | undefined {
+  if (current.length === 0 || previous.length === 0) return undefined;
+  const previousById = new Map(
+    previous.map((snapshot) => [`${snapshot.source}:${snapshot.externalId}`, snapshot])
+  );
+  let best: MarketSwing | undefined;
+  let bestAbs = thresholdCents - 1;
+  for (const snapshot of current) {
+    const key = `${snapshot.source}:${snapshot.externalId}`;
+    const prior = previousById.get(key);
+    if (!prior) continue;
+    const delta = snapshot.yesPriceCents - prior.yesPriceCents;
+    const abs = Math.abs(delta);
+    if (abs <= bestAbs) continue;
+    bestAbs = abs;
+    best = {
+      market: snapshot,
+      deltaCents: delta,
+      direction: delta > 0 ? "warming" : "cooling"
+    };
+  }
+  return best;
 }
 
 export function sanitizeCommentary(text: string, fallbackText: string): string {

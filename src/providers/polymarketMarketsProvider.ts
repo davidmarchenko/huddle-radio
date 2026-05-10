@@ -116,7 +116,7 @@ export async function fetchPolymarketSnapshots(options: FetchPolymarketOptions =
             // snapshot per outcome that's clearly the "yes" side
             // (price > 0). Skip scaffolding-only outcomes.
             return outcomes
-              .map((label, idx) => {
+              .map<MarketSnapshot | undefined>((label, idx) => {
                 const priceStr = prices[idx];
                 if (!priceStr) return undefined;
                 const priceNum = Number.parseFloat(priceStr);
@@ -132,7 +132,7 @@ export async function fetchPolymarketSnapshots(options: FetchPolymarketOptions =
                   yesPriceCents,
                   volume24hUsd: market.volume24hr,
                   observedAt
-                } satisfies MarketSnapshot;
+                };
               })
               .filter((snapshot): snapshot is MarketSnapshot => snapshot !== undefined);
           });
