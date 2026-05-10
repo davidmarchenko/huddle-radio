@@ -9071,50 +9071,23 @@ body:has(.huddle-app)::after,
   --hr-corner-smoothing: 0.62;
 }
 
-/* Single source of truth for continuous corners. Add new card / hero
-   surfaces here rather than declaring `corner-shape` inline at the
-   call site. The `or` clause covers older Safari TP that only ships
-   the prefixed variant; both declarations are written so whichever
-   the engine recognises wins. */
+/* Continuous corners, applied universally. Every element inside the
+   app shell (and the profile modal, which renders into a portal) gets
+   `corner-shape: squircle` — for elements without `border-radius`
+   the property is a no-op, so this is safe to broadcast. The `or`
+   clause covers older Safari TP that only ships the prefixed
+   variant; both declarations are emitted so whichever the engine
+   recognises wins.
+
+   If a specific surface ever needs a non-squircle look, override it
+   on that selector with `corner-shape: round` (or `superellipse(...)`
+   for a custom curve). */
 @supports (corner-shape: squircle) or (-webkit-corner-shape: squircle) {
-  .huddle-app button,
-  .huddle-app .huddle-card,
-  .huddle-app .empty-step,
-  .huddle-app .league-room-card,
-  .huddle-app .user-card,
-  .huddle-app .host-studio,
-  .huddle-app .moment-hero,
-  .huddle-app .recap-hero,
-  .huddle-app .pregame-rail > article,
-  .huddle-app .audio-live-rail > article,
-  .huddle-app .video-stage,
-  .huddle-app .huddle-player,
-  .huddle-app .mini-player,
-  .huddle-app .empty-actions button,
-  .huddle-app input,
-  .huddle-app select,
-  .huddle-app textarea,
-  .huddle-app .empty-host-art,
-  .huddle-app .watch-art,
-  .huddle-app .host-art,
-  .huddle-app .fantasy-art,
-  .huddle-app .fantasy-art span,
-  .huddle-app .empty-step b,
-  .huddle-app .on-air-pill,
-  .huddle-app .status-pill,
-  .huddle-app .live-callout,
-  .huddle-app .score-bug,
-  .huddle-app .live-rail-card,
-  .huddle-app .player-show,
-  .huddle-app .live-host-strip > div,
-  .huddle-app .live-host-strip > button,
-  .huddle-app .empty-note span,
-  .huddle-app .voice-orb,
-  .huddle-app .live-player-portrait,
-  .huddle-app .discover-banner,
-  .huddle-app .game-card-thumb,
-  .huddle-app .pregame-checklist,
-  .profile-modal {
+  .huddle-app,
+  .huddle-app *,
+  .profile-modal-backdrop,
+  .profile-modal,
+  .profile-modal * {
     corner-shape: squircle;
     -webkit-corner-shape: squircle;
   }
