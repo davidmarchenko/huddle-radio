@@ -6983,7 +6983,7 @@ body:has(.huddle-app) {
   display: grid;
   gap: var(--hr-space-4);
   padding: var(--hr-pad-card-loose);
-  border-radius: var(--hr-radius-md);
+  border-radius: var(--hr-radius-card);
   border: 1px solid color-mix(in srgb, var(--hr-gold) 28%, transparent);
   background:
     radial-gradient(120% 90% at 100% -20%, color-mix(in srgb, var(--hr-gold) 16%, transparent), transparent 60%),
@@ -7025,7 +7025,7 @@ body:has(.huddle-app) {
   display: grid;
   gap: var(--hr-space-3);
   padding: var(--hr-pad-card-tight);
-  border-radius: var(--hr-radius-sm);
+  border-radius: var(--hr-radius-md);
   border: 1px solid var(--hr-line);
   background: var(--hr-bg-2);
   position: relative;
@@ -13851,7 +13851,7 @@ body {
   align-items: center;
   gap: var(--hr-space-3);
   padding: var(--hr-space-3) var(--hr-space-4);
-  border-radius: var(--hr-radius-sm);
+  border-radius: var(--hr-radius-md);
   border: 1px solid color-mix(in srgb, var(--hr-warn) 32%, transparent);
   background: color-mix(in srgb, var(--hr-warn) 8%, var(--hr-bg-1));
   color: var(--hr-text);
