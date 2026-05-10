@@ -6984,6 +6984,13 @@ body:has(.huddle-app) {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.tonight-glance-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--hr-space-1);
+}
+
 .tonight-glance-header .eyebrow {
   color: var(--hr-gold-soft);
 }
@@ -6993,7 +7000,7 @@ body:has(.huddle-app) {
 }
 
 .tonight-glance-header h2 {
-  margin: var(--hr-space-1) 0 0;
+  margin: 0;
   font-family: var(--hr-font-display);
   font-weight: var(--hr-weight-regular);
   font-size: var(--hr-text-lg);
@@ -7001,7 +7008,7 @@ body:has(.huddle-app) {
 }
 
 .tonight-glance-header p {
-  margin: var(--hr-space-1) 0 0;
+  margin: 0;
   color: var(--hr-text-muted);
   font-size: var(--hr-text-sm);
 }
