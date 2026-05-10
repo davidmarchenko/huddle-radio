@@ -1576,6 +1576,8 @@ function App() {
         tonightGlance={tonightGlance}
         onNudgeHost={nudgeHost}
         onSubmitCue={submitListenerCue}
+        observation={lastObservation}
+        modelLabel={providers.model}
         onArchiveClip={archiveClip}
         pregameNews={pregameNews}
         pregameOdds={pregameOdds}
@@ -2169,6 +2171,65 @@ function MarketsTicker({ game }: { game?: SportsGameState }) {
   );
 }
 
+/**
+ * W20: "Nemotron sees" panel. Shows the listener what the vision
+ * model is currently observing in the broadcast (or screen-share)
+ * frame, with model attribution and freshness. Hidden silently when
+ * no observation has landed yet so the rail isn't a placeholder
+ * before the first frame analysis.
+ *
+ * Pulls from the same `lastObservation` state already set by the
+ * commentary/observation websocket events — the panel is purely a
+ * read view, no extra fetches.
+ */
+function NemotronSeesPanel({
+  observation,
+  modelLabel
+}: {
+  observation?: LivecastCommentary["observation"];
+  modelLabel?: string;
+}) {
+  if (!observation) return null;
+  const validation = observation.validation;
+  const status = validation?.status ?? "unavailable";
+  const confidencePct = Math.round((validation?.confidence ?? observation.confidence ?? 0) * 100);
+  const ageSeconds = Math.max(0, Math.round((Date.now() - Date.parse(observation.observedAt)) / 1000));
+  const evidence = validation?.evidence?.slice(0, 3) ?? [];
+  const headline =
+    status === "sports-event"
+      ? `${(validation?.sport ?? "Sports").replace(/^./, (c) => c.toUpperCase())} broadcast confirmed`
+      : status === "not-sports"
+        ? "Frame doesn't look like a sporting event"
+        : status === "uncertain"
+          ? "Visual context uncertain"
+          : "Waiting on a usable frame";
+  return (
+    <article className="huddle-card nemotron-sees-card" data-status={status}>
+      <header className="nemotron-sees-header">
+        <span className="eyebrow nemotron-eyebrow">
+          <span className="nemotron-dot" aria-hidden="true" />
+          Nemotron sees
+        </span>
+        <span className="nemotron-meta">{modelLabel ?? "Nano Omni"}</span>
+      </header>
+      <h3>{headline}</h3>
+      <p className="nemotron-summary">{observation.summary}</p>
+      <div className="nemotron-metrics">
+        <Metric label="Confidence" value={`${confidencePct}%`} />
+        <Metric label="Frame" value={observation.usedFrame ? "live" : "—"} />
+        <Metric label="Updated" value={ageSeconds < 5 ? "just now" : `${ageSeconds}s ago`} />
+      </div>
+      {evidence.length > 0 && (
+        <ul className="nemotron-evidence">
+          {evidence.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      )}
+    </article>
+  );
+}
+
 function ScoreBug({ game, mediaIndex }: { game?: SportsGameState; mediaIndex: MediaLookupIndex }) {
   return (
     <div className="score-bug" aria-label="Score">
@@ -2252,6 +2313,8 @@ function HuddleExperience({
   onNudgeHost,
   onSubmitCue,
   onArchiveClip,
+  observation,
+  modelLabel,
   pregameNews,
   pregameOdds,
   friendMatchups
@@ -2315,6 +2378,8 @@ function HuddleExperience({
   onNudgeHost: (hostId: HostId) => void;
   onSubmitCue?: (cue: ListenerCue) => boolean;
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
+  observation?: LivecastCommentary["observation"];
+  modelLabel?: string;
   pregameNews: NewsItem[];
   pregameOdds?: GameOdds;
   friendMatchups: ReturnType<typeof buildFriendMatchups>;
@@ -2385,6 +2450,8 @@ function HuddleExperience({
             videoRef={videoRef}
             onVideoError={onVideoError}
             onStop={onStop}
+            observation={observation}
+            modelLabel={modelLabel}
           />
         )}
         {!showHome && phase === "live-audio" && (
@@ -2401,6 +2468,8 @@ function HuddleExperience({
             listenerStakes={listenerStakes}
             onNudgeHost={onNudgeHost}
             onSubmitCue={onSubmitCue}
+            observation={observation}
+            modelLabel={modelLabel}
             profile={profile}
           />
         )}
@@ -4149,7 +4218,9 @@ function HuddleLiveWithStream({
   hasVideoSource,
   videoRef,
   onVideoError,
-  onStop
+  onStop,
+  observation,
+  modelLabel
 }: {
   game?: SportsGameState;
   hostTurns: HuddleHostTurn[];
@@ -4161,6 +4232,8 @@ function HuddleLiveWithStream({
   videoRef: React.RefObject<HTMLVideoElement | null>;
   onVideoError: () => void;
   onStop: () => void;
+  observation?: LivecastCommentary["observation"];
+  modelLabel?: string;
 }) {
   return (
     <section className="live-layout">
@@ -4176,6 +4249,7 @@ function HuddleLiveWithStream({
         <FantasyMatchupFloat matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
       </div>
       <aside className="on-air-panel">
+        <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
         <HostTurns turns={hostTurns} />
         <button className="secondary" onClick={onStop}><span className="icon icon-stop" aria-hidden="true" />Stop show</button>
       </aside>
@@ -4340,6 +4414,8 @@ function HuddleLiveAudio({
   listenerStakes,
   onNudgeHost,
   onSubmitCue,
+  observation,
+  modelLabel,
   profile
 }: {
   game?: SportsGameState;
@@ -4354,6 +4430,8 @@ function HuddleLiveAudio({
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   onNudgeHost: (hostId: HostId) => void;
   onSubmitCue?: (cue: ListenerCue) => boolean;
+  observation?: LivecastCommentary["observation"];
+  modelLabel?: string;
   profile?: UserProfile;
 }) {
   const latestPlay = plays[0] ?? game?.currentPlay;
@@ -4463,6 +4541,7 @@ function HuddleLiveAudio({
         <HostTurns turns={hostTurns} />
       </section>
       <aside className="audio-live-rail">
+        <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         <article className="huddle-card fantasy-impact-card">
           <span className="eyebrow"><span className="icon icon-trophy-winner" aria-hidden="true" />Fantasy impact</span>

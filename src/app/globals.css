@@ -16087,3 +16087,114 @@ body {
 .markets-ticker-delta.is-down {
   color: #c2304a;
 }
+
+/* W20: "Nemotron sees" panel — surfaces what the vision model is
+   currently observing in the broadcast. Sits above the matchup card
+   on the live rail and the host turns column on the stream view. */
+.nemotron-sees-card {
+  position: relative;
+  padding: var(--hr-space-3) var(--hr-space-4);
+  border: 1px solid color-mix(in srgb, #76b900 22%, var(--hr-line));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #76b900 6%, var(--hr-surface)) 0%,
+    var(--hr-surface) 60%
+  );
+  display: flex;
+  flex-direction: column;
+  gap: var(--hr-space-2);
+}
+
+.nemotron-sees-card[data-status="not-sports"] {
+  border-color: color-mix(in srgb, #c2304a 28%, var(--hr-line));
+}
+
+.nemotron-sees-card[data-status="uncertain"],
+.nemotron-sees-card[data-status="unavailable"] {
+  border-color: color-mix(in srgb, var(--hr-text) 16%, var(--hr-line));
+}
+
+.nemotron-sees-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hr-space-2);
+}
+
+.nemotron-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #5a8a00;
+  font-weight: 700;
+}
+
+.nemotron-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #76b900;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #76b900 28%, transparent);
+  animation: nemotron-dot-pulse 2.4s infinite ease-in-out;
+}
+
+.nemotron-meta {
+  font-size: 0.7rem;
+  color: var(--hr-text-muted);
+  font-weight: 500;
+}
+
+.nemotron-sees-card h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.nemotron-summary {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--hr-text);
+  line-height: 1.4;
+}
+
+.nemotron-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--hr-space-2);
+}
+
+.nemotron-evidence {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.nemotron-evidence li {
+  position: relative;
+  padding-left: 1rem;
+  font-size: 0.75rem;
+  color: var(--hr-text-muted);
+}
+
+.nemotron-evidence li::before {
+  content: "›";
+  position: absolute;
+  left: 0;
+  color: #76b900;
+  font-weight: 700;
+}
+
+@keyframes nemotron-dot-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, #76b900 24%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, #76b900 12%, transparent);
+  }
+}
