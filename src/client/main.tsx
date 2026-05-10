@@ -1330,7 +1330,19 @@ function App() {
     }
   };
 
-  const pickAndStartLivecast = (gameId: string, dataMode: "demo" | "espn") => {
+  /**
+   * Stage a game for preview without opening the WebSocket. Lands the
+   * UI in the `pregame` phase where the matchup card, Vegas line, news
+   * storylines, listener stakes, and friend matchups are visible. The
+   * user explicitly commits via the "Start show" CTA on the pregame
+   * page, which calls `pickAndStartLivecast` for the same gameId.
+   *
+   * Why split: previously, tapping any game card opened a WebSocket
+   * and started TTS streaming immediately — heavy commitment for a
+   * "let me see what this matchup is" tap. Browsing seven sports of
+   * games shouldn't burn vendor budget per tap.
+   */
+  const pickGameForPreview = (gameId: string, dataMode: "demo" | "espn") => {
     setViewingHome(false);
     if (window.location.pathname !== `/watch/${gameId}`) {
       window.history.pushState({ view: "show", gameId }, "", `/watch/${gameId}`);
@@ -1348,6 +1360,8 @@ function App() {
         sport: selected.sport,
         awayTeam: selected.awayTeam,
         homeTeam: selected.homeTeam,
+        awayMeta: selected.awayMeta,
+        homeMeta: selected.homeMeta,
         status: selected.status,
         recentPlays: current?.gameId === selected.id ? current.recentPlays : [],
         currentPlay: current?.gameId === selected.id && current.currentPlay ? current.currentPlay : sportsGameOptionPlay(selected),
@@ -1366,6 +1380,19 @@ function App() {
     // a connected fantasy account. They can still hit "connect" later
     // via the discover header.
     setDemoMode(true);
+    // showPrepared=true is what `deriveHuddlePhase` watches for to
+    // route into `pregame` — without it we'd fall back to `empty`.
+    setShowPrepared(true);
+  };
+
+  /**
+   * Explicit "Start show" — opens the WebSocket. Routed via the
+   * pregame page's primary CTA after the user has previewed the
+   * matchup. Direct callers (sample CTA on landing, recap → start
+   * a new show) still go straight here.
+   */
+  const pickAndStartLivecast = (gameId: string, dataMode: "demo" | "espn") => {
+    pickGameForPreview(gameId, dataMode);
     startLivecast({ sportsGameId: gameId, sportsDataMode: dataMode, bypassReadiness: true });
   };
 
@@ -1484,6 +1511,7 @@ function App() {
           onRefreshGames: () => void refreshSportsGames(sportsDataMode)
         }}
         onPickAndStart={pickAndStartLivecast}
+        onPickGame={pickGameForPreview}
         viewingHome={viewingHome}
         livecastActive={livecastActive}
         onReturnToShow={returnToShow}
@@ -2074,6 +2102,7 @@ function HuddleExperience({
   pregameReadiness,
   emptySetup,
   onPickAndStart,
+  onPickGame,
   onGoHome,
   viewingHome,
   livecastActive,
@@ -2136,6 +2165,7 @@ function HuddleExperience({
   pregameReadiness: { canStart: boolean; requirements: Array<{ id: string; label: string; met: boolean }> };
   emptySetup: EmptyStateSetup;
   onPickAndStart: (gameId: string, dataMode: "demo" | "espn") => void;
+  onPickGame: (gameId: string, dataMode: "demo" | "espn") => void;
   onGoHome: () => void;
   viewingHome: boolean;
   livecastActive: boolean;
@@ -2178,6 +2208,7 @@ function HuddleExperience({
             demoMode={demoMode}
             mediaIndex={mediaIndex}
             onPickAndStart={onPickAndStart}
+            onPickGame={onPickGame}
             onPrepareDemo={onPrepareDemo}
             onOpenSetup={onOpenSettings}
             profile={profile}
@@ -2201,6 +2232,7 @@ function HuddleExperience({
             onStart={onStart}
             onOpenStream={onOpenStream}
             onOpenSettings={onOpenSettings}
+            onBackToDiscover={onGoHome}
             demoMode={demoMode}
             readiness={pregameReadiness}
             listenerStakes={listenerStakes}
@@ -3176,6 +3208,7 @@ function HuddleDiscover({
   demoMode,
   mediaIndex,
   onPickAndStart,
+  onPickGame,
   onPrepareDemo,
   onOpenSetup,
   profile,
@@ -3189,7 +3222,10 @@ function HuddleDiscover({
   readiness: { canStart: boolean; requirements: Array<{ id: string; label: string; met: boolean }> };
   demoMode: boolean;
   mediaIndex: MediaLookupIndex;
+  /** Sample CTA / explicit "start now" intents — opens the WebSocket. */
   onPickAndStart: (gameId: string, dataMode: "demo" | "espn") => void;
+  /** Game-card / glance taps — stage for preview, do NOT cast yet. */
+  onPickGame: (gameId: string, dataMode: "demo" | "espn") => void;
   onPrepareDemo: () => void;
   onOpenSetup: () => void;
   profile?: UserProfile;
@@ -3403,7 +3439,7 @@ function HuddleDiscover({
       )}
 
       {tonightGlance && tonightGlance.perSport.length > 0 && (
-        <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickAndStart(gameId, setup.sportsDataMode)} />
+        <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
       )}
 
       {sections.length === 0 && (
@@ -3431,7 +3467,7 @@ function HuddleDiscover({
                 key={`${section.id}-${game.id}`}
                 game={game}
                 mediaIndex={mediaIndex}
-                onClick={() => onPickAndStart(game.id, setup.sportsDataMode)}
+                onClick={() => onPickGame(game.id, setup.sportsDataMode)}
                 spotlight={listenerSpotlights.get(game.id)}
               />
             ))}
@@ -3708,6 +3744,7 @@ function HuddlePregame({
   onStart,
   onOpenStream,
   onOpenSettings,
+  onBackToDiscover,
   demoMode,
   readiness,
   listenerStakes,
@@ -3726,6 +3763,8 @@ function HuddlePregame({
   onStart: () => void;
   onOpenStream: () => void;
   onOpenSettings: () => void;
+  /** Optional — when present, the pregame layout shows a "Back to discover" link so the preview flow doesn't trap. */
+  onBackToDiscover?: () => void;
   demoMode: boolean;
   readiness: { canStart: boolean; requirements: Array<{ id: string; label: string; met: boolean }> };
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
@@ -3779,6 +3818,14 @@ function HuddlePregame({
             <span className="icon icon-broadcast" aria-hidden="true" />{startLabel}
           </button>
           <button className="secondary" onClick={onOpenStream}><span className="icon icon-plus" aria-hidden="true" />Add stream</button>
+          {onBackToDiscover && (
+            // Back to discover keeps preview-mode browsing fluid: tap a
+            // game → see its preview → swap to a different game without
+            // any cast having opened.
+            <button className="secondary compact" onClick={onBackToDiscover}>
+              <span className="icon icon-arrow-left" aria-hidden="true" />Pick a different game
+            </button>
+          )}
         </div>
       </div>
       <aside className="pregame-rail">
