@@ -2374,13 +2374,7 @@ function HuddleSidebar({ fantasy, allLeagues, group, phase, profile, pastShows, 
         <b>RADIO</b>
       </div>
       <nav className="huddle-nav" aria-label="Huddle navigation">
-        {["Home", "Live Show", "Shows", "League", "History", "Clips"].map((item) => {
-          const isActive = (phase !== "empty" && item === "Live Show") || (phase === "empty" && item === "Home");
-          const handler = item === "Home" ? onGoHome : undefined;
-          return (
-            <button key={item} className={isActive ? "active" : ""} onClick={handler}>{item}</button>
-          );
-        })}
+        <button className={phase === "empty" ? "active" : ""} onClick={onGoHome}>Home</button>
         <button onClick={onOpenSettings}>Settings</button>
       </nav>
       <section className="league-room-card">

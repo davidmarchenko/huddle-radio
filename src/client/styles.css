@@ -5298,12 +5298,7 @@ body:has(.huddle-app.phase-empty)::after,
 }
 
 .phase-empty .huddle-nav button:nth-child(1)::before { content: "⌂"; }
-.phase-empty .huddle-nav button:nth-child(2)::before { content: "▣"; }
-.phase-empty .huddle-nav button:nth-child(3)::before { content: "▤"; }
-.phase-empty .huddle-nav button:nth-child(4)::before { content: "◌"; }
-.phase-empty .huddle-nav button:nth-child(5)::before { content: "▱"; }
-.phase-empty .huddle-nav button:nth-child(6)::before { content: "▣"; }
-.phase-empty .huddle-nav button:nth-child(7)::before { content: "⚙"; }
+.phase-empty .huddle-nav button:nth-child(2)::before { content: "⚙"; }
 
 .phase-empty .league-room-card {
   align-self: end;
