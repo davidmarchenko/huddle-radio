@@ -219,15 +219,32 @@ Uses browser-captured frames and OpenAI vision to classify/describe whether a so
 
 Vision output is contextual only. Official play-by-play remains the source of truth.
 
-### Nemotron
+### Nemotron Nano Omni
 
-`MODEL_PROVIDER=nemotron` is scaffolded for a future NVIDIA Nemotron 3 Nano Omni-compatible endpoint.
+NVIDIA Nemotron Nano Omni powers three Huddle surfaces from a single
+model — selecting it is a one env-var change:
 
-Expected future role:
+```bash
+MODEL_PROVIDER=nemotron
+NEMOTRON_API_KEY=<build.nvidia.com key OR any value for local NIM>
+NEMOTRON_ENDPOINT=https://integrate.api.nvidia.com/v1   # default
+NEMOTRON_MODEL=nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+```
 
-- low-latency multimodal observation,
-- audio/video event detection,
-- non-authoritative visual color for commentary.
+Surfaces:
+
+- **Vision** (`src/providers/nemotronVisionProvider.ts`) — frame
+  analysis behind `/api/vision/observe`. Renders into the "Nemotron
+  sees" panel.
+- **ASR** (`src/providers/nemotronAsrProvider.ts`) — audio
+  transcription behind `/api/asr/transcribe`. Backs both the
+  broadcast-audio sampler and the W18 push-to-talk Cue host button.
+- **Subtitles** — reuses the ASR provider plus
+  `src/shared/webvtt.ts` to emit WebVTT for shareable clips.
+
+For self-hosted on-prem deployments via NVIDIA NIM containers, see
+`docs/nim-on-prem.md`. Verify any configured endpoint with
+`npm run verify:nemotron`.
 
 ## Commentary Providers
 
