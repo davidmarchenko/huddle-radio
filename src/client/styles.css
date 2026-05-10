@@ -5,6 +5,8 @@
   --hr-font-body: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --hr-font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
+  --hr-text-3xs: 0.62rem;
+  --hr-text-xxs: 0.7rem;
   --hr-text-xs: 0.75rem;
   --hr-text-sm: 0.85rem;
   --hr-text-base: 0.95rem;
@@ -2285,7 +2287,7 @@ h1 {
   border-radius: var(--hr-radius-lg);
   box-shadow: 0 34px 90px rgba(0, 0, 0, 0.72), 0 0 0 1px rgba(255, 255, 255, 0.16);
   transform: translateZ(0);
-  animation: pipEnter 220ms ease both;
+  animation: pipEnter var(--hr-motion-base) ease both;
 }
 
 .setup-open .studio-poster {
@@ -4629,7 +4631,7 @@ h1 {
   display: grid;
   gap: 0.22rem;
   padding: 0.72rem 0.78rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-line);
   border-radius: var(--hr-radius-sm);
   background: rgba(255, 255, 255, 0.045);
 }
@@ -5700,7 +5702,7 @@ body:has(.huddle-app.phase-empty)::after,
   justify-items: center;
   gap: 0.25rem;
   padding: 0.35rem 0.8rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-line);
   border-radius: var(--hr-radius-pill);
   background: rgba(6, 9, 17, 0.5);
   backdrop-filter: blur(12px);
@@ -6079,7 +6081,7 @@ body:has(.huddle-app.phase-empty)::after,
   grid-template-columns: auto minmax(0, 1fr);
   padding: 0.9rem 1rem;
   border-radius: var(--hr-radius-lg);
-  animation: hostTurnIn 420ms ease both;
+  animation: hostTurnIn var(--hr-motion-slow) ease both;
 }
 
 .phase-live-audio .host-turn:nth-child(2) { animation-delay: 70ms; }
@@ -7085,7 +7087,7 @@ body:has(.huddle-app) {
 
 .tonight-glance-swing-label {
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   letter-spacing: var(--hr-tracking-eyebrow);
   text-transform: uppercase;
   color: var(--hr-gold-soft);
@@ -7960,7 +7962,7 @@ body:has(.huddle-app) {
 
 .stage-media {
   min-height: clamp(560px, 68vh, 740px);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-line);
   background:
     linear-gradient(180deg, rgba(5, 7, 10, 0.16), rgba(5, 7, 10, 0.78)),
     radial-gradient(circle at 50% 42%, rgba(30, 215, 96, 0.09), transparent 38%),
@@ -8801,7 +8803,7 @@ body:has(.huddle-app)::after,
   min-width: 0;
   height: 100%;
   border-radius: var(--hr-radius-sm);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hr-line);
   background: rgba(255, 255, 255, 0.03);
   font-family: var(--hr-font-mono);
   font-weight: var(--hr-weight-bold);
@@ -11732,7 +11734,7 @@ body {
   padding: 0 !important;
   color: var(--hr-text-muted) !important;
   font-family: var(--hr-font-mono) !important;
-  font-size: 0.7rem !important;
+  font-size: var(--hr-text-xxs) !important;
   font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -11741,7 +11743,7 @@ body {
 .huddle-app.phase-pregame .host-turn header small {
   color: var(--hr-text-dim);
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
 }
 
 .huddle-app.phase-pregame .host-turn p {
@@ -11843,7 +11845,7 @@ body {
 .huddle-app.phase-pregame .studio-art span small {
   position: relative;
   color: var(--hr-text-muted);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-weight: var(--hr-weight-medium);
   text-transform: none;
   letter-spacing: 0;
@@ -12039,7 +12041,7 @@ body {
 .huddle-app .mini-host-stack .host-avatar {
   width: 2rem !important;
   height: 2rem !important;
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   font-weight: var(--hr-weight-semi);
   font-family: var(--hr-font-mono) !important;
   letter-spacing: 0.02em;
@@ -12487,7 +12489,7 @@ body {
   margin-left: auto;
   color: var(--hr-text-muted) !important;
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -12822,7 +12824,7 @@ body {
   margin-left: auto;
   color: var(--hr-text-muted) !important;
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -12971,7 +12973,7 @@ body {
 
 .huddle-app.phase-recap .recap-grid .huddle-card .eyebrow {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--hr-text-muted) !important;
@@ -13142,7 +13144,7 @@ body {
   align-items: center;
   gap: 0.75rem;
   font-family: var(--hr-font-mono) !important;
-  font-size: 0.7rem !important;
+  font-size: var(--hr-text-xxs) !important;
   font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
@@ -13156,7 +13158,7 @@ body {
   gap: var(--hr-space-2);
   padding: 0.32rem var(--hr-space-3) !important;
   font-family: var(--hr-font-mono) !important;
-  font-size: 0.7rem !important;
+  font-size: var(--hr-text-xxs) !important;
   font-weight: var(--hr-weight-medium) !important;
   letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
@@ -13760,7 +13762,7 @@ body {
 .huddle-app .discover-chip-count {
   margin-left: 0.35rem;
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   font-weight: var(--hr-weight-medium);
   letter-spacing: 0.04em;
   color: currentColor;
@@ -13856,6 +13858,72 @@ body {
 }
 
 .huddle-app .discover-feed-notice p {
+  margin: 0.18rem 0 0;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.04em;
+  color: var(--hr-text-muted);
+}
+
+/* =====================================================================
+   .notice — the inline-status primitive.
+
+   Use for: secondary status nudges, inline form errors, success
+   confirmations, info toasts. NOT for primary CTAs (use
+   .discover-banner) or floating overlays (use .live-callout).
+
+   Structure:
+     <div class="notice is-warn">
+       <span class="icon icon-alert"></span>
+       <div>
+         <strong>Title</strong>
+         <p>Detail copy</p>
+       </div>
+     </div>
+
+   Pick the variant by intent: .is-info | .is-warn | .is-error |
+   .is-success. The variant sets --notice-accent; the base reads
+   that to draw border + tinted background + icon color, so adding
+   a new variant is one rule that sets one variable.
+   ===================================================================== */
+.huddle-app .notice {
+  --notice-accent: var(--hr-text-soft);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--hr-space-3);
+  padding: var(--hr-space-3) var(--hr-space-4);
+  border-radius: var(--hr-radius-md);
+  border: 1px solid color-mix(in srgb, var(--notice-accent) 32%, transparent);
+  background: color-mix(in srgb, var(--notice-accent) 8%, var(--hr-bg-1));
+  color: var(--hr-text);
+}
+
+.huddle-app .notice.is-info    { --notice-accent: var(--hr-violet-soft); }
+.huddle-app .notice.is-warn    { --notice-accent: var(--hr-warn); }
+.huddle-app .notice.is-error   { --notice-accent: var(--hr-danger); }
+.huddle-app .notice.is-success { --notice-accent: var(--hr-success); }
+
+.huddle-app .notice > .icon {
+  --icon-size: 1.25rem;
+  background-color: var(--notice-accent);
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.huddle-app .notice > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.huddle-app .notice strong {
+  display: block;
+  font-size: var(--hr-text-sm);
+  font-weight: var(--hr-weight-bold);
+  letter-spacing: 0.005em;
+  color: var(--hr-text);
+}
+
+.huddle-app .notice p {
   margin: 0.18rem 0 0;
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-xs);
@@ -14208,7 +14276,7 @@ body {
 
 .huddle-app .game-card-logo--fallback {
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   font-weight: var(--hr-weight-bold);
   letter-spacing: 0.04em;
   color: var(--hr-text-soft);
@@ -14259,7 +14327,7 @@ body {
   gap: var(--hr-space-2);
   padding: 0.22rem 0.55rem;
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
   border-radius: var(--hr-radius-pill);
@@ -14592,7 +14660,7 @@ body {
 
 .huddle-app .mini-player-meta > span {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   letter-spacing: 0.04em;
   color: var(--hr-text-muted);
   white-space: nowrap;
@@ -14716,7 +14784,7 @@ body {
 
 .huddle-app .empty-step-field > span {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-weight: var(--hr-weight-medium);
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -14824,7 +14892,7 @@ body {
 
 .huddle-app .provider-chip-soon {
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 0.1rem 0.35rem;
@@ -15080,7 +15148,7 @@ body {
 
 .huddle-app .game-row-status {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-weight: var(--hr-weight-medium);
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -15138,7 +15206,7 @@ body {
 
 .huddle-app .host-roster li span {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--hr-text-muted);
@@ -15178,7 +15246,7 @@ body {
   gap: var(--hr-space-2);
   padding: 0.32rem var(--hr-space-3);
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-weight: var(--hr-weight-medium);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -15211,7 +15279,7 @@ body {
 
 .huddle-app .pregame-checklist > .eyebrow {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-weight: var(--hr-weight-medium);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -15450,7 +15518,7 @@ body {
 .huddle-app .user-card.user-card--button > div > span {
   display: block;
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   letter-spacing: 0.04em;
   color: var(--hr-text-muted);
   overflow: hidden;
@@ -15618,7 +15686,7 @@ body {
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
   color: var(--hr-text);
   font-family: var(--hr-font-body);
-  animation: profile-pop 220ms var(--hr-ease-emphasized);
+  animation: profile-pop var(--hr-motion-base) var(--hr-ease-emphasized);
 }
 
 @keyframes profile-pop {
@@ -15661,7 +15729,7 @@ body {
 
 .profile-field > span {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   font-weight: var(--hr-weight-medium);
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -15740,7 +15808,7 @@ body {
   padding: 0.16rem var(--hr-space-2);
   font-style: normal;
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   letter-spacing: var(--hr-tracking-eyebrow);
   border-radius: var(--hr-radius-pill);
   border: 1px solid var(--hr-line);
@@ -15793,7 +15861,7 @@ body {
 
 .huddle-app .profile-roster-option > span {
   font-family: var(--hr-font-mono);
-  font-size: 0.7rem;
+  font-size: var(--hr-text-xxs);
   letter-spacing: 0.04em;
   color: var(--hr-text-muted);
   grid-column: 1;
@@ -15806,7 +15874,7 @@ body {
   align-self: center;
   font-style: normal;
   font-family: var(--hr-font-mono);
-  font-size: 0.62rem;
+  font-size: var(--hr-text-3xs);
   font-weight: var(--hr-weight-semi);
   letter-spacing: 0.12em;
   text-transform: uppercase;
