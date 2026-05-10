@@ -3470,7 +3470,7 @@ function HuddleDiscover({
         );
       })()}
 
-      {sections.length === 0 && tonightGlance && tonightGlance.perSport.length > 0 && (
+      {sections.length === 0 && profile && tonightGlance && tonightGlance.perSport.length > 0 && (
         <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
       )}
 
@@ -3494,7 +3494,7 @@ function HuddleDiscover({
             <span className="discover-section-count">{section.games.length}</span>
           </header>
           <div className="discover-grid">
-            {sectionIndex === 0 && tonightGlance && tonightGlance.perSport.length > 0 && (
+            {sectionIndex === 0 && profile && tonightGlance && tonightGlance.perSport.length > 0 && (
               <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
             )}
             {section.games.map((game) => (
