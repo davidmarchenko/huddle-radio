@@ -7025,7 +7025,7 @@ body:has(.huddle-app) {
   display: grid;
   gap: var(--hr-space-3);
   padding: var(--hr-pad-card-tight);
-  border-radius: var(--hr-radius-md);
+  border-radius: var(--hr-radius-sm);
   border: 1px solid var(--hr-line);
   background: var(--hr-bg-2);
   position: relative;
@@ -9112,8 +9112,6 @@ body:has(.huddle-app)::after,
   .huddle-app .voice-orb,
   .huddle-app .live-player-portrait,
   .huddle-app .discover-banner,
-  .huddle-app .discover-feed-notice,
-  .huddle-app .tonight-glance-card,
   .huddle-app .game-card-thumb,
   .huddle-app .pregame-checklist,
   .profile-modal {
