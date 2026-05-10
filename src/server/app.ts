@@ -42,6 +42,7 @@ import { getDefaultShowHistoryStore, isValidListenerId } from "./showHistoryStor
 import { getDefaultYahooTokenStore } from "./yahooTokenStore";
 import { buildYahooAuthUrl, exchangeYahooAuthCode, refreshYahooAccessToken } from "../providers/yahooFantasyProvider";
 import { getDefaultClipStore } from "./clipStore";
+import { rosterForListener, rosterMatchKind } from "./rosterMatch";
 import { getDefaultAdvancedStatsProvider } from "./advancedStatsProvider";
 import type { PlayerSeasonStats } from "../shared/contracts";
 import { LocalCommentaryProvider } from "../providers/openAICommentaryProvider";
@@ -700,29 +701,6 @@ export async function buildApp() {
   return app;
 }
 
-/**
- * Find the listener's roster in the league. Falls back to the first
- * roster if no rosterId is set so the LLM still has *some* lineup to
- * reference. Without this the show falls back to generic third person.
- *
- * Returns `match: true` only when the rosterId was found. Callers in
- * the live-show path log a warning when `match: false` so the operator
- * can spot misconfigured profiles instead of seeing the listener get
- * a stranger's roster narrated to them.
- */
-function rosterForListener(league: FantasyLeagueState, rosterId?: string) {
-  const allRosters = league.matchups.flatMap((matchup) => matchup.rosters);
-  if (!allRosters.length) return undefined;
-  const matched = rosterId ? allRosters.find((roster) => roster.id === rosterId) : undefined;
-  return matched ?? allRosters[0];
-}
-
-function rosterMatchKind(league: FantasyLeagueState, rosterId?: string): "exact" | "fallback-first" | "no-rosters" {
-  const allRosters = league.matchups.flatMap((matchup) => matchup.rosters);
-  if (!allRosters.length) return "no-rosters";
-  if (rosterId && allRosters.some((roster) => roster.id === rosterId)) return "exact";
-  return "fallback-first";
-}
 
 /**
  * Per-host ElevenLabs voice IDs from env. Lets Maya / Theo / Cam sound
@@ -1073,7 +1051,7 @@ function modelProviderLabel() {
   return "Mock Multimodal Model";
 }
 
-function buildFantasyPreview(league: FantasyLeagueState, providerMode: "demo" | "sleeper" | "espn", requestedWeek?: number): FantasyImportPreview {
+export function buildFantasyPreview(league: FantasyLeagueState, providerMode: "demo" | "sleeper" | "espn", requestedWeek?: number): FantasyImportPreview {
   const rosters = league.matchups.flatMap((matchup) => matchup.rosters);
   const players = new Map<string, { proTeam: string }>();
   let starterCount = 0;

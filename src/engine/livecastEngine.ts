@@ -319,12 +319,22 @@ function biasLine(bias: GroupSettings["homeTeamBias"], team: string, friends: Gr
   return `${matchingFriends.map((friend) => friend.name).join(" and ")} get the favorite-team bump.`;
 }
 
-function chooseFresh(options: string[], recent: string[], seed: string) {
+/**
+ * Pick a phrase from `options`, preferring ones that don't overlap
+ * recent commentary, with deterministic selection seeded by `seed` so
+ * the same play always produces the same line. Exported for tests.
+ *
+ * The 28-char prefix is a heuristic: roughly 5–6 words, which is a
+ * phrase boundary for most lead lines without being so loose that
+ * cosmetically-different rephrasings collide.
+ */
+export function chooseFresh(options: string[], recent: string[], seed: string): string {
   const filtered = options.filter((option) => option && !recent.some((text) => text.includes(option.slice(0, 28))));
   const choices = filtered.length ? filtered : options.filter(Boolean);
   return choices[stableIndex(seed, choices.length)] ?? "";
 }
 
-function stableIndex(value: string, modulo: number) {
+export function stableIndex(value: string, modulo: number): number {
+  if (modulo <= 0) return 0;
   return [...value].reduce((total, char) => total + char.charCodeAt(0), 0) % modulo;
 }
