@@ -162,6 +162,22 @@ Each workstream has:
 
 ---
 
+### W5 — Yahoo Fantasy provider — **shipped (2026-05-09, scaffold)**
+
+**Shipped:**
+- `YahooFantasyProvider` (`src/providers/yahooFantasyProvider.ts`) — uses Yahoo's `?format=json` shape (still mirrors the XML structure but parses with stock JSON.parse), pulls league metadata + rosters with starters/bench split via `selected_position`. Constructor takes an `accessTokenProvider` so the route layer wires per-listener tokens.
+- `buildYahooAuthUrl` / `exchangeYahooAuthCode` / `refreshYahooAccessToken` pure helpers.
+- OAuth routes: `GET /api/fantasy/yahoo/auth-url`, `GET /api/fantasy/yahoo/callback`, `POST /api/fantasy/yahoo/refresh`. State param carries `listenerId` so multiple devices can connect independently.
+- `JsonFileYahooTokenStore` keyed by listener UUID, atomic writes.
+- New env vars: `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `YAHOO_REDIRECT_URI` (all optional; routes return 503 when missing).
+
+**Deferred:**
+- Wiring `YahooFantasyProvider` into `createFantasyProvider()` — needs widening `providerMode` through the contract types, the Zod request schema, the bootstrap endpoint, and the profile UI. Substantial plumbing; better as a focused follow-up once a real Yahoo connection has been validated end-to-end.
+- Profile-modal Yahoo button — UI work paired with the factory wiring above.
+- HTTPS-callback documentation update — needs an ngrok / cloudflared step in `docs/api-keys.md`.
+
+(Original plan below.)
+
 ### W5 — Yahoo Fantasy provider
 
 **Goal:** Unblock the largest unsupported fantasy platform. Yahoo Fantasy is roughly a third of the U.S. market and entirely missing today.
@@ -233,6 +249,14 @@ Each workstream has:
 
 ---
 
+### W8 — Listener-history backend — **shipped (2026-05-09)**
+
+**Shipped:** `ShowHistoryStore` interface + `JsonFileShowHistoryStore` (per-listener JSON file under `data/show-history/`, atomic tmp+rename writes) + `InMemoryShowHistoryStore` for tests. New endpoints `GET/POST /api/history/shows` and `DELETE /api/history/shows/:id`, all keyed by an opaque `listenerId` (validated against a `[A-Za-z0-9_-]{1,128}` regex to block path traversal). Client generates a per-device UUID, stored in localStorage under `huddle-listener-id`, and pushes archived shows to the backend on recap. Boot fetch hydrates from server then merges with localStorage via `mergeShowHistory` (server wins on id collision; local fills gaps from offline-archived shows). Failure paths are silent — localStorage is the offline fallback.
+
+**Deferred:** Real account auth (email magic link / OAuth) — folded into the W5 Yahoo work since OAuth is needed there anyway.
+
+(Original plan below.)
+
 ### W8 — Listener-history backend
 
 **Goal:** Move past-shows + memory off localStorage so it survives device switches, supports sharing, and feeds smarter cross-show callbacks.
@@ -255,6 +279,22 @@ Each workstream has:
 - Privacy / retention policy. How long do we keep show transcripts?
 
 ---
+
+### W9 — Clip / show audio archival — **shipped (2026-05-09)**
+
+**Shipped:**
+- Client captures `tts` audio chunks per commentary id during the show into an in-memory ref. Real ElevenLabs path fills it; mock TTS doesn't (nothing to share).
+- New `archiveClip(commentaryId)` helper concatenates the chunks (decode → join bytes → re-encode), POSTs to `/api/clips`, returns the URL.
+- `ListenerHighlightCard` share handler now appends the clip URL to the share blurb when audio was captured; falls back to text-only on any failure.
+- `FileClipStore` (`src/server/clipStore.ts`) persists to `data/clips/<id>.<ext>` with a sibling `<id>.json` metadata file. 8MB cap, listener-id validation, `extensionFor` mime → ext mapping.
+- Endpoints: `POST /api/clips` (returns `{ id, url }`), `GET /api/clips/:id` (streams with the recorded mime type and a 1h CDN-friendly cache header).
+
+**Deferred:**
+- S3-compatible storage swap — the `ClipStore` interface is the seam.
+- Listener-owned clip listing / deletion endpoints.
+- 60-second "show in 60" composite recap clip.
+
+(Original plan below.)
 
 ### W9 — Clip / show audio archival
 

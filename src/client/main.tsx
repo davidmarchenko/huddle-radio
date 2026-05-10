@@ -43,6 +43,7 @@ import {
   applyProfileToGroup,
   buildPriorContext,
   formatRelativeTime,
+  mergeShowHistory,
   sportNounForContext,
   type LeagueClaim,
   type ShowHistoryEntry,
@@ -116,6 +117,7 @@ const defaultProviderSummary: ActiveProviderSummary = {
 };
 
 const persisted = loadPersistedSettings();
+const listenerId = getOrCreateListenerId();
 
 function App() {
   const [providerMode, setProviderMode] = useState<"demo" | "sleeper" | "espn">(persisted.providerMode ?? "demo");
@@ -206,6 +208,12 @@ function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // W9: per-commentary audio capture for clip archival. Keyed by
+  // commentary id; each value is the ordered list of base64 chunks the
+  // server streamed via TTS events. Bounded so a long show with mock
+  // TTS doesn't bloat memory — only commentaries with actual audio
+  // bytes get stored.
+  const clipChunksRef = useRef<Map<string, { mimeType: string; chunks: string[] }>>(new Map());
   const frameTimerRef = useRef<number | undefined>(undefined);
   const livecastSessionRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -556,6 +564,26 @@ function App() {
     };
   }, [game?.gameId, game?.sport, game?.awayTeam, game?.homeTeam, listenerStakes?.startersInGame]);
 
+  // W8: hydrate pastShows from the backend on boot. Server is source
+  // of truth (cross-device); localStorage is the offline fallback.
+  // We merge by id so the local cache fills any backend gap (e.g. a
+  // show archived offline that hasn't synced yet).
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/history/shows?listenerId=${encodeURIComponent(listenerId)}&limit=25`)
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`history ${response.status}`))))
+      .then((payload: { shows?: ShowHistoryEntry[] }) => {
+        if (cancelled || !Array.isArray(payload.shows)) return;
+        setPastShows((current) => mergeShowHistory(payload.shows!, current));
+      })
+      .catch(() => {
+        // Offline / 4xx → keep localStorage-only behavior. No surfacing.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Archive the show into pastShows once it transitions to recap. The
   // archived entry feeds future-show prior-context callbacks ("last
   // week Mahomes burned you").
@@ -596,6 +624,15 @@ function App() {
       totalCommentary: commentary.length
     };
     setPastShows((current) => [entry, ...current].slice(0, 25));
+    // Best-effort backend sync. Failure is silent — localStorage is
+    // still authoritative on this device, and the next boot will retry.
+    fetch("/api/history/shows", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ listenerId, entry })
+    }).catch(() => {
+      /* offline — keep going */
+    });
   }, [huddlePhase, commentary, game, group.listener?.name, listenerStakes, profile]);
 
   const startLivecast = (overrides?: { sportsGameId?: string; sportsDataMode?: "demo" | "espn"; bypassReadiness?: boolean }) => {
@@ -724,6 +761,14 @@ function App() {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
         if (message.audio.base64Audio) {
+          // W9: stash chunks for later clip archival. Mock TTS never
+          // provides bytes, so this only fills for the real ElevenLabs
+          // path — exactly the audio worth sharing.
+          const entry = clipChunksRef.current.get(message.audio.commentaryId) ?? { mimeType: message.audio.mimeType, chunks: [] };
+          entry.chunks.push(message.audio.base64Audio);
+          if (!clipChunksRef.current.has(message.audio.commentaryId)) {
+            clipChunksRef.current.set(message.audio.commentaryId, entry);
+          }
           audioQueueRef.current = audioQueueRef.current.then(() => {
             if (livecastSessionRef.current !== sessionId) return;
             return playBase64Audio(message.audio.base64Audio!, message.audio.mimeType, {
@@ -796,6 +841,48 @@ function App() {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ type: "nudge", hostId }));
   };
+
+  // W9: archive a moment's audio as a clip and return the public URL.
+  // Returns undefined when no audio was captured (mock TTS path) or
+  // when the upload fails — the caller falls back to text-only share.
+  const archiveClip = useCallback(async (commentaryId: string): Promise<string | undefined> => {
+    const captured = clipChunksRef.current.get(commentaryId);
+    if (!captured || captured.chunks.length === 0) return undefined;
+    // Concatenate the per-chunk base64 strings into a single base64
+    // payload by decoding each, joining the bytes, and re-encoding.
+    let totalLength = 0;
+    const decoded: Uint8Array[] = [];
+    for (const chunk of captured.chunks) {
+      try {
+        const bytes = Uint8Array.from(atob(chunk), (char) => char.charCodeAt(0));
+        decoded.push(bytes);
+        totalLength += bytes.byteLength;
+      } catch {
+        return undefined;
+      }
+    }
+    const merged = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const bytes of decoded) {
+      merged.set(bytes, offset);
+      offset += bytes.byteLength;
+    }
+    let binary = "";
+    for (let i = 0; i < merged.length; i++) binary += String.fromCharCode(merged[i]);
+    const audioBase64 = btoa(binary);
+    try {
+      const response = await fetch("/api/clips", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ listenerId, commentaryId, mimeType: captured.mimeType, audioBase64 })
+      });
+      if (!response.ok) return undefined;
+      const payload = await response.json() as { url?: string };
+      return payload.url;
+    } catch {
+      return undefined;
+    }
+  }, []);
 
   const stopLivecast = () => {
     livecastSessionRef.current += 1;
@@ -1371,6 +1458,7 @@ function App() {
         pastShows={pastShows}
         tonightGlance={tonightGlance}
         onNudgeHost={nudgeHost}
+        onArchiveClip={archiveClip}
         pregameNews={pregameNews}
         pregameOdds={pregameOdds}
         friendMatchups={friendMatchups}
@@ -1958,6 +2046,7 @@ function HuddleExperience({
   pastShows,
   tonightGlance,
   onNudgeHost,
+  onArchiveClip,
   pregameNews,
   pregameOdds,
   friendMatchups
@@ -2019,6 +2108,7 @@ function HuddleExperience({
   pastShows: ShowHistoryEntry[];
   tonightGlance?: ReturnType<typeof buildTonightAtAGlance>;
   onNudgeHost: (hostId: HostId) => void;
+  onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
   pregameNews: NewsItem[];
   pregameOdds?: GameOdds;
   friendMatchups: ReturnType<typeof buildFriendMatchups>;
@@ -2117,6 +2207,7 @@ function HuddleExperience({
             onExportRecap={onExportRecap}
             listenerStakes={listenerStakes}
             listenerRecapHighlight={listenerRecapHighlight}
+            onArchiveClip={onArchiveClip}
           />
         )}
       </section>
@@ -3655,7 +3746,7 @@ function ListenerStakesCard({ stakes }: { stakes: NonNullable<ReturnType<typeof 
   );
 }
 
-function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport }: { highlight: NonNullable<ReturnType<typeof buildListenerRecapHighlight>>; listenerName: string; gameLabel?: string; sport?: SportLeague }) {
+function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport, onArchiveClip }: { highlight: NonNullable<ReturnType<typeof buildListenerRecapHighlight>>; listenerName: string; gameLabel?: string; sport?: SportLeague; onArchiveClip?: (commentaryId: string) => Promise<string | undefined> }) {
   const isWin = highlight.kind === "win";
   const eyebrow = isWin ? `${listenerName}, your moment of the show` : `${listenerName}, the play that stung`;
   const deltaLabel = `${highlight.pointsDelta > 0 ? "+" : ""}${highlight.pointsDelta.toFixed(1)} pts`;
@@ -3677,13 +3768,25 @@ function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport }: { 
   }, [hostName, highlight, listenerName, gameLabel, sport]);
   const [shareState, setShareState] = useState<"idle" | "copied" | "shared" | "failed">("idle");
   const handleShare = async () => {
+    // Try to archive the moment's audio first so the share blurb can
+    // include a real clip link. Falls through silently to text-only on
+    // any failure (no audio captured, network error, etc.).
+    let clipUrl: string | undefined;
+    if (highlight.commentaryId && onArchiveClip) {
+      try {
+        clipUrl = await onArchiveClip(highlight.commentaryId);
+      } catch {
+        clipUrl = undefined;
+      }
+    }
+    const finalText = clipUrl ? `${shareText}\n${new URL(clipUrl, window.location.origin).toString()}` : shareText;
     // Mobile: native share sheet. Desktop: clipboard fallback.
     try {
       if (typeof navigator !== "undefined" && navigator.share) {
-        await navigator.share({ title: "Huddle Radio · Moment of the show", text: shareText });
+        await navigator.share({ title: "Huddle Radio · Moment of the show", text: finalText });
         setShareState("shared");
       } else if (typeof navigator !== "undefined" && navigator.clipboard) {
-        await navigator.clipboard.writeText(shareText);
+        await navigator.clipboard.writeText(finalText);
         setShareState("copied");
       } else {
         setShareState("failed");
@@ -3949,7 +4052,8 @@ function HuddleRecap({
   onStart,
   onExportRecap,
   listenerStakes,
-  listenerRecapHighlight
+  listenerRecapHighlight,
+  onArchiveClip
 }: {
   game?: SportsGameState;
   hosts: typeof HUDDLE_HOSTS;
@@ -3963,6 +4067,7 @@ function HuddleRecap({
   onExportRecap: () => void;
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   listenerRecapHighlight?: ReturnType<typeof buildListenerRecapHighlight>;
+  onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
 }) {
   const hasListener = listenerStakes?.status === "ready";
   const recapTitle = hasListener
@@ -3990,6 +4095,7 @@ function HuddleRecap({
             listenerName={listenerStakes!.listenerName}
             gameLabel={game ? `${game.awayTeam} vs ${game.homeTeam}` : undefined}
             sport={game?.sport}
+            onArchiveClip={onArchiveClip}
           />
         )}
         {listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
@@ -5312,6 +5418,27 @@ function loadPersistedSettings(): PersistedSettings {
     return settings;
   } catch {
     return {};
+  }
+}
+
+/**
+ * Per-device listener UUID for the W8 backend. The server treats it as
+ * opaque; the device-side generates it once and reuses across sessions.
+ * On environments without a real `crypto.randomUUID` (older Safari) we
+ * fall back to a Math.random-based id which is fine for an opaque key.
+ */
+function getOrCreateListenerId(): string {
+  const KEY = "huddle-listener-id";
+  try {
+    const existing = window.localStorage.getItem(KEY);
+    if (existing && /^[A-Za-z0-9_-]{1,128}$/.test(existing)) return existing;
+    const fresh = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `lid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    window.localStorage.setItem(KEY, fresh);
+    return fresh;
+  } catch {
+    return `lid-${Date.now().toString(36)}`;
   }
 }
 

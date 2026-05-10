@@ -331,6 +331,26 @@ export interface SportsDataProvider {
   health(): Promise<ProviderHealth>;
 }
 
+/**
+ * A single archived show. Written by the client when a show transitions
+ * to the recap phase; the server-side W8 history backend stores these
+ * per-listener so they survive device switches.
+ */
+export type ShowHistoryEntry = {
+  id: string;
+  startedAt: string;
+  endedAt: string;
+  sport: SportLeague;
+  gameId: string;
+  gameLabel: string;
+  listenerName: string;
+  listenerTeamName?: string;
+  finalScore?: { away: number; home: number };
+  topMoment?: { playerName: string; pointsDelta: number; hostText: string };
+  marginShift?: number;
+  totalCommentary: number;
+};
+
 export type GameOdds = {
   gameId: string;
   sport: SportLeague;

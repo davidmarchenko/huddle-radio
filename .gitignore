@@ -5,3 +5,7 @@ dist/
 coverage/
 .vite/
 public/media-cache/
+data/show-history/
+data/yahoo-tokens/
+data/clips/
+public/clips/

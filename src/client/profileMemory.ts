@@ -1,4 +1,26 @@
-import type { FantasyLeagueState, GroupSettings, SportLeague } from "../shared/contracts";
+import type { FantasyLeagueState, GroupSettings, ShowHistoryEntry, SportLeague } from "../shared/contracts";
+
+export type { ShowHistoryEntry } from "../shared/contracts";
+
+/**
+ * Merge a server-side history list with the device's local cache.
+ * Server entries are source of truth; local entries fill gaps for shows
+ * that were archived offline and haven't synced yet. Dedupe by id;
+ * newest endedAt wins; cap at 25 to keep the sidebar bounded.
+ */
+export function mergeShowHistory(
+  serverEntries: ShowHistoryEntry[],
+  localEntries: ShowHistoryEntry[]
+): ShowHistoryEntry[] {
+  const byId = new Map<string, ShowHistoryEntry>();
+  for (const entry of serverEntries) byId.set(entry.id, entry);
+  for (const entry of localEntries) {
+    if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  }
+  return [...byId.values()]
+    .sort((a, b) => (b.endedAt ?? "").localeCompare(a.endedAt ?? ""))
+    .slice(0, 25);
+}
 
 /**
  * Profile, claim, and history primitives + the pure helpers that
@@ -24,21 +46,6 @@ export type UserProfile = {
   leagues?: LeagueClaim[];
 };
 
-/** One archived show, persisted across sessions. */
-export type ShowHistoryEntry = {
-  id: string;
-  startedAt: string;
-  endedAt: string;
-  sport: SportLeague;
-  gameId: string;
-  gameLabel: string;
-  listenerName: string;
-  listenerTeamName?: string;
-  finalScore?: { away: number; home: number };
-  topMoment?: { playerName: string; pointsDelta: number; hostText: string };
-  marginShift?: number;
-  totalCommentary: number;
-};
 
 /**
  * Resolve listener identity for the given group/profile/leagues/sport.

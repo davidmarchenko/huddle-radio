@@ -15,6 +15,7 @@ import type {
   LivecastRequest,
   ProviderDiagnostics,
   ProviderHealth,
+  ShowHistoryEntry,
   SportLeague,
   SportsGameOption,
   VideoFrameSnapshot
@@ -35,6 +36,10 @@ import type { MultimodalModelProvider } from "../shared/contracts";
 import { createCommentaryProvider, describeCommentaryStack } from "./createCommentaryProvider";
 import { createOddsProvider } from "./createOddsProvider";
 import { getMetrics, incrementCounter, registerCommentaryChain, registerNewsChain, registerVisionChain, ShowUsageBudget } from "./metrics";
+import { getDefaultShowHistoryStore, isValidListenerId } from "./showHistoryStore";
+import { getDefaultYahooTokenStore } from "./yahooTokenStore";
+import { buildYahooAuthUrl, exchangeYahooAuthCode, refreshYahooAccessToken } from "../providers/yahooFantasyProvider";
+import { getDefaultClipStore } from "./clipStore";
 import { LocalCommentaryProvider } from "../providers/openAICommentaryProvider";
 import { SleeperFantasyProvider } from "../providers/sleeperFantasyProvider";
 import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProviders";
@@ -133,6 +138,191 @@ export async function buildApp() {
     return getDefaultSportsGamesCache().getStats();
   });
   app.get("/api/metrics", async () => getMetrics());
+
+  // ---- W8: Listener history backend ----
+  // The listener UUID is generated client-side and persisted in
+  // localStorage. The server treats it as opaque; trust boundary lives
+  // at the device. Real accounts (W5 follow-up) will tie this UUID to
+  // a verified identity.
+  app.get("/api/history/shows", async (request, reply) => {
+    const query = request.query as { listenerId?: string; limit?: string };
+    if (!isValidListenerId(query.listenerId)) {
+      reply.code(400);
+      return { error: "Invalid listenerId." };
+    }
+    const limit = query.limit ? Math.max(1, Math.min(50, Number(query.limit))) : undefined;
+    const shows = await getDefaultShowHistoryStore().list({ listenerId: query.listenerId, limit });
+    return { shows };
+  });
+
+  app.post("/api/history/shows", async (request, reply) => {
+    const body = request.body as { listenerId?: string; entry?: ShowHistoryEntry };
+    if (!isValidListenerId(body?.listenerId)) {
+      reply.code(400);
+      return { error: "Invalid listenerId." };
+    }
+    if (!body?.entry || typeof body.entry !== "object" || typeof body.entry.id !== "string" || typeof body.entry.startedAt !== "string" || typeof body.entry.endedAt !== "string") {
+      reply.code(400);
+      return { error: "Invalid history entry." };
+    }
+    await getDefaultShowHistoryStore().archive({ listenerId: body.listenerId, entry: body.entry });
+    return { ok: true };
+  });
+
+  // ---- W5: Yahoo Fantasy OAuth ----
+  app.get("/api/fantasy/yahoo/auth-url", async (request, reply) => {
+    if (!config.YAHOO_CLIENT_ID || !config.YAHOO_REDIRECT_URI) {
+      reply.code(503);
+      return { error: "Yahoo OAuth is not configured. Set YAHOO_CLIENT_ID and YAHOO_REDIRECT_URI." };
+    }
+    const query = request.query as { listenerId?: string };
+    if (!isValidListenerId(query.listenerId)) {
+      reply.code(400);
+      return { error: "Invalid listenerId." };
+    }
+    return {
+      url: buildYahooAuthUrl({
+        clientId: config.YAHOO_CLIENT_ID,
+        redirectUri: config.YAHOO_REDIRECT_URI,
+        state: query.listenerId
+      })
+    };
+  });
+
+  app.get("/api/fantasy/yahoo/callback", async (request, reply) => {
+    if (!config.YAHOO_CLIENT_ID || !config.YAHOO_CLIENT_SECRET || !config.YAHOO_REDIRECT_URI) {
+      reply.code(503);
+      return { error: "Yahoo OAuth is not configured." };
+    }
+    const query = request.query as { code?: string; state?: string; error?: string };
+    if (query.error) {
+      reply.code(400);
+      return { error: query.error };
+    }
+    if (!query.code || !isValidListenerId(query.state)) {
+      reply.code(400);
+      return { error: "Missing code or invalid state (listener id)." };
+    }
+    const token = await exchangeYahooAuthCode({
+      code: query.code,
+      clientId: config.YAHOO_CLIENT_ID,
+      clientSecret: config.YAHOO_CLIENT_SECRET,
+      redirectUri: config.YAHOO_REDIRECT_URI
+    });
+    if (!token.access_token || !token.refresh_token) {
+      reply.code(502);
+      return { error: token.error_description ?? token.error ?? "Yahoo token exchange failed." };
+    }
+    await getDefaultYahooTokenStore().put(query.state, {
+      accessToken: token.access_token,
+      refreshToken: token.refresh_token,
+      expiresAt: Date.now() + (token.expires_in ?? 3600) * 1000,
+      yahooGuid: token.xoauth_yahoo_guid,
+      scope: token.scope,
+      storedAt: Date.now()
+    });
+    return { ok: true };
+  });
+
+  app.post("/api/fantasy/yahoo/refresh", async (request, reply) => {
+    if (!config.YAHOO_CLIENT_ID || !config.YAHOO_CLIENT_SECRET || !config.YAHOO_REDIRECT_URI) {
+      reply.code(503);
+      return { error: "Yahoo OAuth is not configured." };
+    }
+    const body = request.body as { listenerId?: string };
+    if (!isValidListenerId(body?.listenerId)) {
+      reply.code(400);
+      return { error: "Invalid listenerId." };
+    }
+    const existing = await getDefaultYahooTokenStore().get(body.listenerId);
+    if (!existing) {
+      reply.code(404);
+      return { error: "No Yahoo token stored for this listener." };
+    }
+    const refreshed = await refreshYahooAccessToken({
+      refreshToken: existing.refreshToken,
+      clientId: config.YAHOO_CLIENT_ID,
+      clientSecret: config.YAHOO_CLIENT_SECRET,
+      redirectUri: config.YAHOO_REDIRECT_URI
+    });
+    if (!refreshed.access_token) {
+      reply.code(502);
+      return { error: refreshed.error_description ?? refreshed.error ?? "Yahoo token refresh failed." };
+    }
+    await getDefaultYahooTokenStore().put(body.listenerId, {
+      ...existing,
+      accessToken: refreshed.access_token,
+      refreshToken: refreshed.refresh_token ?? existing.refreshToken,
+      expiresAt: Date.now() + (refreshed.expires_in ?? 3600) * 1000,
+      storedAt: Date.now()
+    });
+    return { ok: true };
+  });
+
+  // ---- W9: Clip archival ----
+  app.post("/api/clips", async (request, reply) => {
+    const body = request.body as { listenerId?: string; commentaryId?: string; mimeType?: string; audioBase64?: string };
+    if (!isValidListenerId(body?.listenerId)) {
+      reply.code(400);
+      return { error: "Invalid listenerId." };
+    }
+    if (!body?.mimeType || typeof body.audioBase64 !== "string" || body.audioBase64.length === 0) {
+      reply.code(400);
+      return { error: "Missing audio payload." };
+    }
+    let buffer: Buffer;
+    try {
+      buffer = Buffer.from(body.audioBase64, "base64");
+    } catch {
+      reply.code(400);
+      return { error: "Invalid base64 audio." };
+    }
+    try {
+      const metadata = await getDefaultClipStore().put({
+        listenerId: body.listenerId,
+        commentaryId: body.commentaryId,
+        mimeType: body.mimeType,
+        data: buffer
+      });
+      return { id: metadata.id, url: `/api/clips/${metadata.id}`, mimeType: metadata.mimeType, byteLength: metadata.byteLength };
+    } catch (error) {
+      reply.code(400);
+      return { error: error instanceof Error ? error.message : "Clip persistence failed." };
+    }
+  });
+
+  app.get("/api/clips/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const result = await getDefaultClipStore().read(id);
+    if (!result) {
+      reply.code(404);
+      return { error: "Not found." };
+    }
+    reply.header("Content-Type", result.metadata.mimeType);
+    // Audio rarely changes; cache aggressively but still allow the
+    // browser to revalidate so a deleted clip clears.
+    reply.header("Cache-Control", "public, max-age=3600, stale-while-revalidate=300");
+    return reply.send(result.data);
+  });
+
+  app.delete("/api/history/shows/:showId", async (request, reply) => {
+    const { showId } = request.params as { showId: string };
+    const query = request.query as { listenerId?: string };
+    if (!isValidListenerId(query.listenerId)) {
+      reply.code(400);
+      return { error: "Invalid listenerId." };
+    }
+    if (!showId) {
+      reply.code(400);
+      return { error: "Missing showId." };
+    }
+    const removed = await getDefaultShowHistoryStore().remove({ listenerId: query.listenerId, showId });
+    if (!removed) {
+      reply.code(404);
+      return { error: "Not found." };
+    }
+    return { ok: true };
+  });
   app.get("/api/odds", async (request) => {
     const query = request.query as { gameId?: string; sport?: SportLeague; homeTeam?: string; awayTeam?: string };
     if (!query.gameId || !query.sport || !query.homeTeam || !query.awayTeam) {

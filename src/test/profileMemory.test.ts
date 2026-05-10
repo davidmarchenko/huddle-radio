@@ -3,6 +3,7 @@ import {
   applyProfileToGroup,
   buildPriorContext,
   formatRelativeTime,
+  mergeShowHistory,
   sportNounForContext,
   type ShowHistoryEntry,
   type UserProfile
@@ -201,5 +202,38 @@ describe("buildPriorContext", () => {
   it("formats negative deltas without a leading plus sign", () => {
     const result = buildPriorContext([nbaShow], "nba", "Alex");
     expect(result).toMatch(/Jokić went -3\.5/);
+  });
+});
+
+describe("mergeShowHistory", () => {
+  const make = (id: string, endedAt: string): ShowHistoryEntry => ({
+    id,
+    startedAt: endedAt,
+    endedAt,
+    sport: "nfl",
+    gameId: "g",
+    gameLabel: "X",
+    listenerName: "Alex",
+    totalCommentary: 1
+  });
+
+  it("server entries take precedence on id collision", () => {
+    const server = [make("a", "2026-05-09T22:00:00Z")];
+    const local = [{ ...make("a", "2026-05-09T22:00:00Z"), listenerName: "Stale Alex" }];
+    const merged = mergeShowHistory(server, local);
+    expect(merged[0].listenerName).toBe("Alex");
+  });
+
+  it("includes local-only entries the server hasn't seen yet", () => {
+    const server = [make("a", "2026-05-09T22:00:00Z")];
+    const local = [make("b", "2026-05-09T23:00:00Z")];
+    const merged = mergeShowHistory(server, local);
+    expect(merged.map((e) => e.id)).toEqual(["b", "a"]);
+  });
+
+  it("caps at 25 entries newest-first", () => {
+    const all = Array.from({ length: 40 }, (_, i) => make(`id-${i}`, `2026-05-09T${(i % 24).toString().padStart(2, "0")}:00:00Z`));
+    const merged = mergeShowHistory(all, []);
+    expect(merged).toHaveLength(25);
   });
 });

@@ -41,6 +41,11 @@ const EnvSchema = z.object({
   ELEVENLABS_EXPRESSIVE_MODEL_ID: z.string().default(recommendedModelDefaults.ttsExpressiveModel),
   ESPN_SWID: z.string().optional(),
   ESPN_S2: z.string().optional(),
+  // Yahoo Fantasy OAuth. Yahoo requires HTTPS callback URLs even for
+  // local dev; pair with ngrok / cloudflared to test locally.
+  YAHOO_CLIENT_ID: z.string().optional(),
+  YAHOO_CLIENT_SECRET: z.string().optional(),
+  YAHOO_REDIRECT_URI: z.string().optional(),
   // The Odds API (free tier 500 req/mo). Spread, total, moneyline. When
   // set, surfaces a Vegas-line card pregame and feeds the commentary
   // payload so persona prompts can cite the line.

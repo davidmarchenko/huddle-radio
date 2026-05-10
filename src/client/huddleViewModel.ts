@@ -84,6 +84,8 @@ export type ListenerRecapHighlight = {
   hostId?: string;
   playHeadline: string;
   reason: string;
+  /** ID of the commentary that captured this moment — used for clip archival. */
+  commentaryId?: string;
 };
 
 export type TonightAtAGlance = {
@@ -548,7 +550,8 @@ export function buildListenerRecapHighlight(input: {
     hostText: chosen.item.text,
     hostId: chosen.item.hostId,
     playHeadline: chosen.item.play.headline,
-    reason: chosen.impact.reason
+    reason: chosen.impact.reason,
+    commentaryId: chosen.item.id
   };
 }
 
