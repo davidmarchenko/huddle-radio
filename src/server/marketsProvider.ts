@@ -2,6 +2,12 @@ import type { MarketSnapshot, SportLeague } from "../shared/contracts";
 import { fetchKalshiSnapshots } from "../providers/kalshiMarketsProvider";
 import { fetchPolymarketSnapshots } from "../providers/polymarketMarketsProvider";
 
+// Re-export the pure ranking helper from shared/ so existing server
+// callers don't have to update their imports. The implementation
+// lives in shared/ now so the W19 client ticker can call it without
+// pulling in the Kalshi/Polymarket fetchers.
+export { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
+
 /**
  * Unified prediction-markets provider.
  *
@@ -102,48 +108,6 @@ export async function fetchMarketSnapshots(options: FetchMarketsOptions = {}): P
   } finally {
     inFlight.delete(key);
   }
-}
-
-/**
- * Pick the N most-relevant markets for a single game. Heuristic:
- * prefer moneyline > player-prop > spread > total > futures, then
- * by absolute volume. Used by the UI ticker (W19) to choose which
- * 2-3 markets to surface alongside the score bug.
- */
-export function pickRelevantMarketsForGame(
-  snapshots: MarketSnapshot[],
-  game: { sport: SportLeague; teams: string[]; players?: string[] },
-  limit = 3
-): MarketSnapshot[] {
-  const teamMatchers = game.teams.map((t) => t.toLowerCase());
-  const playerMatchers = (game.players ?? []).map((p) => p.toLowerCase());
-
-  const scored = snapshots
-    .filter((snapshot) => snapshot.sport === game.sport)
-    .map((snapshot) => {
-      const haystack = `${snapshot.title} ${snapshot.outcomeLabel}`.toLowerCase();
-      const teamHit = teamMatchers.some((needle) => needle && haystack.includes(needle));
-      const playerHit = playerMatchers.some((needle) => needle && haystack.includes(needle));
-      if (!teamHit && !playerHit) return undefined;
-      const kindWeight = ({
-        moneyline: 5,
-        "player-prop": 4,
-        spread: 3,
-        total: 2,
-        futures: 1,
-        other: 0
-      } satisfies Record<MarketSnapshot["marketKind"], number>)[snapshot.marketKind];
-      const volumeScore = Math.log10(1 + (snapshot.volume24hUsd ?? 0));
-      const playerBonus = playerHit ? 2 : 0;
-      return {
-        snapshot,
-        score: kindWeight + volumeScore + playerBonus
-      };
-    })
-    .filter((entry): entry is { snapshot: MarketSnapshot; score: number } => entry !== undefined)
-    .sort((a, b) => b.score - a.score);
-
-  return scored.slice(0, limit).map((entry) => entry.snapshot);
 }
 
 /** Reset for tests. */

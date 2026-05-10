@@ -15989,3 +15989,101 @@ body {
     box-shadow: 0 0 0 8px color-mix(in srgb, #ff4f5e 30%, transparent);
   }
 }
+
+/* W19: Markets overlay ticker. Sits next to the ScoreBug. Hidden
+   silently when no relevant snapshots exist. */
+.markets-ticker {
+  display: flex;
+  align-items: center;
+  gap: var(--hr-space-3);
+  padding: var(--hr-space-2) var(--hr-space-3);
+  margin-top: var(--hr-space-2);
+  border: 1px solid var(--hr-line);
+  border-radius: var(--hr-radius-md);
+  background: color-mix(in srgb, var(--hr-surface) 90%, transparent);
+  backdrop-filter: blur(6px);
+  font-size: 0.85rem;
+  overflow: hidden;
+}
+
+.markets-ticker-eyebrow {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+  padding-right: var(--hr-space-3);
+  border-right: 1px solid var(--hr-line);
+  flex: 0 0 auto;
+}
+
+.markets-ticker ul {
+  display: flex;
+  gap: var(--hr-space-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.markets-ticker ul::-webkit-scrollbar {
+  display: none;
+}
+
+.markets-ticker li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hr-space-2);
+  padding: 0 var(--hr-space-2);
+  white-space: nowrap;
+  border-radius: var(--hr-radius-sm);
+}
+
+.markets-ticker-source {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hr-text) 8%, transparent);
+}
+
+.markets-ticker li[data-source="kalshi"] .markets-ticker-source {
+  background: color-mix(in srgb, #00b489 22%, transparent);
+  color: #06624c;
+}
+
+.markets-ticker li[data-source="polymarket"] .markets-ticker-source {
+  background: color-mix(in srgb, #2c5cdc 22%, transparent);
+  color: #1c3a96;
+}
+
+.markets-ticker-title {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.markets-ticker-price {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: baseline;
+}
+
+.markets-ticker-delta {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.markets-ticker-delta.is-up {
+  color: #08925b;
+}
+
+.markets-ticker-delta.is-down {
+  color: #c2304a;
+}

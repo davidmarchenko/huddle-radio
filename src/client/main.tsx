@@ -15,6 +15,7 @@ import type {
   HostId,
   ListenerCue,
   LivecastCommentary,
+  MarketSnapshot,
   NewsItem,
   ProviderDiagnostics,
   ProviderHealth,
@@ -40,6 +41,7 @@ import { buildProductReadiness } from "../shared/productReadiness";
 import { buildSessionDirector, type SessionDirectorPlan, type SessionDirectorStepState } from "../shared/sessionDirector";
 import { buildTranscriptExport } from "../shared/transcriptExport";
 import { createYouTubeEmbedUrl, isYouTubeUrl } from "../shared/videoLinks";
+import { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
 import { startMicRecording, type MicRecording } from "./audioCapture";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
@@ -1667,6 +1669,7 @@ function App() {
               </div>
             )}
             <ScoreBug game={game} mediaIndex={mediaIndex} />
+            <MarketsTicker game={game} />
             <FantasyMatchupFloat matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
           </div>
         </section>
@@ -2084,6 +2087,85 @@ function App() {
         }}
       />
     </main>
+  );
+}
+
+/**
+ * W19: Markets overlay. Sits next to the ScoreBug and surfaces the
+ * 2-3 most-relevant Kalshi/Polymarket prices for the game, refreshed
+ * every 8 seconds. This is the listener-facing read on what the
+ * crowd thinks while the hosts are talking — the AI ticker matches
+ * the price the persona may also cite on-air.
+ *
+ * Renders nothing (silent) when there are no relevant markets so the
+ * overlay doesn't clutter sports/leagues that aren't covered yet.
+ */
+function MarketsTicker({ game }: { game?: SportsGameState }) {
+  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
+
+  useEffect(() => {
+    if (!game?.sport) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const tick = async () => {
+      try {
+        const response = await fetch(`/api/markets?sport=${encodeURIComponent(game.sport)}`, {
+          cache: "no-store"
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { snapshots?: MarketSnapshot[] };
+        if (cancelled) return;
+        setSnapshots(Array.isArray(payload.snapshots) ? payload.snapshots : []);
+      } catch {
+        // Silent — markets are an enhancement, not a blocker. The
+        // ticker hides itself when there are no relevant snapshots.
+      }
+    };
+
+    void tick();
+    timer = setInterval(tick, 8000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [game?.sport]);
+
+  const relevant = useMemo(() => {
+    if (!game?.sport || snapshots.length === 0) return [];
+    return pickRelevantMarketsForGame(
+      snapshots,
+      { sport: game.sport, teams: [game.awayTeam, game.homeTeam] },
+      3
+    );
+  }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam]);
+
+  if (!relevant.length) return null;
+
+  return (
+    <div className="markets-ticker" aria-label="Live prediction market prices">
+      <span className="markets-ticker-eyebrow">Markets</span>
+      <ul>
+        {relevant.map((snapshot) => {
+          const delta = snapshot.recentDeltaCents ?? 0;
+          const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+          return (
+            <li key={`${snapshot.source}:${snapshot.externalId}`} data-source={snapshot.source} data-direction={direction}>
+              <span className="markets-ticker-source">{snapshot.source === "kalshi" ? "Kalshi" : "Polymarket"}</span>
+              <span className="markets-ticker-title" title={snapshot.title}>{snapshot.outcomeLabel}</span>
+              <span className="markets-ticker-price">
+                {snapshot.yesPriceCents}¢
+                {delta !== 0 && (
+                  <em className={`markets-ticker-delta is-${direction}`}>
+                    {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
+                  </em>
+                )}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -4089,6 +4171,7 @@ function HuddleLiveWithStream({
           <video ref={videoRef} controls={hasVideoSource} autoPlay muted playsInline onError={onVideoError} />
         )}
         <ScoreBug game={game} mediaIndex={mediaIndex} />
+        <MarketsTicker game={game} />
         <div className="live-callout">{fantasySpotlight.body}</div>
         <FantasyMatchupFloat matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
       </div>
