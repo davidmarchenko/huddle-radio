@@ -2258,6 +2258,7 @@ function HuddleExperience({
             news={pregameNews}
             odds={pregameOdds}
             friendMatchups={friendMatchups}
+            profile={profile}
           />
         )}
         {!showHome && phase === "live" && (
@@ -3784,7 +3785,8 @@ function HuddlePregame({
   listenerStakes,
   news,
   odds,
-  friendMatchups
+  friendMatchups,
+  profile
 }: {
   game?: SportsGameState;
   fantasy?: FantasyLeagueState;
@@ -3805,19 +3807,27 @@ function HuddlePregame({
   news?: NewsItem[];
   odds?: GameOdds;
   friendMatchups?: ReturnType<typeof buildFriendMatchups>;
+  profile?: UserProfile;
 }) {
   const startLabel = demoMode ? "Start demo show" : "Start live show";
   const unmet = readiness.requirements.filter((req) => !req.met);
-  const hasListener = listenerStakes?.status === "ready";
+  // Personalize only when there's a real profile. Without one, the
+  // group falls back to the "Alex" demo persona, which is correct for
+  // demo mode but a bug for a real new user — they'd see "Tonight's
+  // show, Alex" pulled from default seed data.
+  const hasListener = Boolean(profile) && listenerStakes?.status === "ready";
+  const gameLabel = game ? `${game.awayTeam} at ${game.homeTeam}` : undefined;
   const heroEyebrow = hasListener
     ? `Tonight's show, ${listenerStakes!.listenerName}`
     : (demoMode ? "Pregame · demo rehearsal" : "Pregame show");
   const heroHeadline = hasListener && listenerStakes!.opponent
     ? `${listenerStakes!.teamName ?? "Your team"} vs ${listenerStakes!.opponent.teamName}`
-    : "We’re live in 09:42";
+    : (gameLabel ?? "Almost ready");
   const heroSub = hasListener
-    ? `${listenerStakes!.stakesLine} · ${game ? `${game.awayTeam} at ${game.homeTeam}` : "Your matchup"} · Week ${fantasy?.matchups[0]?.week ?? 7}`
-    : `${game ? `${game.awayTeam} vs ${game.homeTeam}` : "Your matchup"} · Week ${fantasy?.matchups[0]?.week ?? 7} · ${fantasy?.leagueName ?? "Redraft League"}`;
+    ? `${listenerStakes!.stakesLine} · ${gameLabel ?? "Your matchup"} · Week ${fantasy?.matchups[0]?.week ?? 7}`
+    : (fantasy
+      ? `Week ${fantasy.matchups[0]?.week ?? 7} · ${fantasy.leagueName}`
+      : (demoMode ? "Demo rehearsal — tap Start when ready" : "Tap Start when you're ready to go live"));
   return (
     <section className="pregame-layout">
       <div className="pregame-hero">
@@ -3863,7 +3873,7 @@ function HuddlePregame({
         </div>
       </div>
       <aside className="pregame-rail">
-        {listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
+        {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
         {friendMatchups && friendMatchups.length > 0 && <FriendMatchupsCard matchups={friendMatchups} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         {odds && <OddsCard odds={odds} />}
