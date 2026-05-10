@@ -1049,7 +1049,7 @@ function App() {
       return;
     }
     try {
-      const response = await fetch("/api/video/validate-frame", {
+      const response = await fetch("/api/vision/observe", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

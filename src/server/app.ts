@@ -29,12 +29,8 @@ import { EspnFantasyProvider } from "../providers/espnFantasyProvider";
 import { EspnSportsDataProvider, ESPN_SPORTS } from "../providers/espnSportsDataProvider";
 import { SportradarSportsDataProvider } from "../providers/sportradarSportsDataProvider";
 import { SportsDataIoProvider } from "../providers/sportsDataIoProvider";
-import { MockModelProvider } from "../providers/mockModelProvider";
-import { OpenAIVisionModelProvider } from "../providers/openAIVisionModelProvider";
-import { AnthropicVisionModelProvider } from "../providers/anthropicVisionModelProvider";
-import { GeminiVisionModelProvider } from "../providers/geminiVisionModelProvider";
-import { NemotronVisionProvider } from "../providers/nemotronVisionProvider";
-import { VisionModelProviderChain } from "../providers/visionModelProviderChain";
+import { createVisionProvider } from "./visionProviderFactory";
+import { isVideoFrameSnapshot, normalizeValidationPlay } from "./visionRequest";
 import type { MultimodalModelProvider } from "../shared/contracts";
 import { createCommentaryProvider, describeCommentaryStack } from "./createCommentaryProvider";
 import { createOddsProvider } from "./createOddsProvider";
@@ -887,33 +883,6 @@ export function parseSocketMessage(raw: string):
   return { type: "start", rawRequest: raw };
 }
 
-function isVideoFrameSnapshot(value: unknown): value is VideoFrameSnapshot {
-  if (!value || typeof value !== "object") return false;
-  const frame = value as Partial<VideoFrameSnapshot>;
-  return Boolean(frame.id && frame.capturedAt && frame.source && typeof frame.width === "number" && typeof frame.height === "number" && (frame.dataUrl || frame.blockedReason));
-}
-
-function normalizeValidationPlay(value: unknown) {
-  const candidate = value as Partial<import("../shared/contracts").SportsPlay> | undefined;
-  if (candidate?.id && candidate.headline && candidate.description && candidate.score) {
-    return candidate as import("../shared/contracts").SportsPlay;
-  }
-  return {
-    id: "manual-validation",
-    type: "other",
-    excitement: 1,
-    clock: "n/a",
-    quarter: "Validation",
-    possession: "n/a",
-    headline: "Manual stream validation",
-    description: "Manual frame validation outside a live play tick.",
-    playerIds: [],
-    team: "n/a",
-    score: { away: 0, home: 0 },
-    occurredAt: new Date().toISOString()
-  } satisfies import("../shared/contracts").SportsPlay;
-}
-
 function createFantasyProvider(providerMode: "demo" | "sleeper" | "espn" | undefined, customLeague?: FantasyLeagueState) {
   if (providerMode === "sleeper") return new SleeperFantasyProvider();
   if (providerMode === "espn") return new EspnFantasyProvider({ swid: config.ESPN_SWID, espnS2: config.ESPN_S2 });
@@ -1019,42 +988,10 @@ function demoGameOptions(): SportsGameOption[] {
 }
 
 function createModelProvider(): MultimodalModelProvider {
-  // Mock mode short-circuits everything — used in tests + local preview.
-  if (config.RESOLVED_MODEL_PROVIDER === "mock") return new MockModelProvider();
-
-  const providers: MultimodalModelProvider[] = [];
-  // Nemotron Nano Omni first when keyed — it's the differentiated
-  // model for this app (omni-modal vision + ASR via the same key)
-  // and Nvidia is positioning it explicitly for live video
-  // understanding in M&E pipelines. Falls through to OpenAI /
-  // Anthropic / Gemini if it errors or times out.
-  if (config.NEMOTRON_API_KEY) {
-    providers.push(new NemotronVisionProvider(
-      config.NEMOTRON_API_KEY,
-      config.NEMOTRON_MODEL,
-      config.NEMOTRON_ENDPOINT
-    ));
-  }
-  if (config.RESOLVED_MODEL_PROVIDER === "openai-vision" && config.OPENAI_API_KEY) {
-    providers.push(new OpenAIVisionModelProvider(config.OPENAI_API_KEY, config.RESOLVED_OPENAI_MODEL));
-  }
-  if (config.ANTHROPIC_API_KEY) {
-    providers.push(new AnthropicVisionModelProvider(config.ANTHROPIC_API_KEY, config.ANTHROPIC_COMMENTARY_MODEL));
-  }
-  if (config.GOOGLE_API_KEY) {
-    providers.push(new GeminiVisionModelProvider(config.GOOGLE_API_KEY, config.GEMINI_COMMENTARY_MODEL));
-  }
-  // MockModelProvider as the never-throws terminal so the chain always
-  // returns an observation; downstream code already handles `unavailable`.
-  providers.push(new MockModelProvider());
-
-  if (providers.length === 1) {
-    registerVisionChain(undefined);
-    return providers[0];
-  }
-  const chain = new VisionModelProviderChain(providers, { perProviderTimeoutMs: config.COMMENTARY_PROVIDER_TIMEOUT_MS });
-  registerVisionChain(chain);
-  return chain;
+  // Delegates to the shared factory so the Next.js Route Handler
+  // (POST /api/vision/observe) and Fastify legacy route stay in sync
+  // on chain construction + fallback order.
+  return createVisionProvider();
 }
 
 function modelProviderLabel() {
