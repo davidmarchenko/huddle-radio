@@ -2288,6 +2288,7 @@ function HuddleExperience({
             onStop={onStop}
             listenerStakes={listenerStakes}
             onNudgeHost={onNudgeHost}
+            profile={profile}
           />
         )}
         {!showHome && phase === "recap" && (
@@ -2305,6 +2306,7 @@ function HuddleExperience({
             listenerStakes={listenerStakes}
             listenerRecapHighlight={listenerRecapHighlight}
             onArchiveClip={onArchiveClip}
+            profile={profile}
           />
         )}
       </section>
@@ -4084,7 +4086,8 @@ function HuddleLiveAudio({
   mediaIndex,
   onStop,
   listenerStakes,
-  onNudgeHost
+  onNudgeHost,
+  profile
 }: {
   game?: SportsGameState;
   fantasy?: FantasyLeagueState;
@@ -4097,6 +4100,7 @@ function HuddleLiveAudio({
   onStop: () => void;
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   onNudgeHost: (hostId: HostId) => void;
+  profile?: UserProfile;
 }) {
   const latestPlay = plays[0] ?? game?.currentPlay;
   const rawSpotlightPlayer = findPlayPlayer(fantasy, latestPlay) ?? findSpotlightPlayer(fantasy, fantasySpotlight.title);
@@ -4120,7 +4124,7 @@ function HuddleLiveAudio({
   // gold "Your lineup" eyebrow so the listener instantly sees their
   // skin in the moment — not just hosts talking around them.
   const listenerPlayer = (() => {
-    if (listenerStakes?.status !== "ready" || !latestPlay) return undefined;
+    if (!profile || listenerStakes?.status !== "ready" || !latestPlay) return undefined;
     const ids = new Set(latestPlay.playerIds);
     return listenerStakes.startersInGame.find((player) => ids.has(player.id));
   })();
@@ -4237,7 +4241,8 @@ function HuddleRecap({
   onExportRecap,
   listenerStakes,
   listenerRecapHighlight,
-  onArchiveClip
+  onArchiveClip,
+  profile
 }: {
   game?: SportsGameState;
   hosts: typeof HUDDLE_HOSTS;
@@ -4252,8 +4257,9 @@ function HuddleRecap({
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   listenerRecapHighlight?: ReturnType<typeof buildListenerRecapHighlight>;
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
+  profile?: UserProfile;
 }) {
-  const hasListener = listenerStakes?.status === "ready";
+  const hasListener = Boolean(profile) && listenerStakes?.status === "ready";
   const recapTitle = hasListener
     ? `${listenerStakes!.listenerName}, your show is in the books`
     : recapSummary.title;
@@ -4282,7 +4288,7 @@ function HuddleRecap({
             onArchiveClip={onArchiveClip}
           />
         )}
-        {listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
+        {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         <StorylineCard icon="icon-flag" title="The turning point" items={[recapSummary.turningPoint, fantasySpotlight.body]} />
         <StorylineCard icon="icon-star-filled" title="Best host moment" items={[recapSummary.hostMoment, recapSummary.matchupShift]} />
