@@ -619,11 +619,14 @@ function App() {
       sport: game?.sport ?? "other",
       gameId: game?.gameId ?? "unknown",
       gameLabel: game ? `${game.awayTeam} vs ${game.homeTeam}` : "Show",
-      listenerName: group.listener?.name ?? "Listener",
-      listenerTeamName: listenerStakes?.teamName,
+      // Only tag history entries with the listener's identity when there's
+      // a real profile. Otherwise the entry inherits "Alex" from the demo
+      // group seed and seeds wrong identity into local history + backend.
+      listenerName: profile?.name ?? "Listener",
+      listenerTeamName: profile ? listenerStakes?.teamName : undefined,
       finalScore: game?.currentPlay ? { away: game.currentPlay.score.away, home: game.currentPlay.score.home } : undefined,
       topMoment,
-      marginShift: listenerStakes?.margin,
+      marginShift: profile ? listenerStakes?.margin : undefined,
       totalCommentary: commentary.length
     };
     setPastShows((current) => [entry, ...current].slice(0, 25));
