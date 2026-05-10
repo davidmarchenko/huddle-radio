@@ -3865,7 +3865,7 @@ function HuddlePregame({
       </div>
       <aside className="pregame-rail">
         {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
-        {friendMatchups && friendMatchups.length > 0 && <FriendMatchupsCard matchups={friendMatchups} />}
+        {profile && friendMatchups && friendMatchups.length > 0 && <FriendMatchupsCard matchups={friendMatchups} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         {odds && <OddsCard odds={odds} />}
         {news && news.length > 0 ? (
