@@ -3470,7 +3470,7 @@ function HuddleDiscover({
         );
       })()}
 
-      {tonightGlance && tonightGlance.perSport.length > 0 && (
+      {sections.length === 0 && tonightGlance && tonightGlance.perSport.length > 0 && (
         <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
       )}
 
@@ -3484,7 +3484,7 @@ function HuddleDiscover({
         </div>
       )}
 
-      {sections.map((section) => (
+      {sections.map((section, sectionIndex) => (
         <section key={section.id} className={section.isListener ? "discover-section discover-section--listener" : "discover-section"}>
           <header>
             <div>
@@ -3494,6 +3494,9 @@ function HuddleDiscover({
             <span className="discover-section-count">{section.games.length}</span>
           </header>
           <div className="discover-grid">
+            {sectionIndex === 0 && tonightGlance && tonightGlance.perSport.length > 0 && (
+              <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
+            )}
             {section.games.map((game) => (
               <GameCard
                 key={`${section.id}-${game.id}`}

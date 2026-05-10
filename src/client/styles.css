@@ -6972,6 +6972,18 @@ body:has(.huddle-app) {
   overflow: hidden;
 }
 
+/* When the glance card lives inside the discover game grid as a
+   bento-style hero, span 2 columns so it reads as one of the grid
+   tiles (just larger), not as a standalone full-width interruption.
+   The inner tile grid collapses to a single column at this width. */
+.huddle-app .discover-grid > .tonight-glance-card {
+  grid-column: span 2;
+}
+
+.huddle-app .discover-grid > .tonight-glance-card .tonight-glance-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .tonight-glance-header .eyebrow {
   color: var(--hr-gold-soft);
 }
