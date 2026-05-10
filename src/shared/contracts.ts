@@ -90,6 +90,42 @@ export type SportsPlay = {
 
 export type SportLeague = "nfl" | "nba" | "wnba" | "mlb" | "nhl" | "ncaaf" | "ncaab" | "soccer" | "other";
 
+/**
+ * Prediction-market snapshot. One per outcome (a single yes/no
+ * contract). Aggregated from Kalshi + Polymarket; the source field
+ * tells the consumer which exchange this came from so the UI can
+ * attribute appropriately ("K" / "P" chips).
+ *
+ * `yesPriceCents` is the implied probability ×100, in [0, 100].
+ * Both venues quote in different units natively (Kalshi in dollars
+ * 0.00–1.00, Polymarket in midpoint 0.0–1.0); the provider
+ * normalizes to cents because that's what humans say on the radio
+ * ("Chiefs at 64 cents to win").
+ */
+export type MarketSnapshot = {
+  source: "kalshi" | "polymarket";
+  externalId: string;            // Kalshi ticker or Polymarket condition_id
+  sport: SportLeague;
+  /**
+   * Best-effort game association. ESPN game ID when we can match,
+   * otherwise undefined — the AI hosts can still cite the market by
+   * its title even without a game match. Match logic lives in the
+   * marketsProvider, not on the consumers.
+   */
+  gameId?: string;
+  marketKind: "moneyline" | "spread" | "total" | "player-prop" | "futures" | "other";
+  /** Human-readable title — what the host should say on-air. */
+  title: string;
+  /** "Chiefs to win" / "Mahomes over 285 pass yds" / etc. */
+  outcomeLabel: string;
+  yesPriceCents: number;         // 0..100
+  /** Cents change in the last 5 minutes; positive = market warming. */
+  recentDeltaCents?: number;
+  volume24hUsd?: number;
+  /** Wall-clock timestamp the snapshot was sourced from upstream. */
+  observedAt: string;
+};
+
 export type SportsGameState = {
   provider: string;
   gameId: string;
