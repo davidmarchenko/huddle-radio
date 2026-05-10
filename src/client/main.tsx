@@ -2547,7 +2547,6 @@ function HuddleEmptyState({
         ) : (
           <button onClick={onPrepareDemo}>Try demo show <span className="icon icon-play" aria-hidden="true" /></button>
         )}
-        <button className="icon-only secondary" aria-label="Search"><span className="icon icon-search" aria-hidden="true" /></button>
       </div>
       <div className="empty-host-art" aria-label={`${hosts.map((host) => `${host.name}, ${host.role}`).join(", ")} are ready in the studio`} />
       <div className="empty-copy">
@@ -4283,7 +4282,7 @@ function HuddleRecap({
         <StorylineCard icon="icon-flag" title="The turning point" items={[recapSummary.turningPoint, fantasySpotlight.body]} />
         <StorylineCard icon="icon-star-filled" title="Best host moment" items={[recapSummary.hostMoment, recapSummary.matchupShift]} />
         <RecentHighlights plays={plays} game={game} mediaIndex={mediaIndex} />
-        <StorylineCard icon="icon-megaphone-loud" title="Around the league" items={[`${commentary.length} generated calls in this show.`, "The recap is ready to share with the room."]} />
+        <StorylineCard icon="icon-megaphone-loud" title="Show stats" items={[`${commentary.length} generated calls in this show.`]} />
       </section>
       <div className="button-row">
         <button className="primary" onClick={onStart}><span className="icon icon-broadcast" aria-hidden="true" />Go live again</button>
