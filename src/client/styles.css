@@ -9071,7 +9071,12 @@ body:has(.huddle-app)::after,
   --hr-corner-smoothing: 0.62;
 }
 
-@supports (corner-shape: squircle) {
+/* Single source of truth for continuous corners. Add new card / hero
+   surfaces here rather than declaring `corner-shape` inline at the
+   call site. The `or` clause covers older Safari TP that only ships
+   the prefixed variant; both declarations are written so whichever
+   the engine recognises wins. */
+@supports (corner-shape: squircle) or (-webkit-corner-shape: squircle) {
   .huddle-app button,
   .huddle-app .huddle-card,
   .huddle-app .empty-step,
@@ -9079,10 +9084,12 @@ body:has(.huddle-app)::after,
   .huddle-app .user-card,
   .huddle-app .host-studio,
   .huddle-app .moment-hero,
+  .huddle-app .recap-hero,
   .huddle-app .pregame-rail > article,
   .huddle-app .audio-live-rail > article,
   .huddle-app .video-stage,
   .huddle-app .huddle-player,
+  .huddle-app .mini-player,
   .huddle-app .empty-actions button,
   .huddle-app input,
   .huddle-app select,
@@ -9103,8 +9110,15 @@ body:has(.huddle-app)::after,
   .huddle-app .live-host-strip > button,
   .huddle-app .empty-note span,
   .huddle-app .voice-orb,
-  .huddle-app .live-player-portrait {
+  .huddle-app .live-player-portrait,
+  .huddle-app .discover-banner,
+  .huddle-app .discover-feed-notice,
+  .huddle-app .tonight-glance-card,
+  .huddle-app .game-card-thumb,
+  .huddle-app .pregame-checklist,
+  .profile-modal {
     corner-shape: squircle;
+    -webkit-corner-shape: squircle;
   }
 }
 
@@ -12105,8 +12119,6 @@ body {
   background: var(--hr-bg-1) !important;
   border: 1px solid var(--hr-line) !important;
   border-radius: var(--hr-radius-lg) !important;
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   box-shadow: var(--hr-shadow-lg) !important;
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
@@ -12301,8 +12313,6 @@ body {
   background-image: none !important;
   border: 1px solid var(--hr-line) !important;
   border-radius: var(--hr-radius-xl) !important;
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   box-shadow: none !important;
   overflow: hidden;
 }
@@ -12667,8 +12677,6 @@ body {
   min-height: clamp(480px, 64vh, 720px);
   overflow: hidden;
   border-radius: var(--hr-radius-xl) !important;
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   background: #000 !important;
   background-image: none !important;
   border: 1px solid var(--hr-line) !important;
@@ -12924,8 +12932,6 @@ body {
   background-image: none !important;
   border: 1px solid var(--hr-line) !important;
   border-radius: var(--hr-radius-xl) !important;
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   box-shadow: none !important;
 }
 
@@ -13829,8 +13835,6 @@ body {
   background: var(--hr-surface);
   border: 1px solid var(--hr-line);
   border-radius: var(--hr-radius-lg);
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
 }
 
 .huddle-app .discover-banner > div:first-child {
@@ -14197,8 +14201,6 @@ body {
     radial-gradient(ellipse at 80% 100%, rgba(255, 128, 109, 0.08), transparent 55%);
   border: 1px solid var(--hr-line);
   border-radius: var(--hr-radius-lg);
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   overflow: hidden;
   transition: border-color var(--hr-motion-fast) var(--hr-ease-standard),
               background var(--hr-motion-fast) var(--hr-ease-standard);
@@ -14502,8 +14504,6 @@ body {
   background: var(--hr-surface);
   border: 1px solid var(--hr-line-strong);
   border-radius: var(--hr-radius-lg);
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   box-shadow: var(--hr-shadow-lg);
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
@@ -15257,8 +15257,6 @@ body {
   background: var(--hr-bg-1);
   border: 1px solid var(--hr-line);
   border-radius: var(--hr-radius-md);
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
 }
 
 .huddle-app .pregame-checklist > .eyebrow {
@@ -15667,8 +15665,6 @@ body {
   background: var(--hr-bg-0);
   border: 1px solid var(--hr-line);
   border-radius: var(--hr-radius-lg);
-  corner-shape: squircle;
-  -webkit-corner-shape: squircle;
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
   color: var(--hr-text);
   font-family: var(--hr-font-body);
