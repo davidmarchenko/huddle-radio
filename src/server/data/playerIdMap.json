@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-09-seed",
+  "source": "Hand-curated smoke-test seed. Run `npm run build-player-ids` to fetch the full Sleeper-sourced map.",
+  "players": [
+    { "canonicalId": "4046", "name": "Patrick Mahomes", "sport": "nfl", "position": "QB", "team": "KC", "external": { "sleeper": "4046", "espn": "3139477" } },
+    { "canonicalId": "1466", "name": "Travis Kelce", "sport": "nfl", "position": "TE", "team": "KC", "external": { "sleeper": "1466", "espn": "15847" } },
+    { "canonicalId": "4034", "name": "Christian McCaffrey", "sport": "nfl", "position": "RB", "team": "SF", "external": { "sleeper": "4034", "espn": "3117251" } },
+    { "canonicalId": "4881", "name": "Lamar Jackson", "sport": "nfl", "position": "QB", "team": "BAL", "external": { "sleeper": "4881", "espn": "3916387" } },
+    { "canonicalId": "4866", "name": "Saquon Barkley", "sport": "nfl", "position": "RB", "team": "PHI", "external": { "sleeper": "4866", "espn": "3929630" } }
+  ]
+}
