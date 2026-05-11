@@ -297,12 +297,13 @@ label {
      flex item with no visible side effect. The gap value lives on the
      element as --eyebrow-icon-gap so descendant overrides stay in
      sync without three sources of truth. */
-  /* The canonical .huddle-app .eyebrow rule force-pins the eyebrow
-     font to --hr-text-xxs (~0.7rem = ~11px). Icon ships at 0.85rem
-     (~14px). 0.65rem gap (~10-11px) sits visually between the two
-     so the pair reads as one tight unit without the icon kissing the
-     text. Tune here and every eyebrow in the app moves together. */
-  --eyebrow-icon-gap: 0.65rem;
+  /* Canonical eyebrow renders at --hr-text-xxs (~0.7rem = ~11px) with
+     a ~14px icon. To read as deliberately spaced (not "icon kissing
+     text"), the gap needs to be visibly larger than the text height —
+     1rem (~16px) gives the icon clear breathing room without
+     disconnecting it from the label. Tune here and every eyebrow in
+     the app moves together. */
+  --eyebrow-icon-gap: 1rem;
   display: inline-flex;
   align-items: center;
   gap: var(--eyebrow-icon-gap);
