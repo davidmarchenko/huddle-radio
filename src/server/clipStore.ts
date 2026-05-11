@@ -221,7 +221,13 @@ export function getDefaultClipStore(): ClipStore {
     defaultStore = new BlobClipStore({ put: vercelBlobPut });
     return defaultStore;
   }
-  const baseDir = process.env.CLIP_STORE_DIR ?? path.resolve("data/clips");
+  // On Vercel, the deployment filesystem is read-only — only `/tmp`
+  // is writable, and even that is per-instance + ephemeral. Fall
+  // back there so single-instance demos keep working without Blob;
+  // for production multi-instance, BLOB_READ_WRITE_TOKEN is the
+  // intended path. Local dev keeps using ./data/clips.
+  const fallbackDir = process.env.VERCEL ? "/tmp/huddle-clips" : path.resolve("data/clips");
+  const baseDir = process.env.CLIP_STORE_DIR ?? fallbackDir;
   defaultStore = new FileClipStore(baseDir);
   return defaultStore;
 }

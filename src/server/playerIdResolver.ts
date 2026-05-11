@@ -1,5 +1,9 @@
 import type { SportLeague } from "../shared/contracts";
-import seedJson from "./data/playerIdMap.json" with { type: "json" };
+// Drop `with { type: "json" }` — Next.js + Turbopack don't propagate
+// the import attribute through to the bundle, so Vercel's runtime
+// crashes the module load. Plain JSON imports work — Next.js inlines
+// them at build time.
+import seedJson from "./data/playerIdMap.json";
 
 /**
  * Cross-provider player ID resolver.

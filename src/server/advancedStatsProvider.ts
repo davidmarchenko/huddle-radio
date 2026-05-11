@@ -1,5 +1,8 @@
 import type { AdvancedStatsProvider, PlayerSeasonStats, ProviderHealth, SportLeague } from "../shared/contracts";
-import seedJson from "./data/advancedStats.json" with { type: "json" };
+// See playerIdResolver.ts — Next.js bundler doesn't propagate the
+// `with { type: "json" }` attribute, so the runtime crashes on load.
+// Plain JSON import works (Next.js inlines it at build time).
+import seedJson from "./data/advancedStats.json";
 
 /**
  * W12: Beat-writer-grade analytics layer.
