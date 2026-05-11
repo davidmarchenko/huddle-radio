@@ -16,6 +16,8 @@ import { SleeperFantasyProvider } from "../providers/sleeperFantasyProvider";
 import { SportradarSportsDataProvider } from "../providers/sportradarSportsDataProvider";
 import { SportsDataIoProvider } from "../providers/sportsDataIoProvider";
 import { ElevenLabsTTSProvider, MockTTSProvider, type HostVoiceMap } from "../providers/ttsProviders";
+import { FishAudioTTSProvider, buildFishHostVoiceMap } from "../providers/fishAudioProvider";
+import type { TTSProvider } from "../shared/contracts";
 import { UserVideoProvider } from "../providers/userVideoProvider";
 
 /**
@@ -105,6 +107,37 @@ export function buildHostVoiceMap(): HostVoiceMap {
   return map;
 }
 
+/**
+ * Pick the right TTS provider implementation for this process based on
+ * RESOLVED_TTS_PROVIDER. ElevenLabs remains the proven path; Fish Audio
+ * is the experimental low-latency multi-speaker alternative. Mock is
+ * always the safe fallback when no real provider is configured.
+ *
+ * Kept as a factory (not inlined in the engine) so swapping providers
+ * is a single config flip — no code paths to delete when experimenting.
+ */
+export function createTTSProvider(): TTSProvider {
+  switch (config.RESOLVED_TTS_PROVIDER) {
+    case "elevenlabs":
+      return new ElevenLabsTTSProvider(
+        config.ELEVENLABS_API_KEY,
+        config.ELEVENLABS_VOICE_ID,
+        config.RESOLVED_ELEVENLABS_MODEL_ID,
+        buildHostVoiceMap()
+      );
+    case "fish":
+      return new FishAudioTTSProvider(
+        config.FISH_API_KEY,
+        config.FISH_VOICE_ID,
+        config.FISH_MODEL,
+        buildFishHostVoiceMap()
+      );
+    case "mock":
+    default:
+      return new MockTTSProvider();
+  }
+}
+
 export function getActiveProviders(
   customLeague?: FantasyLeagueState,
   providerMode: "demo" | "sleeper" | "espn" = "demo",
@@ -127,7 +160,9 @@ export function getActiveProviders(
     tts:
       config.RESOLVED_TTS_PROVIDER === "elevenlabs"
         ? `ElevenLabs ${config.RESOLVED_ELEVENLABS_MODEL_ID}`
-        : "Mock/Browser TTS"
+        : config.RESOLVED_TTS_PROVIDER === "fish"
+          ? `Fish Audio ${config.FISH_MODEL}`
+          : "Mock/Browser TTS"
   };
 }
 
@@ -141,9 +176,7 @@ export async function getHealth(): Promise<ProviderHealth[]> {
     new UserVideoProvider(),
     createModelProvider(),
     createCommentaryProvider(),
-    config.RESOLVED_TTS_PROVIDER === "elevenlabs"
-      ? new ElevenLabsTTSProvider(config.ELEVENLABS_API_KEY, config.ELEVENLABS_VOICE_ID, config.RESOLVED_ELEVENLABS_MODEL_ID)
-      : new MockTTSProvider()
+    createTTSProvider()
   ];
   return Promise.all(providers.map((provider) => provider.health()));
 }

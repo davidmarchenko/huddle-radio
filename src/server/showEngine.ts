@@ -20,6 +20,7 @@ import { getDefaultAdvancedStatsProvider } from "./advancedStatsProvider";
 import { LocalCommentaryProvider } from "../providers/openAICommentaryProvider";
 import { CommentaryProviderChain } from "../providers/commentaryProviderChain";
 import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProviders";
+import { FishAudioTTSProvider } from "../providers/fishAudioProvider";
 import { recordTurn, type TurnSummary } from "./turnSummaries";
 import { UserVideoProvider } from "../providers/userVideoProvider";
 import { config } from "./config";
@@ -31,6 +32,7 @@ import {
   createSportsDataProvider,
   createModelProvider,
   buildHostVoiceMap,
+  createTTSProvider,
   getActiveProviders,
   getHealth
 } from "./showFactories";
@@ -378,15 +380,12 @@ export class ShowEngine {
     const commentaryProviderLabel = () => lastCommentaryProviderId;
 
     const videoProvider = new UserVideoProvider();
-    const realTtsProvider =
-      config.RESOLVED_TTS_PROVIDER === "elevenlabs"
-        ? new ElevenLabsTTSProvider(
-            config.ELEVENLABS_API_KEY,
-            config.ELEVENLABS_VOICE_ID,
-            config.RESOLVED_ELEVENLABS_MODEL_ID,
-            buildHostVoiceMap()
-          )
-        : new MockTTSProvider();
+    // Provider construction lives in the factory now so swapping TTS
+    // vendors (ElevenLabs ↔ Fish ↔ mock) is a single config flip.
+    // Each branch in createTTSProvider() returns a provider that
+    // implements the same TTSProvider contract; the engine doesn't
+    // care which one it gets.
+    const realTtsProvider = createTTSProvider();
     const mockTtsProvider = new MockTTSProvider();
     const ttsProvider = {
       synthesize: (input: Parameters<typeof realTtsProvider.synthesize>[0]) => {
@@ -396,13 +395,17 @@ export class ShowEngine {
           : realTtsProvider.synthesize(input);
       },
       // Forward multi-speaker dialogue calls to the real provider when
-      // it supports them AND we aren't budget-degraded. Mock has no
-      // dialogue path; selectTTSStrategy falls back to per-line.
+      // it exposes the optional method AND we aren't budget-degraded.
+      // Both ElevenLabs (Text-to-Dialogue HTTP) and Fish Audio (S2-Pro
+      // WS) implement this; mock has no dialogue path so the
+      // strategy selector falls back to per-line synthesis.
       synthesizeDialogue:
-        !budget.isTtsDegraded() && realTtsProvider instanceof ElevenLabsTTSProvider
-          ? (input: Parameters<ElevenLabsTTSProvider["synthesizeDialogue"]>[0]) => {
+        !budget.isTtsDegraded() &&
+        (realTtsProvider instanceof ElevenLabsTTSProvider ||
+          realTtsProvider instanceof FishAudioTTSProvider)
+          ? (input: { commentaryId: string; turns: Array<{ text: string; hostId?: HostId }> }) => {
               incrementCounter("ttsRequests");
-              return realTtsProvider.synthesizeDialogue(input);
+              return realTtsProvider.synthesizeDialogue!(input);
             }
           : undefined
     };

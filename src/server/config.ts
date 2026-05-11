@@ -32,7 +32,11 @@ const EnvSchema = z.object({
   // catalog mirror.
   NEMOTRON_ENDPOINT: z.string().default("https://integrate.api.nvidia.com/v1"),
   NEMOTRON_API_KEY: z.string().optional(),
-  TTS_PROVIDER: z.enum(["auto", "mock", "elevenlabs"]).default("auto"),
+  // Fish added as an experimental alternative — lower TTFB and native
+  // multi-speaker streaming. ElevenLabs stays the default. Set
+  // TTS_PROVIDER=fish explicitly to try it; auto-resolution does not
+  // pick Fish until ElevenLabs is unset.
+  TTS_PROVIDER: z.enum(["auto", "mock", "elevenlabs", "fish"]).default("auto"),
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().default("Xb7hH8MSUJpSbSDYk0k2"),
   // Per-host voice overrides. When set, Maya / Theo / Cam route to
@@ -42,6 +46,15 @@ const EnvSchema = z.object({
   ELEVENLABS_VOICE_ID_CAM: z.string().optional(),
   ELEVENLABS_MODEL_ID: z.string().default(recommendedModelDefaults.ttsLowLatencyModel),
   ELEVENLABS_EXPRESSIVE_MODEL_ID: z.string().default(recommendedModelDefaults.ttsExpressiveModel),
+  // Fish Audio S2-Pro — experimental low-latency multi-speaker TTS.
+  // Voice IDs here are Fish "model IDs" (their term for cloned voices).
+  // Get them by uploading 10-second reference samples at fish.audio.
+  FISH_API_KEY: z.string().optional(),
+  FISH_VOICE_ID: z.string().default(""),
+  FISH_VOICE_ID_MAYA: z.string().optional(),
+  FISH_VOICE_ID_THEO: z.string().optional(),
+  FISH_VOICE_ID_CAM: z.string().optional(),
+  FISH_MODEL: z.string().default("s2-pro"),
   ESPN_SWID: z.string().optional(),
   ESPN_S2: z.string().optional(),
   // Yahoo Fantasy OAuth. Yahoo requires HTTPS callback URLs even for
@@ -73,7 +86,19 @@ export const config = {
   RESOLVED_OPENAI_MODEL: parsed.MODEL_PRESET === "fast" ? parsed.OPENAI_FAST_MODEL : parsed.OPENAI_MODEL,
   RESOLVED_REALTIME_MODEL: parsed.MODEL_PRESET === "fast" ? parsed.OPENAI_REALTIME_FAST_MODEL : parsed.OPENAI_REALTIME_MODEL,
   RESOLVED_TTS_PROVIDER:
-    isTest ? "mock" : parsed.TTS_PROVIDER === "auto" ? (parsed.ELEVENLABS_API_KEY && parsed.MODEL_PRESET !== "local" ? "elevenlabs" : "mock") : parsed.TTS_PROVIDER,
+    isTest
+      ? "mock"
+      : parsed.TTS_PROVIDER === "auto"
+        ? // auto: prefer ElevenLabs (proven), fall back to Fish if only
+          // its key is set, then mock. MODEL_PRESET=local forces mock.
+          parsed.MODEL_PRESET === "local"
+          ? "mock"
+          : parsed.ELEVENLABS_API_KEY
+            ? "elevenlabs"
+            : parsed.FISH_API_KEY
+              ? "fish"
+              : "mock"
+        : parsed.TTS_PROVIDER,
   // sota → expressive (eleven_v3 quality), fast/local → low-latency
   // (eleven_flash_v2_5). Earlier this ternary picked the same model
   // on both branches, silently negating the preset switch.

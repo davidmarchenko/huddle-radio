@@ -47,8 +47,18 @@ export function buildModelStack(): ModelStackProfile {
     },
     tts: {
       provider: ttsProvider,
-      model: ttsProvider === "elevenlabs" ? config.RESOLVED_ELEVENLABS_MODEL_ID : "browser-speechSynthesis",
-      status: ttsProvider === "elevenlabs" ? (config.ELEVENLABS_API_KEY ? "ready" : "needs-key") : "local",
+      model:
+        ttsProvider === "elevenlabs"
+          ? config.RESOLVED_ELEVENLABS_MODEL_ID
+          : ttsProvider === "fish"
+            ? config.FISH_MODEL
+            : "browser-speechSynthesis",
+      status:
+        ttsProvider === "elevenlabs"
+          ? (config.ELEVENLABS_API_KEY ? "ready" : "needs-key")
+          : ttsProvider === "fish"
+            ? (config.FISH_API_KEY ? "ready" : "needs-key")
+            : "local",
       role: "Streams low-latency spoken commentary audio."
     }
   };
