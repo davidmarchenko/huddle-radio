@@ -297,7 +297,12 @@ label {
      flex item with no visible side effect. The gap value lives on the
      element as --eyebrow-icon-gap so descendant overrides stay in
      sync without three sources of truth. */
-  --eyebrow-icon-gap: 0.85rem;
+  /* The canonical .huddle-app .eyebrow rule force-pins the eyebrow
+     font to --hr-text-xxs (~0.7rem = ~11px). Icon ships at 0.85rem
+     (~14px). 0.65rem gap (~10-11px) sits visually between the two
+     so the pair reads as one tight unit without the icon kissing the
+     text. Tune here and every eyebrow in the app moves together. */
+  --eyebrow-icon-gap: 0.65rem;
   display: inline-flex;
   align-items: center;
   gap: var(--eyebrow-icon-gap);
@@ -6363,18 +6368,12 @@ body:has(.huddle-app) {
   font-size: 0.86rem;
 }
 
+/* Eyebrow typography (font, size, weight, letter-spacing, color, gap)
+   is defined ONCE further down at "EYEBROW — single source of truth".
+   This block only zeroes the inherited margin so eyebrows sit flush
+   to whatever follows them inside the app shell. */
 .huddle-app .eyebrow {
   margin: 0;
-  color: #b991ff;
-  font-size: 0.76rem;
-  font-weight: var(--hr-weight-black);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  display: inline-flex;
-  align-items: center;
-  /* Defers to the --eyebrow-icon-gap token from the base .eyebrow rule
-     so a single edit moves all icon/text spacing in lockstep. */
-  gap: var(--eyebrow-icon-gap);
 }
 
 .huddle-app .eyebrow > .icon {
@@ -6664,7 +6663,12 @@ body:has(.huddle-app) {
 }
 
 .empty-step span,
-.huddle-card > span:not(.media-avatar),
+/* :not(.eyebrow) so the canonical .eyebrow typography (mono, xxs,
+   uppercase) wins over this generic card-headline rule. Without the
+   exclusion, every <span class="eyebrow"> as a direct child of a card
+   gets bumped to 1.05rem black — which is exactly what made the
+   icon/text gap look starved on Tonight's matchup, Storylines, etc. */
+.huddle-card > span:not(.media-avatar):not(.eyebrow),
 .league-room-card > span {
   color: var(--huddle-text);
   font-size: 1.05rem;
@@ -8617,15 +8621,9 @@ body:has(.huddle-app)::after,
   color: transparent;
 }
 
-.huddle-app .eyebrow,
-.huddle-app .hr-eyebrow {
-  font-family: var(--hr-font-mono);
-  font-size: var(--hr-text-xs);
-  font-weight: var(--hr-weight-semi);
-  letter-spacing: var(--hr-tracking-eyebrow);
-  text-transform: uppercase;
-  color: var(--hr-violet-soft);
-}
+/* Removed: this block was fully shadowed by the !important typography
+   in the canonical "EYEBROW — single source of truth" rule below.
+   Kept the deletion explicit so future readers can git blame why. */
 
 .huddle-app .empty-copy p,
 .huddle-app .pregame-hero > p,
@@ -10714,10 +10712,7 @@ body {
 }
 
 /* Eyebrows — drop the violet, use muted text. */
-.huddle-app .eyebrow,
-.huddle-app .hr-eyebrow {
-  color: var(--hr-text-muted);
-}
+/* Removed: shadowed by the !important color in the canonical rule. */
 
 /* Number badges in empty state. */
 .huddle-app.phase-empty .empty-step b {
@@ -11005,10 +11000,7 @@ body {
 }
 
 /* Eyebrows — neutral. */
-.huddle-app .eyebrow,
-.huddle-app .hr-eyebrow {
-  color: var(--hr-text-muted) !important;
-}
+/* Removed: same color is set in the canonical rule below. */
 
 /* Number badges — flat. */
 .huddle-app.phase-empty .empty-step b {
@@ -13148,9 +13140,23 @@ body {
   border-color: transparent !important;
 }
 
-/* Eyebrow standard — apply to every eyebrow once, drop overrides.
-   Gap defers to the --eyebrow-icon-gap token defined on the base
-   .eyebrow rule so the spacing is centrally tunable. */
+/* ============================================================
+   EYEBROW — single source of truth.
+
+   Every "eyebrow" label across the app reads from this rule. The
+   !important wall is intentional: there used to be 4-5 cascading
+   .huddle-app .eyebrow blocks with different fonts, weights, and
+   colors layered through the file, and surfaces like .huddle-card
+   would override eyebrow font-size to 1.05rem black via a generic
+   "card direct child <span>" rule. This block ends those debates.
+
+   Tunables:
+     --eyebrow-icon-gap  defined on base .eyebrow (top of file).
+                         Em-relative (0.65em) so the gap scales with
+                         the eyebrow's font size — a tight gap on the
+                         tiny xxs eyebrow stays proportional even if
+                         a surface bumps font-size for a hero context.
+   ============================================================ */
 .huddle-app .eyebrow {
   display: inline-flex;
   align-items: center;
