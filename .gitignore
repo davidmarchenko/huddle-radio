@@ -17,3 +17,4 @@ public/clips/
 test-results/
 playwright-report/
 playwright/.cache/
+.vercel

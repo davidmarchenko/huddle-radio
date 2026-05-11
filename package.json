@@ -7,7 +7,7 @@
     "dev": "concurrently -k -n next,fastify -c cyan,magenta \"next dev\" \"tsx watch src/server/index.ts\"",
     "dev:next": "next dev",
     "dev:fastify": "tsx watch src/server/index.ts",
-    "build": "next build && node scripts/scopeNextAsCommonJS.mjs",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "next lint",
     "media:cache": "tsx scripts/cacheMediaAssets.ts",

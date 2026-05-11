@@ -19,22 +19,6 @@ const REWRITE_TO_FASTIFY = process.env.NODE_ENV !== "production";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["node-fetch"],
-  // Vercel's NFT was packaging our outer package.json (`type:
-  // "module"`) into some Function bundles. At runtime, Node walked up
-  // from `.next/server/app/api/<route>/route.js`, hit the outer
-  // package.json before `.next/package.json` (which has
-  // `type: "commonjs"` written by Next), and refused the launcher's
-  // require() with ERR_REQUIRE_ESM.
-  //
-  // Excluding the outer package.json from every Function bundle
-  // forces Node to keep walking up and pick up
-  // `.next/package.json` instead — which correctly scopes the
-  // bundle as CommonJS. ASR + markets routes weren't shipping our
-  // outer package.json (smaller import graphs) which is why those
-  // routes happened to work without this fix.
-  outputFileTracingExcludes: {
-    "**/*": ["package.json"]
-  },
   experimental: {
     // Frame uploads from screen-share can exceed the 1 MB default.
     serverActions: {
