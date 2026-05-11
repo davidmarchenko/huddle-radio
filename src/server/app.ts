@@ -39,15 +39,12 @@ import { config } from "./config";
 import { getDefaultPlayerIdResolver } from "./playerIdResolver";
 import { getDefaultSportsGamesCache } from "./sportsGamesCache";
 
-const defaultGroup: GroupSettings = {
-  listener: { name: "Alex", rosterId: "roster-alex", favoriteTeam: "KC" },
-  tone: "pg",
-  homeTeamBias: "fantasy-first",
-  friends: [
-    { id: "alex", name: "Alex", favoriteTeam: "KC", rosterId: "roster-alex", rivalryNotes: "you are one Kelce catch away from unbearable confidence" },
-    { id: "maya", name: "Maya", favoriteTeam: "DET", rosterId: "roster-maya", rivalryNotes: "do not pretend you were calm during that drive" }
-  ]
-};
+// Hoisted into ./defaultGroup so Next.js routes share the constant
+// without dragging Fastify into their bundle.
+import { defaultGroup } from "./defaultGroup";
+import { demoGameOptions } from "./demoGameOptions";
+import { buildModelStack } from "./buildModelStack";
+import { buildDiagnostics as buildDiagnosticsImpl } from "./buildDiagnostics";
 
 export async function buildApp() {
   const app = Fastify({ logger: process.env.NODE_ENV !== "test" });
@@ -120,7 +117,7 @@ export async function buildApp() {
 
   app.get("/api/diagnostics", async (request) => {
     const query = request.query as { sportsDataMode?: "demo" | "espn" };
-    return buildDiagnostics(query.sportsDataMode);
+    return buildDiagnosticsImpl(query.sportsDataMode);
   });
   app.get("/api/diagnostics/player-ids", async () => {
     return getDefaultPlayerIdResolver().getStats();
@@ -619,71 +616,6 @@ const getActiveProviders = _getActiveProviders;
 const getHealth = _getHealth;
 export { redactSecret };
 
-function demoGameOptions(): SportsGameOption[] {
-  return [
-    {
-      id: "demo-kc-det",
-      label: "Kansas City Chiefs at Detroit Lions",
-      shortName: "KC @ DET",
-      sport: "nfl",
-      awayTeam: "KC",
-      homeTeam: "DET",
-      score: { away: 24, home: 21 },
-      status: "demo",
-      detail: "Scripted demo game",
-      broadcast: "ESPN"
-    },
-    {
-      id: "demo-buf-cin",
-      label: "Buffalo Bills at Cincinnati Bengals",
-      shortName: "BUF @ CIN",
-      sport: "nfl",
-      awayTeam: "BUF",
-      homeTeam: "CIN",
-      score: { away: 0, home: 0 },
-      status: "demo",
-      detail: "Pregame · scripted demo",
-      broadcast: "Demo"
-    },
-    {
-      id: "demo-den-okc",
-      label: "Denver Nuggets at Oklahoma City Thunder",
-      shortName: "DEN @ OKC",
-      sport: "nba",
-      awayTeam: "DEN",
-      homeTeam: "OKC",
-      score: { away: 58, home: 62 },
-      status: "demo",
-      detail: "Q3 6:14 · scripted demo",
-      broadcast: "TNT"
-    },
-    {
-      id: "demo-bos-dal",
-      label: "Boston Celtics at Dallas Mavericks",
-      shortName: "BOS @ DAL",
-      sport: "nba",
-      awayTeam: "BOS",
-      homeTeam: "DAL",
-      score: { away: 0, home: 0 },
-      status: "demo",
-      detail: "Tip-off 8pm · scripted demo",
-      broadcast: "Demo"
-    },
-    {
-      id: "demo-lal-phx",
-      label: "Los Angeles Lakers at Phoenix Suns",
-      shortName: "LAL @ PHX",
-      sport: "nba",
-      awayTeam: "LAL",
-      homeTeam: "PHX",
-      score: { away: 88, home: 92 },
-      status: "demo",
-      detail: "Q4 4:02 · scripted demo",
-      broadcast: "ESPN"
-    }
-  ];
-}
-
 export function buildFantasyPreview(league: FantasyLeagueState, providerMode: "demo" | "sleeper" | "espn", requestedWeek?: number): FantasyImportPreview {
   const rosters = league.matchups.flatMap((matchup) => matchup.rosters);
   const players = new Map<string, { proTeam: string }>();
@@ -752,141 +684,13 @@ export function buildFantasyPreview(league: FantasyLeagueState, providerMode: "d
   };
 }
 
-export async function buildDiagnostics(sportsDataMode: "demo" | "espn" = config.SPORTS_DATA_PROVIDER): Promise<ProviderDiagnostics> {
-  const health = await getHealth();
-  const mediaManifestPath = path.join(process.cwd(), "public", "media-cache", "manifest.json");
-  const mediaExists = existsSync(mediaManifestPath);
-  const mediaAge = mediaExists ? Math.round((Date.now() - statSync(mediaManifestPath).mtimeMs) / 60000) : undefined;
-
-  return {
-    generatedAt: new Date().toISOString(),
-    providers: getActiveProviders(undefined, "demo", sportsDataMode),
-    health,
-    checks: [
-      {
-        id: "espn-private-cookies",
-        label: "ESPN private league cookies",
-        status: config.ESPN_SWID && config.ESPN_S2 ? "ready" : "disabled",
-        detail: config.ESPN_SWID && config.ESPN_S2 ? "ESPN_SWID and ESPN_S2 are configured." : "Private ESPN leagues need ESPN_SWID and ESPN_S2 in .env."
-      },
-      {
-        id: "openai-commentary",
-        label: "OpenAI commentary",
-        status: config.RESOLVED_COMMENTARY_PROVIDER === "openai" && config.OPENAI_API_KEY ? "ready" : config.COMMENTARY_PROVIDER === "openai" ? "error" : "disabled",
-        detail:
-          config.RESOLVED_COMMENTARY_PROVIDER === "openai"
-            ? config.OPENAI_API_KEY
-              ? `Using ${config.RESOLVED_OPENAI_MODEL} with reasoning=${config.OPENAI_REASONING_EFFORT}.`
-              : "COMMENTARY_PROVIDER is openai but OPENAI_API_KEY is missing."
-            : config.COMMENTARY_PROVIDER === "auto"
-              ? "Auto mode selected local commentary because no OpenAI key is configured."
-              : "Local commentary templates are active."
-      },
-      {
-        id: "elevenlabs-tts",
-        label: "ElevenLabs TTS",
-        status: config.RESOLVED_TTS_PROVIDER === "elevenlabs" && config.ELEVENLABS_API_KEY ? "ready" : config.TTS_PROVIDER === "elevenlabs" ? "error" : "disabled",
-        detail:
-          config.RESOLVED_TTS_PROVIDER === "elevenlabs"
-            ? config.ELEVENLABS_API_KEY
-              ? `Using voice ${config.ELEVENLABS_VOICE_ID} with ${config.RESOLVED_ELEVENLABS_MODEL_ID}.`
-              : "TTS_PROVIDER is elevenlabs but ELEVENLABS_API_KEY is missing."
-            : config.TTS_PROVIDER === "auto"
-              ? "Auto mode selected browser/mock TTS because no ElevenLabs key is configured."
-              : "Browser/mock TTS is active."
-      },
-      {
-        id: "model-preset",
-        label: "SOTA model preset",
-        status: config.MODEL_PRESET === "local" ? "disabled" : "ready",
-        detail: `${config.MODEL_PRESET} preset: commentary=${config.RESOLVED_OPENAI_MODEL}, realtime=${config.RESOLVED_REALTIME_MODEL}, TTS=${config.RESOLVED_ELEVENLABS_MODEL_ID}.`
-      },
-      {
-        id: "multimodal-model",
-        label: "Live video model",
-        status:
-          config.RESOLVED_MODEL_PROVIDER === "mock"
-            ? "disabled"
-            : config.RESOLVED_MODEL_PROVIDER === "openai-vision" && config.OPENAI_API_KEY
-              ? "ready"
-              : config.RESOLVED_MODEL_PROVIDER === "nemotron" && config.NEMOTRON_ENDPOINT
-                ? "ready"
-                : "error",
-        detail:
-          config.RESOLVED_MODEL_PROVIDER === "mock"
-            ? `Mock observations active. Next real option: ${config.NEMOTRON_MODEL} or ${config.RESOLVED_REALTIME_MODEL} with browser frame/audio capture.`
-            : config.RESOLVED_MODEL_PROVIDER === "openai-vision"
-              ? config.OPENAI_API_KEY
-                ? `OpenAI frame validation active with ${config.RESOLVED_OPENAI_MODEL}.`
-                : "MODEL_PROVIDER=openai-vision needs OPENAI_API_KEY."
-            : config.RESOLVED_MODEL_PROVIDER === "nemotron"
-              ? config.NEMOTRON_ENDPOINT
-                ? `Nemotron-compatible endpoint configured for ${config.NEMOTRON_MODEL}.`
-                : "MODEL_PROVIDER=nemotron needs NEMOTRON_ENDPOINT."
-              : `OpenAI realtime model target is ${config.RESOLVED_REALTIME_MODEL}; browser capture bridge is still planned.`
-      },
-      {
-        id: "media-cache",
-        label: "Media cache",
-        status: mediaExists ? "ready" : "disabled",
-        detail: mediaExists ? `Manifest found at public/media-cache/manifest.json, updated about ${mediaAge} minute(s) ago.` : "Run npm run media:cache to create local media assets."
-      },
-      {
-        id: "sports-data",
-        label: "Sports data mode",
-        status: "ready",
-        detail: sportsDataMode === "espn" ? "Current control-room sports data mode is ESPN scoreboard." : "Current control-room sports data mode is demo scripted plays."
-      }
-    ]
-  };
-}
-
-function buildModelStack(): ModelStackProfile {
-  const commentaryProvider = config.RESOLVED_COMMENTARY_PROVIDER;
-  const ttsProvider = config.RESOLVED_TTS_PROVIDER;
-  return {
-    preset: config.MODEL_PRESET,
-    commentary: {
-      provider: commentaryProvider,
-      model: commentaryProvider === "openai" ? config.RESOLVED_OPENAI_MODEL : "local-template",
-      reasoningEffort: config.OPENAI_REASONING_EFFORT,
-      status: commentaryProvider === "openai" ? (config.OPENAI_API_KEY ? "ready" : "needs-key") : "local",
-      role: "Drafts short personalized livecast scripts from play, fantasy, news, and group context."
-    },
-    realtime: {
-      provider: config.MODEL_PRESET === "local" ? "mock" : "openai-realtime",
-      model: config.MODEL_PRESET === "local" ? "mock-realtime" : config.RESOLVED_REALTIME_MODEL,
-      status: config.MODEL_PRESET === "local" ? "mock" : "planned",
-      role: "Target for future browser audio/video realtime loop and barge-in voice interaction."
-    },
-    multimodal: {
-      provider: config.RESOLVED_MODEL_PROVIDER,
-      model:
-        config.RESOLVED_MODEL_PROVIDER === "openai-vision"
-          ? config.RESOLVED_OPENAI_MODEL
-          : config.RESOLVED_MODEL_PROVIDER === "nemotron"
-            ? config.NEMOTRON_MODEL
-            : config.RESOLVED_MODEL_PROVIDER === "openai-realtime"
-              ? config.RESOLVED_REALTIME_MODEL
-              : "mock-multimodal-observer",
-      status:
-        config.RESOLVED_MODEL_PROVIDER === "mock"
-          ? "mock"
-          : config.RESOLVED_MODEL_PROVIDER === "openai-vision" && config.OPENAI_API_KEY
-            ? "ready"
-            : config.RESOLVED_MODEL_PROVIDER === "nemotron" && config.NEMOTRON_ENDPOINT
-              ? "ready"
-              : "planned",
-      role: "Observes permitted video/screen input and produces non-authoritative context for commentary."
-    },
-    tts: {
-      provider: ttsProvider,
-      model: ttsProvider === "elevenlabs" ? config.RESOLVED_ELEVENLABS_MODEL_ID : "browser-speechSynthesis",
-      status: ttsProvider === "elevenlabs" ? (config.ELEVENLABS_API_KEY ? "ready" : "needs-key") : "local",
-      role: "Streams low-latency spoken commentary audio."
-    }
-  };
-}
+// `buildDiagnostics` and `buildModelStack` moved to dedicated
+// modules (./buildDiagnostics, ./buildModelStack) so the Next.js
+// route handlers can import them without dragging Fastify in.
+// `buildDiagnostics` is re-exported below for any external callers
+// (tests) that imported it from here.
+export { buildDiagnostics } from "./buildDiagnostics";
+export { buildModelStack } from "./buildModelStack";
 
 function send(socket: { send: (data: string) => void }, event: ClientServerEvent) {
   socket.send(JSON.stringify(event));

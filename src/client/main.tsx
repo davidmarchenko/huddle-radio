@@ -49,7 +49,6 @@ import {
   applyProfileToGroup,
   buildPriorContext,
   formatRelativeTime,
-  mergeShowHistory,
   sportNounForContext,
   type LeagueClaim,
   type ShowHistoryEntry,
@@ -583,25 +582,13 @@ function App() {
     };
   }, [game?.gameId, game?.sport, game?.awayTeam, game?.homeTeam, listenerStakes?.startersInGame]);
 
-  // W8: hydrate pastShows from the backend on boot. Server is source
-  // of truth (cross-device); localStorage is the offline fallback.
-  // We merge by id so the local cache fills any backend gap (e.g. a
-  // show archived offline that hasn't synced yet).
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/history/shows?listenerId=${encodeURIComponent(listenerId)}&limit=25`)
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`history ${response.status}`))))
-      .then((payload: { shows?: ShowHistoryEntry[] }) => {
-        if (cancelled || !Array.isArray(payload.shows)) return;
-        setPastShows((current) => mergeShowHistory(payload.shows!, current));
-      })
-      .catch(() => {
-        // Offline / 4xx → keep localStorage-only behavior. No surfacing.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // W8: pastShows lives in localStorage (already hydrated above when
+  // we read `persisted.pastShows`). The cross-device sync via
+  // /api/history/shows ran on the Fastify codepath; that route was
+  // never ported to Next.js because the demo + interview deploy is
+  // single-device. Re-introducing it requires a persistence layer
+  // (Upstash Redis is already a dep — see SessionRegistry for the
+  // pattern). Until then, history is per-device.
 
   // Archive the show into pastShows once it transitions to recap. The
   // archived entry feeds future-show prior-context callbacks ("last
@@ -646,15 +633,10 @@ function App() {
       totalCommentary: commentary.length
     };
     setPastShows((current) => [entry, ...current].slice(0, 25));
-    // Best-effort backend sync. Failure is silent — localStorage is
-    // still authoritative on this device, and the next boot will retry.
-    fetch("/api/history/shows", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ listenerId, entry })
-    }).catch(() => {
-      /* offline — keep going */
-    });
+    // localStorage is the only persistence layer right now. The
+    // Fastify-era POST to /api/history/shows was removed alongside
+    // the GET when the routes weren't ported to Next.js — see the
+    // hydration effect above for the rationale.
   }, [huddlePhase, commentary, game, group.listener?.name, listenerStakes, profile]);
 
   const startLivecast = async (overrides?: { sportsGameId?: string; sportsDataMode?: "demo" | "espn"; bypassReadiness?: boolean }) => {
