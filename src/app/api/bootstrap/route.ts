@@ -32,41 +32,54 @@ export async function GET(request: Request) {
   const espnSeason = url.searchParams.get("espnSeason");
   const week = url.searchParams.get("week");
 
-  try {
-    const fantasy = createFantasyProvider(providerMode, undefined);
-    const sports = createSportsDataProvider(sportsDataMode, sportsGameId);
-    const [leagueState, gameState, health] = await Promise.all([
-      fantasy.getLeagueState({
-        leagueId: providerMode === "espn" ? espnLeagueId : sleeperLeagueId,
-        week: week ? Number(week) : undefined,
-        season: espnSeason ? Number(espnSeason) : undefined
-      }),
-      sports.getGameState(),
-      getHealth()
-    ]);
-    const payload = {
-      fantasy: leagueState,
-      game: gameState,
-      group: defaultGroup,
-      health,
-      providers: getActiveProviders(undefined, providerMode, sportsDataMode)
-    };
+  // Each upstream is independent: a fantasy load failure shouldn't
+  // prevent the discover page from rendering the current game card,
+  // and an ESPN-offseason "no events" should not 502 the whole
+  // bootstrap. Use allSettled and return whatever succeeded — the
+  // client UI already handles missing fields conditionally.
+  const fantasy = createFantasyProvider(providerMode, undefined);
+  const sports = createSportsDataProvider(sportsDataMode, sportsGameId);
+  const [leagueResult, gameResult, healthResult] = await Promise.allSettled([
+    fantasy.getLeagueState({
+      leagueId: providerMode === "espn" ? espnLeagueId : sleeperLeagueId,
+      week: week ? Number(week) : undefined,
+      season: espnSeason ? Number(espnSeason) : undefined
+    }),
+    sports.getGameState(),
+    getHealth()
+  ]);
+
+  const failures: Record<string, string> = {};
+  const reason = (r: PromiseSettledResult<unknown>) =>
+    r.status === "rejected" ? (r.reason instanceof Error ? r.reason.message : String(r.reason)) : "";
+  if (leagueResult.status === "rejected") failures.fantasy = reason(leagueResult);
+  if (gameResult.status === "rejected") failures.game = reason(gameResult);
+  if (healthResult.status === "rejected") failures.health = reason(healthResult);
+
+  const payload = {
+    fantasy: leagueResult.status === "fulfilled" ? leagueResult.value : undefined,
+    game: gameResult.status === "fulfilled" ? gameResult.value : undefined,
+    group: defaultGroup,
+    health: healthResult.status === "fulfilled" ? healthResult.value : [],
+    providers: getActiveProviders(undefined, providerMode, sportsDataMode),
+    ...(Object.keys(failures).length > 0 ? { failures } : {})
+  };
+
+  if (Object.keys(failures).length > 0) {
+    console.warn(JSON.stringify({
+      event: "bootstrap.partial",
+      providerMode,
+      sportsDataMode,
+      failures,
+      latencyMs: Date.now() - startedAt
+    }));
+  } else {
     console.log(JSON.stringify({
       event: "bootstrap.ok",
       providerMode,
       sportsDataMode,
       latencyMs: Date.now() - startedAt
     }));
-    return NextResponse.json(payload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(JSON.stringify({
-      event: "bootstrap.failed",
-      providerMode,
-      sportsDataMode,
-      error: message,
-      latencyMs: Date.now() - startedAt
-    }));
-    return NextResponse.json({ error: message }, { status: 502 });
   }
+  return NextResponse.json(payload);
 }

@@ -1292,11 +1292,16 @@ function App() {
   const refreshMediaManifest = async () => {
     try {
       setMediaStatus("Loading media cache");
-      const response = await fetch(`/media-cache/manifest.json?t=${Date.now()}`);
+      // /api/media-cache reads the manifest from disk and returns an
+      // empty stub if the local cache hasn't been populated. The old
+      // direct-fetch of /media-cache/manifest.json 404s on Vercel
+      // because the cache directory is gitignored.
+      const response = await fetch(`/api/media-cache?t=${Date.now()}`);
       if (!response.ok) throw new Error("No media cache found yet.");
       const manifest = (await response.json()) as MediaCacheManifest;
-      setMediaManifest(manifest);
-      setMediaStatus("Media cache loaded");
+      const hasAssets = Array.isArray(manifest.assets) && manifest.assets.length > 0;
+      setMediaManifest(hasAssets ? manifest : undefined);
+      setMediaStatus(hasAssets ? "Media cache loaded" : "Media cache empty");
     } catch (error) {
       setMediaManifest(undefined);
       setMediaStatus(error instanceof Error ? error.message : "Media cache unavailable");
