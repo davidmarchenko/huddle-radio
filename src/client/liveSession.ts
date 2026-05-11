@@ -98,8 +98,15 @@ export async function startLiveSession(
       if (!dataLine) continue;
       try {
         out.push(JSON.parse(dataLine.slice("data:".length).trim()));
-      } catch {
+      } catch (error) {
         // Drop unparseable blocks (server keepalive comments, malformed lines).
+        // Log to console so we can tell whether a tts event with a
+        // huge base64 payload is silently failing JSON.parse.
+        console.warn("[huddle.sse] JSON.parse failed", {
+          dataLineLen: dataLine.length,
+          firstChars: dataLine.slice(0, 80),
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
     }
     return out;
@@ -153,6 +160,10 @@ export async function startLiveSession(
     try {
       for (const evt of pendingPostHandshake) {
         if (evt?.type === "session-ready") continue;
+        // Diagnostic: surface every parsed event type at the transport
+        // boundary so we can tell "event never arrived" apart from
+        // "event arrived but dispatcher swallowed it."
+        console.log("[huddle.sse]", evt?.type, "(post-handshake)");
         handlers.onEvent(evt as ClientServerEvent);
       }
       while (true) {
@@ -163,6 +174,7 @@ export async function startLiveSession(
           // Ignore the handshake event if the server ever re-emits it
           // (defensive — current protocol fires it exactly once).
           if (evt?.type === "session-ready") continue;
+          console.log("[huddle.sse]", evt?.type);
           handlers.onEvent(evt as ClientServerEvent);
         }
       }
