@@ -140,9 +140,24 @@ reliable).
       runaway ticks in either terminal. The in-process session store
       grace-times the engine after ~5s of detachment.
 
-## Vercel preview-deploy verification
+## Vercel deploy verification
 
-When pushing a branch deploys to a Vercel preview URL:
+**Live production URL:** https://huddle-radio.vercel.app
+
+For a quick one-shot verification of the live deploy after any
+push to main, run:
+
+```bash
+node scripts/probeLiveDemo.mjs                          # default URL
+node scripts/probeLiveDemo.mjs https://your-preview.vercel.app
+```
+
+The probe drives the same golden-path flow the local Playwright
+spec covers but against the deployed URL — visit, start a sample
+show, confirm host turns scroll in, confirm Cue button mounts.
+Exits non-zero on any check failure so it's CI-friendly.
+
+For deeper manual checks (markets count, clip round-trip, etc.):
 
 - [ ] `curl -s -o /dev/null -w "%{http_code}\n" <preview-url>/`
       returns `200`.
@@ -173,6 +188,13 @@ When pushing a branch deploys to a Vercel preview URL:
   `next.config.ts`'s `REWRITE_TO_FASTIFY` guard reads
   `process.env.NODE_ENV !== "production"`. `next start` sets
   NODE_ENV=production automatically.
+- **Routes 500 with ERR_REQUIRE_ESM on Vercel** → the build is using
+  Turbopack instead of webpack. The build script *must* read
+  `next build --webpack`. Turbopack's NFT drags our outer
+  package.json (type:module) into Function bundles for routes with
+  non-trivial import graphs, and Vercel's `___next_launcher.cjs`
+  refuses the `require()` of an ESM-scoped route.js. Webpack's NFT
+  doesn't trip this.
 - **Mic prompt never appears** → either the browser blocked permissions
   globally, or `getUserMedia` threw silently. Check DevTools console.
 - **Markets ticker never appears** → either `/api/markets?sport=<x>`
