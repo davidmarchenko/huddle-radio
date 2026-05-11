@@ -23,7 +23,11 @@ import {
  */
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+// Hobby plan caps Function maxDuration at 300s; Pro/Enterprise can
+// extend to 800s. Browsers auto-reconnect EventSource on close, so a
+// session that runs past the cap reconnects via /api/live/start with
+// a fresh sessionId — degraded but functional.
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   const startedAt = Date.now();
