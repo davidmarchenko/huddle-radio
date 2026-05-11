@@ -47,6 +47,7 @@ import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
 import { DebugPanel } from "./DebugPanel";
+import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -708,6 +709,10 @@ function App() {
         audioContextRef.current = new AudioContextConstructor();
       }
       void audioContextRef.current.resume().catch(() => undefined);
+      // Subtle ambient bed under the show — fills the gap between
+      // turn-sets so the app doesn't feel dead. Ducks under TTS
+      // automatically via onAudioStart/onAudioEnd below.
+      if (audioContextRef.current) startAmbientBed(audioContextRef.current);
     }
     livecastSessionRef.current += 1;
     setShowPrepared(true);
@@ -881,11 +886,13 @@ function App() {
                 if (livecastSessionRef.current !== sessionId) return;
                 currentAudioRef.current = audio;
                 setAudioPlaying(true);
+                duckAmbientBed();
               },
               onAudioEnd: (audio) => {
                 if (currentAudioRef.current === audio) currentAudioRef.current = null;
                 if (livecastSessionRef.current === sessionId) setAudioPlaying(false);
                 if (livecastSessionRef.current === sessionId) setAudioLevels(WAVEFORM_BARS);
+                unduckAmbientBed();
               },
               onAudioLevel: (levels) => {
                 if (livecastSessionRef.current === sessionId) setAudioLevels(levels);
@@ -1109,6 +1116,7 @@ function App() {
         window.clearInterval(frameTimerRef.current);
         frameTimerRef.current = undefined;
       }
+      stopAmbientBed();
       if (audioContextRef.current && audioContextRef.current.state !== "closed") {
         audioContextRef.current.close().catch(() => undefined);
       }
@@ -1139,6 +1147,7 @@ function App() {
       currentAudioRef.current = null;
     }
     window.speechSynthesis?.cancel();
+    stopAmbientBed();
     setLivecastActive(false);
     setAudioPlaying(false);
     setAudioLevels(WAVEFORM_BARS);

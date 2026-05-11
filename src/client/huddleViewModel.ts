@@ -111,21 +111,21 @@ export const HUDDLE_HOSTS: HuddleHost[] = [
     name: "Maya",
     role: "Analyst",
     accent: "violet",
-    description: "Sees the game three plays ahead."
+    description: "Anchored in the numbers. Gets ragged on for it."
   },
   {
     id: "theo",
     name: "Theo",
     role: "Fan",
     accent: "orange",
-    description: "Runs on passion and hot takes."
+    description: "Anchor of the booth. Sets up the others, pushes back when it's earned."
   },
   {
     id: "cam",
     name: "Cam",
     role: "Wildcard",
     accent: "gold",
-    description: "Says what everyone is thinking."
+    description: "Confident, sharp, and occasionally wrong about it."
   }
 ];
 
