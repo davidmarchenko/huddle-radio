@@ -16090,23 +16090,29 @@ body {
 }
 
 .markets-ticker-source {
-  font-size: 0.65rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding: 0.1rem 0.45rem;
+  display: inline-flex;
+  align-items: center;
+  height: 1.1rem;
+  padding: 0 0.5rem;
   border-radius: 999px;
   background: color-mix(in srgb, var(--hr-text) 8%, transparent);
 }
 
+.markets-ticker-source .markets-source-logo {
+  height: 0.85rem;
+  width: auto;
+  display: block;
+  /* Brand wordmarks ship as dark glyphs on a transparent background;
+     leave them at native color so the logo reads correctly against
+     the tinted brand pill below. */
+}
+
 .markets-ticker li[data-source="kalshi"] .markets-ticker-source {
   background: color-mix(in srgb, #00b489 22%, transparent);
-  color: #06624c;
 }
 
 .markets-ticker li[data-source="polymarket"] .markets-ticker-source {
   background: color-mix(in srgb, #2c5cdc 22%, transparent);
-  color: #1c3a96;
 }
 
 .markets-ticker-title {
@@ -16336,19 +16342,15 @@ body {
 }
 
 .markets-board-source {
-  font-size: 0.62rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--hr-text-muted);
+  display: inline-flex;
+  align-items: center;
+  height: 1.15rem;
 }
 
-.markets-board-list li[data-source="kalshi"] .markets-board-source {
-  color: #06624c;
-}
-
-.markets-board-list li[data-source="polymarket"] .markets-board-source {
-  color: #1c3a96;
+.markets-board-source .markets-source-logo {
+  height: 1rem;
+  width: auto;
+  display: block;
 }
 
 .markets-board-row-meta strong {

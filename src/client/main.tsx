@@ -2383,6 +2383,34 @@ function App() {
 }
 
 /**
+ * Brand badge for the two prediction-market sources we surface
+ * (Kalshi, Polymarket). Renders the wordmark logo plus a visually-
+ * hidden text label so screen readers still announce "Kalshi" /
+ * "Polymarket" — the logo alone is decorative for sighted users
+ * because the brand-tinted pill already encodes which source it is.
+ *
+ * One component for both contexts keeps the asset paths in a single
+ * place; CSS sizes the logo per `variant`.
+ */
+function MarketSourceBadge({
+  source,
+  variant
+}: {
+  source: string;
+  variant: "ticker" | "board";
+}) {
+  const className = variant === "ticker" ? "markets-ticker-source" : "markets-board-source";
+  const label = source === "kalshi" ? "Kalshi" : "Polymarket";
+  const src = source === "kalshi" ? "/icons/Logos/Kalshi_logo.svg.png" : "/icons/Logos/polymarket-logo.png";
+  return (
+    <span className={className}>
+      <img src={src} alt="" className="markets-source-logo" />
+      <span className="hr-sr-only">{label}</span>
+    </span>
+  );
+}
+
+/**
  * W19: Markets overlay. Sits next to the ScoreBug and surfaces the
  * 2-3 most-relevant Kalshi/Polymarket prices for the game, refreshed
  * every 8 seconds. This is the listener-facing read on what the
@@ -2471,7 +2499,7 @@ function MarketsTicker({
               data-direction={direction}
               className={isFlashing ? "is-flashing" : undefined}
             >
-              <span className="markets-ticker-source">{snapshot.source === "kalshi" ? "Kalshi" : "Polymarket"}</span>
+              <MarketSourceBadge source={snapshot.source} variant="ticker" />
               <span className="markets-ticker-title" title={snapshot.title}>{snapshot.outcomeLabel}</span>
               <span className="markets-ticker-price">
                 {snapshot.yesPriceCents}¢
@@ -5264,9 +5292,7 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
           return (
             <li key={`${snapshot.source}:${snapshot.externalId}`} data-source={snapshot.source}>
               <div className="markets-board-row-meta">
-                <span className="markets-board-source">
-                  {snapshot.source === "kalshi" ? "Kalshi" : "Polymarket"}
-                </span>
+                <MarketSourceBadge source={snapshot.source} variant="board" />
                 <strong>{snapshot.outcomeLabel}</strong>
                 <span className="markets-board-title" title={snapshot.title}>{snapshot.title}</span>
               </div>
