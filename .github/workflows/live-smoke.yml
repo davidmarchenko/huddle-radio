@@ -1,0 +1,59 @@
+name: live-smoke
+
+# Daily probe of the live deploy. The CI workflow gates merges by
+# building + testing source. This workflow gates *production reality*
+# — it catches the deploy-rotted case where the bundle is fine but a
+# vendor API shifted, an env var got rotated, or the in-process
+# session store leaked. Especially valuable for an interview-prep
+# deploy that needs to be working when you call on it, not just when
+# you last pushed.
+#
+# Why GitHub Actions and not Vercel Cron Jobs (which the linter
+# nudges us toward): Vercel Cron runs *inside* the same deployment
+# we're trying to verify. If the deployment is broken or down,
+# Vercel Cron won't run either — it'd be self-blind. GitHub Actions
+# runs on GitHub's infra, hits the public URL with a real headless
+# Chromium, and reports breakage independently of Vercel. That's the
+# entire point of this workflow.
+#
+# Manually triggerable via the Actions tab so we can run it after a
+# Vercel deploy without waiting for the cron.
+
+on:
+  schedule:
+    # 09:17 UTC daily — off-the-hour minute to avoid the
+    # cron stampede everyone else hits at :00.
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "URL to probe (defaults to the production URL)"
+        required: false
+        default: "https://huddle-radio.vercel.app"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: probe live demo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Probe live URL
+        run: node scripts/probeLiveDemo.mjs "${{ inputs.url || 'https://huddle-radio.vercel.app' }}"
