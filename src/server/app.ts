@@ -74,7 +74,7 @@ export async function buildApp() {
       week?: string;
     };
     const fantasy = createFantasyProvider(query.providerMode, undefined);
-    const sports = createSportsDataProvider(query.sportsDataMode, query.sportsGameId);
+    const sports = createSportsDataProvider(query.sportsGameId);
     return {
       fantasy: await fantasy.getLeagueState({
         leagueId: query.providerMode === "espn" ? query.espnLeagueId : query.sleeperLeagueId,
@@ -84,7 +84,7 @@ export async function buildApp() {
       game: await sports.getGameState(),
       group: defaultGroup,
       health: await getHealth(),
-      providers: getActiveProviders(undefined, query.providerMode, query.sportsDataMode)
+      providers: getActiveProviders(undefined, query.providerMode, deriveSportsLabelMode(query.sportsGameId))
     };
   });
 
@@ -491,7 +491,12 @@ const ClipUploadBodySchema = z.object({
 
 const LivecastRequestSchema = z.object({
   providerMode: z.enum(["demo", "sleeper", "espn"]).default("demo"),
-  sportsDataMode: z.enum(["demo", "espn"]).default(config.SPORTS_DATA_PROVIDER),
+  // The sports backend is derived from the sportsGameId prefix server-side
+  // (see resolveSportsSource in showFactories). Old clients may still send
+  // sportsDataMode — accept and discard it so we don't break their POSTs,
+  // but never use it for routing. The mode-was-the-source-of-truth model
+  // is what let the demo KC@DET script leak into real-game shows.
+  sportsDataMode: z.enum(["demo", "espn"]).optional(),
   sportsGameId: z.string().trim().optional(),
   sleeperLeagueId: z.string().trim().optional(),
   espnLeagueId: z.string().trim().optional(),
@@ -610,6 +615,7 @@ import {
   createFantasyProvider,
   createSportsDataProvider,
   createModelProvider,
+  deriveSportsLabelMode,
   parseSportPrefixedGameId,
   buildHostVoiceMap as _buildHostVoiceMap,
   getActiveProviders as _getActiveProviders,

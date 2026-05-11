@@ -44,8 +44,20 @@ describe("demo providers", () => {
     expect(nbaPlay.id).toMatch(/^nba-play-/);
   });
 
-  it("falls back to the default NFL game when given an unknown gameId", async () => {
-    const provider = new DemoSportsDataProvider("never-heard-of-it");
+  it("throws on a non-demo gameId instead of silently substituting KC@DET", () => {
+    // Previously this provider quietly defaulted to KC@DET for anything
+    // not in DEMO_GAME_META, which is how the demo Mahomes script
+    // leaked into real-game shows when the routing got confused.
+    // The contract now: real game ids must go through the ESPN /
+    // Sportradar / SportsDataIO providers via resolveSportsSource;
+    // handing one to the demo provider is a routing bug, not a
+    // fallback condition.
+    expect(() => new DemoSportsDataProvider("nba-401741234")).toThrow(/non-demo gameId/);
+    expect(() => new DemoSportsDataProvider("never-heard-of-it")).toThrow(/non-demo gameId/);
+  });
+
+  it("still serves the bundled default when no gameId is supplied (sample CTA)", async () => {
+    const provider = new DemoSportsDataProvider();
     const game = await provider.getGameState();
     expect(game.sport).toBe("nfl");
     expect(game.gameId).toBe("demo-kc-det");

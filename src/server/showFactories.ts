@@ -41,33 +41,89 @@ export function createFantasyProvider(
   return new DemoFantasyProvider(customLeague);
 }
 
-export function createSportsDataProvider(
-  sportsDataMode: "demo" | "espn" | undefined,
-  sportsGameId?: string
-) {
-  // W10: paid live-data backups. Operators with Sportradar /
-  // SportsDataIO contracts pass `sportradar:<gameId>` or
-  // `sportsdataio:<scoreId>` in sportsGameId; the API key comes from
-  // env. Falls through to ESPN when the prefix isn't present so the
-  // free path is unchanged.
-  if (sportsGameId?.startsWith("sportradar:") && config.SPORTRADAR_API_KEY) {
-    return new SportradarSportsDataProvider({
-      apiKey: config.SPORTRADAR_API_KEY,
-      accessLevel: config.SPORTRADAR_ACCESS_LEVEL,
-      gameId: sportsGameId.slice("sportradar:".length)
-    });
+/**
+ * Tagged-union view of which sports backend a gameId points at. Routing
+ * is derived from the gameId prefix alone — there is no separate "mode"
+ * variable to drift out of sync with it. Prefix grammar:
+ *
+ *   sportradar:<id>     → paid Sportradar feed (key required)
+ *   sportsdataio:<id>   → paid SportsDataIO feed (key required)
+ *   nba-<id> / nfl-<id> / ... → ESPN scoreboard for that sport
+ *   demo-<key>          → bundled demo script
+ *   "" / undefined      → bundled demo script (default landing)
+ *
+ * Anything else is rejected so we surface "unknown game" instead of
+ * silently substituting a default and serving the wrong play-by-play —
+ * the bug we just hunted down.
+ */
+export type SportsSource =
+  | { kind: "sportradar"; gameId: string }
+  | { kind: "sportsdataio"; scoreId: string }
+  | { kind: "espn"; sportPath: typeof ESPN_SPORTS[number]; eventId: string }
+  | { kind: "demo"; gameId?: string }
+  | { kind: "unknown"; raw: string };
+
+export function resolveSportsSource(sportsGameId?: string): SportsSource {
+  if (!sportsGameId) return { kind: "demo" };
+  if (sportsGameId.startsWith("sportradar:")) {
+    return { kind: "sportradar", gameId: sportsGameId.slice("sportradar:".length) };
   }
-  if (sportsGameId?.startsWith("sportsdataio:") && config.SPORTSDATAIO_API_KEY) {
-    return new SportsDataIoProvider({
-      apiKey: config.SPORTSDATAIO_API_KEY,
-      scoreId: sportsGameId.slice("sportsdataio:".length)
-    });
+  if (sportsGameId.startsWith("sportsdataio:")) {
+    return { kind: "sportsdataio", scoreId: sportsGameId.slice("sportsdataio:".length) };
   }
-  if (sportsDataMode === "espn") {
-    const parsed = parseSportPrefixedGameId(sportsGameId);
-    return new EspnSportsDataProvider(fetch, parsed?.eventId, parsed?.sportPath ?? ESPN_SPORTS[0]);
+  if (sportsGameId.startsWith("demo-")) {
+    return { kind: "demo", gameId: sportsGameId };
   }
-  return new DemoSportsDataProvider(sportsGameId);
+  const espn = parseSportPrefixedGameId(sportsGameId);
+  if (espn) return { kind: "espn", sportPath: espn.sportPath, eventId: espn.eventId };
+  return { kind: "unknown", raw: sportsGameId };
+}
+
+export function createSportsDataProvider(sportsGameId?: string) {
+  const source = resolveSportsSource(sportsGameId);
+  switch (source.kind) {
+    case "sportradar":
+      // Paid backup is only useful with a key. Without one, fall through
+      // to ESPN if the underlying id happens to be ESPN-prefixed, else
+      // demo — same behavior the previous mode-based factory had.
+      if (config.SPORTRADAR_API_KEY) {
+        return new SportradarSportsDataProvider({
+          apiKey: config.SPORTRADAR_API_KEY,
+          accessLevel: config.SPORTRADAR_ACCESS_LEVEL,
+          gameId: source.gameId
+        });
+      }
+      return createSportsDataProvider(source.gameId);
+    case "sportsdataio":
+      if (config.SPORTSDATAIO_API_KEY) {
+        return new SportsDataIoProvider({
+          apiKey: config.SPORTSDATAIO_API_KEY,
+          scoreId: source.scoreId
+        });
+      }
+      return createSportsDataProvider(source.scoreId);
+    case "espn":
+      return new EspnSportsDataProvider(fetch, source.eventId, source.sportPath);
+    case "demo":
+      return new DemoSportsDataProvider(source.gameId);
+    case "unknown":
+      // Surface the misuse loudly — the previous code path silently
+      // routed unknown ids to KC@DET, which is exactly how the wrong
+      // commentary leaked into real-game shows.
+      throw new Error(
+        `Unrecognized sportsGameId "${source.raw}". Expected a sport-prefixed ESPN id (e.g. nba-401741234), a "demo-*" id, or a "sportradar:" / "sportsdataio:" prefix.`
+      );
+  }
+}
+
+/**
+ * Coarse label hint for the producer-panel "Sports data" row. The full
+ * routing lives in resolveSportsSource; this is just a two-bucket
+ * summary the existing getActiveProviders signature expects.
+ */
+export function deriveSportsLabelMode(sportsGameId?: string): "demo" | "espn" {
+  const source = resolveSportsSource(sportsGameId);
+  return source.kind === "espn" || source.kind === "sportradar" || source.kind === "sportsdataio" ? "espn" : "demo";
 }
 
 export function parseSportPrefixedGameId(gameId?: string) {

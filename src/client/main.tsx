@@ -704,9 +704,8 @@ function App() {
     // hydration effect above for the rationale.
   }, [huddlePhase, commentary, game, group.listener?.name, listenerStakes, profile]);
 
-  const startLivecast = async (overrides?: { sportsGameId?: string; sportsDataMode?: "demo" | "espn"; bypassReadiness?: boolean }) => {
+  const startLivecast = async (overrides?: { sportsGameId?: string; bypassReadiness?: boolean }) => {
     const effectiveGameId = overrides?.sportsGameId ?? sportsGameId;
-    const effectiveDataMode = overrides?.sportsDataMode ?? sportsDataMode;
     const validation = validateLivecastStart({ providerMode, sleeperLeagueId, espnLeagueId, videoMode, videoUrl });
     if (validation) {
       setFormError(validation);
@@ -782,7 +781,8 @@ function App() {
     const handle = await startLiveSession(
       {
         providerMode,
-        sportsDataMode: effectiveDataMode,
+        // sportsDataMode intentionally omitted — the sports backend is
+        // derived from sportsGameId on the server. See resolveSportsSource.
         sportsGameId: effectiveGameId || undefined,
         sleeperLeagueId: sleeperLeagueId || undefined,
         espnLeagueId: espnLeagueId || undefined,
@@ -827,7 +827,6 @@ function App() {
           setStatus("Reconnecting");
           void startLivecast({
             sportsGameId: effectiveGameId || undefined,
-            sportsDataMode: effectiveDataMode,
             bypassReadiness: true
           });
         },
@@ -1620,20 +1619,25 @@ function App() {
    * "let me see what this matchup is" tap. Browsing seven sports of
    * games shouldn't burn vendor budget per tap.
    */
-  const pickGameForPreview = (gameId: string, dataMode: "demo" | "espn") => {
+  const pickGameForPreview = (gameId: string) => {
     setViewingHome(false);
     if (window.location.pathname !== `/watch/${gameId}`) {
       window.history.pushState({ view: "show", gameId }, "", `/watch/${gameId}`);
     }
     setSportsGameId(gameId);
-    if (dataMode !== sportsDataMode) {
-      setSportsDataMode(dataMode);
-      setProviders((current) => ({ ...current, sportsData: dataMode === "espn" ? "ESPN Scoreboard" : "Demo Sports Data" }));
+    // Routing source-of-truth is now the gameId prefix; the mode
+    // toggle is just a label/list hint. Demo ids start with "demo-",
+    // anything else is a real ESPN-routed id.
+    const isDemoId = gameId.startsWith("demo-");
+    const derivedMode: "demo" | "espn" = isDemoId ? "demo" : "espn";
+    if (derivedMode !== sportsDataMode) {
+      setSportsDataMode(derivedMode);
+      setProviders((current) => ({ ...current, sportsData: derivedMode === "espn" ? "ESPN Scoreboard" : "Demo Sports Data" }));
     }
     const selected = sportsGames.find((item) => item.id === gameId);
     if (selected) {
       setGame((current) => ({
-        provider: dataMode === "espn" ? "espn-scoreboard" : "demo-sports-data",
+        provider: isDemoId ? "demo-sports-data" : "espn-scoreboard",
         gameId: selected.id,
         sport: selected.sport,
         awayTeam: selected.awayTeam,
@@ -1669,9 +1673,9 @@ function App() {
    * matchup. Direct callers (sample CTA on landing, recap → start
    * a new show) still go straight here.
    */
-  const pickAndStartLivecast = (gameId: string, dataMode: "demo" | "espn") => {
-    pickGameForPreview(gameId, dataMode);
-    startLivecast({ sportsGameId: gameId, sportsDataMode: dataMode, bypassReadiness: true });
+  const pickAndStartLivecast = (gameId: string) => {
+    pickGameForPreview(gameId);
+    startLivecast({ sportsGameId: gameId, bypassReadiness: true });
   };
 
   const setStreamUrlInline = (url: string) => {
@@ -2673,8 +2677,8 @@ function HuddleExperience({
   demoMode: boolean;
   pregameReadiness: { canStart: boolean; requirements: Array<{ id: string; label: string; met: boolean }> };
   emptySetup: EmptyStateSetup;
-  onPickAndStart: (gameId: string, dataMode: "demo" | "espn") => void;
-  onPickGame: (gameId: string, dataMode: "demo" | "espn") => void;
+  onPickAndStart: (gameId: string) => void;
+  onPickGame: (gameId: string) => void;
   onGoHome: () => void;
   viewingHome: boolean;
   livecastActive: boolean;
@@ -3743,9 +3747,9 @@ function HuddleDiscover({
   demoMode: boolean;
   mediaIndex: MediaLookupIndex;
   /** Sample CTA / explicit "start now" intents — opens the WebSocket. */
-  onPickAndStart: (gameId: string, dataMode: "demo" | "espn") => void;
+  onPickAndStart: (gameId: string) => void;
   /** Game-card / glance taps — stage for preview, do NOT cast yet. */
-  onPickGame: (gameId: string, dataMode: "demo" | "espn") => void;
+  onPickGame: (gameId: string) => void;
   onPrepareDemo: () => void;
   onOpenSetup: () => void;
   profile?: UserProfile;
@@ -3904,7 +3908,7 @@ function HuddleDiscover({
             <p>Three named hosts, real-time fantasy commentary, personalized to a sample lineup. No sign-up. Customize after — once you know if it's for you.</p>
           </div>
           <div className="discover-banner-actions discover-banner-actions--split">
-            <button className="primary" onClick={() => onPickAndStart("demo-kc-det", "demo")}>
+            <button className="primary" onClick={() => onPickAndStart("demo-kc-det")}>
               <span className="icon icon-play" aria-hidden="true" />Listen to a sample
             </button>
             <button className="secondary" onClick={() => onOpenProfile("demo")}>
@@ -3970,7 +3974,7 @@ function HuddleDiscover({
       })()}
 
       {sections.length === 0 && profile && tonightGlance && tonightGlance.perSport.length > 0 && (
-        <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
+        <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId)} />
       )}
 
       {sections.length === 0 && (
@@ -3994,14 +3998,14 @@ function HuddleDiscover({
           </header>
           <div className="discover-grid">
             {sectionIndex === 0 && profile && tonightGlance && tonightGlance.perSport.length > 0 && (
-              <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId, setup.sportsDataMode)} />
+              <TonightAtAGlanceCard glance={tonightGlance} onPickGame={(gameId) => onPickGame(gameId)} />
             )}
             {section.games.map((game) => (
               <GameCard
                 key={`${section.id}-${game.id}`}
                 game={game}
                 mediaIndex={mediaIndex}
-                onClick={() => onPickGame(game.id, setup.sportsDataMode)}
+                onClick={() => onPickGame(game.id)}
                 spotlight={listenerSpotlights.get(game.id)}
               />
             ))}

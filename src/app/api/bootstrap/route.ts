@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { defaultGroup } from "@/server/defaultGroup";
-import { createFantasyProvider, createSportsDataProvider, getActiveProviders, getHealth } from "@/server/showFactories";
+import {
+  createFantasyProvider,
+  createSportsDataProvider,
+  deriveSportsLabelMode,
+  getActiveProviders,
+  getHealth
+} from "@/server/showFactories";
 
 /**
  * Initial-state hydration for the discover page. Combines fantasy
@@ -10,7 +16,8 @@ import { createFantasyProvider, createSportsDataProvider, getActiveProviders, ge
  *
  * Query params (all optional):
  *   providerMode    - "demo" | "sleeper" | "espn"
- *   sportsDataMode  - "demo" | "espn"
+ *   sportsDataMode  - "demo" | "espn" (label hint only; routing is
+ *                     derived from sportsGameId)
  *   sportsGameId    - sport-prefixed game id when known
  *   sleeperLeagueId - Sleeper league id (when providerMode=sleeper)
  *   espnLeagueId    - ESPN league id (when providerMode=espn)
@@ -25,8 +32,14 @@ export async function GET(request: Request) {
   const startedAt = Date.now();
   const url = new URL(request.url);
   const providerMode = (url.searchParams.get("providerMode") as "demo" | "sleeper" | "espn" | null) ?? "demo";
-  const sportsDataMode = (url.searchParams.get("sportsDataMode") as "demo" | "espn" | null) ?? "demo";
   const sportsGameId = url.searchParams.get("sportsGameId") ?? undefined;
+  // Sports backend is derived from the gameId prefix
+  // (see resolveSportsSource). The old sportsDataMode query param is
+  // accepted for back-compat but only used for the producer-panel
+  // label, where "no game picked yet" legitimately needs the toggle's
+  // hint as the label.
+  const sportsDataModeHint =
+    (url.searchParams.get("sportsDataMode") as "demo" | "espn" | null) ?? deriveSportsLabelMode(sportsGameId);
   const sleeperLeagueId = url.searchParams.get("sleeperLeagueId") ?? undefined;
   const espnLeagueId = url.searchParams.get("espnLeagueId") ?? undefined;
   const espnSeason = url.searchParams.get("espnSeason");
@@ -38,7 +51,7 @@ export async function GET(request: Request) {
   // bootstrap. Use allSettled and return whatever succeeded — the
   // client UI already handles missing fields conditionally.
   const fantasy = createFantasyProvider(providerMode, undefined);
-  const sports = createSportsDataProvider(sportsDataMode, sportsGameId);
+  const sports = createSportsDataProvider(sportsGameId);
   const [leagueResult, gameResult, healthResult] = await Promise.allSettled([
     fantasy.getLeagueState({
       leagueId: providerMode === "espn" ? espnLeagueId : sleeperLeagueId,
@@ -61,7 +74,7 @@ export async function GET(request: Request) {
     game: gameResult.status === "fulfilled" ? gameResult.value : undefined,
     group: defaultGroup,
     health: healthResult.status === "fulfilled" ? healthResult.value : [],
-    providers: getActiveProviders(undefined, providerMode, sportsDataMode),
+    providers: getActiveProviders(undefined, providerMode, sportsDataModeHint),
     ...(Object.keys(failures).length > 0 ? { failures } : {})
   };
 
@@ -69,7 +82,7 @@ export async function GET(request: Request) {
     console.warn(JSON.stringify({
       event: "bootstrap.partial",
       providerMode,
-      sportsDataMode,
+      sportsDataMode: sportsDataModeHint,
       failures,
       latencyMs: Date.now() - startedAt
     }));
@@ -77,7 +90,7 @@ export async function GET(request: Request) {
     console.log(JSON.stringify({
       event: "bootstrap.ok",
       providerMode,
-      sportsDataMode,
+      sportsDataMode: sportsDataModeHint,
       latencyMs: Date.now() - startedAt
     }));
   }

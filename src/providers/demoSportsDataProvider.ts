@@ -26,7 +26,23 @@ export class DemoSportsDataProvider implements SportsDataProvider {
   private readonly meta: DemoGameMeta;
 
   constructor(gameId?: string) {
-    this.meta = (gameId && DEMO_GAME_META[gameId]) || DEFAULT_META;
+    // No id at all (landing page / "sample" CTA) → bundled default.
+    // A known demo id → its scripted plays. A non-demo id is a routing
+    // bug: the factory hands a real ESPN id to the demo provider only
+    // when something upstream is confused, and silently substituting
+    // KC@DET there is exactly how the wrong commentary used to leak
+    // into live shows. Fail loudly so the bug surfaces.
+    if (!gameId) {
+      this.meta = DEFAULT_META;
+      return;
+    }
+    const meta = DEMO_GAME_META[gameId];
+    if (!meta) {
+      throw new Error(
+        `DemoSportsDataProvider received non-demo gameId "${gameId}". Real game ids must be routed through the ESPN / Sportradar / SportsDataIO providers — see resolveSportsSource in showFactories.ts.`
+      );
+    }
+    this.meta = meta;
   }
 
   async getGameState(): Promise<SportsGameState> {

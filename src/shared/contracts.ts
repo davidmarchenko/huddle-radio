@@ -237,6 +237,13 @@ export type MomentCue = {
 
 export type LivecastRequest = {
   providerMode: "demo" | "sleeper" | "espn";
+  /**
+   * @deprecated The sports backend is derived from `sportsGameId` —
+   * `demo-*` ids → demo provider, sport-prefixed ids (`nba-...`, `nfl-...`)
+   * → ESPN, `sportradar:` / `sportsdataio:` → paid feeds. Sending this
+   * field has no effect; kept on the type for back-compat with serialized
+   * old clients only.
+   */
   sportsDataMode?: "demo" | "espn";
   sportsGameId?: string;
   sleeperLeagueId?: string;

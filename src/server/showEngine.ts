@@ -33,6 +33,7 @@ import {
   createModelProvider,
   buildHostVoiceMap,
   createTTSProvider,
+  deriveSportsLabelMode,
   getActiveProviders,
   getHealth
 } from "./showFactories";
@@ -344,7 +345,11 @@ export class ShowEngine {
     incrementCounter("showsStarted");
 
     const fantasyProvider = createFantasyProvider(request.providerMode, request.customLeague);
-    const sportsProvider = createSportsDataProvider(request.sportsDataMode, request.sportsGameId);
+    // Sports backend is derived from the gameId prefix — see
+    // resolveSportsSource. The old separate `sportsDataMode` request
+    // field used to drive this and silently fell through to KC@DET when
+    // the two disagreed; that whole class of bug is gone now.
+    const sportsProvider = createSportsDataProvider(request.sportsGameId);
     const newsProvider = createNewsProvider();
     const modelProvider = createModelProvider();
 
@@ -425,7 +430,11 @@ export class ShowEngine {
         fantasy,
         game,
         health,
-        providers: getActiveProviders(request.customLeague, request.providerMode, request.sportsDataMode)
+        // The sports-data label tracks what the gameId actually
+        // routes to — see resolveSportsSource. Passing the request
+        // gameId here keeps the listener-visible "Sports data" line in
+        // the producer panel honest.
+        providers: getActiveProviders(request.customLeague, request.providerMode, deriveSportsLabelMode(request.sportsGameId))
       });
 
       // Fetch the Vegas line once at show start. Lines move on the
