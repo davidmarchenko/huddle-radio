@@ -22,34 +22,19 @@ import type {
   VideoFrameSnapshot
 } from "../shared/contracts";
 import type { ModelStackProfile } from "../shared/modelStack";
-import { createLivecastCommentary, createListenerOpener } from "../engine/livecastEngine";
 import { DemoFantasyProvider } from "../providers/demoFantasyProvider";
 import { createNewsProvider, describeNewsStack } from "./createNewsProvider";
+import { createOddsProvider } from "./createOddsProvider";
 import { DemoSportsDataProvider } from "../providers/demoSportsDataProvider";
 import { EspnFantasyProvider } from "../providers/espnFantasyProvider";
 import { EspnSportsDataProvider, ESPN_SPORTS } from "../providers/espnSportsDataProvider";
-import { SportradarSportsDataProvider } from "../providers/sportradarSportsDataProvider";
-import { SportsDataIoProvider } from "../providers/sportsDataIoProvider";
-import { createVisionProvider } from "./visionProviderFactory";
 import { isVideoFrameSnapshot, normalizeValidationPlay } from "./visionRequest";
-import type { MultimodalModelProvider } from "../shared/contracts";
 import { createCommentaryProvider, describeCommentaryStack } from "./createCommentaryProvider";
-import { createOddsProvider } from "./createOddsProvider";
-import { fetchMarketSnapshots, pickRelevantMarketsForGame } from "./marketsProvider";
-import { detectMarketSwings } from "../providers/commentaryPrompts";
-import type { MarketSnapshot } from "../shared/contracts";
-import { getMetrics, incrementCounter, registerCommentaryChain, registerNewsChain, registerVisionChain, ShowUsageBudget } from "./metrics";
+import { getMetrics, incrementCounter, registerCommentaryChain, registerNewsChain, registerVisionChain } from "./metrics";
 import { getDefaultShowHistoryStore, isValidListenerId } from "./showHistoryStore";
 import { getDefaultYahooTokenStore } from "./yahooTokenStore";
 import { buildYahooAuthUrl, exchangeYahooAuthCode, refreshYahooAccessToken } from "../providers/yahooFantasyProvider";
 import { getDefaultClipStore } from "./clipStore";
-import { rosterForListener, rosterMatchKind } from "./rosterMatch";
-import { getDefaultAdvancedStatsProvider } from "./advancedStatsProvider";
-import type { PlayerSeasonStats } from "../shared/contracts";
-import { LocalCommentaryProvider } from "../providers/openAICommentaryProvider";
-import { SleeperFantasyProvider } from "../providers/sleeperFantasyProvider";
-import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProviders";
-import { UserVideoProvider } from "../providers/userVideoProvider";
 import { config } from "./config";
 import { getDefaultPlayerIdResolver } from "./playerIdResolver";
 import { getDefaultSportsGamesCache } from "./sportsGamesCache";
@@ -388,26 +373,26 @@ export async function buildApp() {
 
   app.get("/ws/livecast", { websocket: true }, (socket) => {
     incrementCounter("webSocketsOpened");
-    let stopped = false;
-    let timer: NodeJS.Timeout | undefined;
-    let healthTimer: NodeJS.Timeout | undefined;
-    let latestFrame: VideoFrameSnapshot | undefined;
-    // Listener nudge: when set, the next tick forces this host to deliver
-    // the upcoming turn instead of the deterministic selectHost pick.
-    // Cleared after one use so a nudge can't keep monopolizing one voice.
-    let pendingNextHostId: "maya" | "theo" | "cam" | undefined;
-    // W18: push-to-talk cues queued from the listener since the last
-    // commentary tick. Drained on each draft and acked to the client
-    // so the UI can mark them as "answered."
-    let pendingCues: ListenerCue[] = [];
-    // W14/W19: the markets snapshot we last cited on-air. The next
-    // tick compares against this to detect swings worth surfacing as
-    // marketSwing in the persona prompt.
-    let lastMarketsForSwing: MarketSnapshot[] = [];
-    // Per-show usage budget. When exceeded, callers below swap commentary
-    // → local templates and TTS → mock so the show can finish without
-    // burning vendor budget on a runaway tick loop.
-    const budget = new ShowUsageBudget();
+    // The whole show loop now lives in ShowEngine — this handler is a
+    // thin transport adapter that pumps engine events out as WS
+    // frames and feeds inbound frames/cues/nudges back into it.
+    const engine = new ShowEngine({ logger: app.log });
+
+    // Pump outbound events. The for-await ends when engine.stop()
+    // closes the queue or when the client disconnects.
+    void (async () => {
+      try {
+        for await (const event of engine.events()) {
+          if (socket.readyState !== socket.OPEN) break;
+          send(socket, event);
+        }
+      } catch (error) {
+        app.log.warn(
+          { err: error instanceof Error ? error.message : String(error) },
+          "Engine event pump terminated"
+        );
+      }
+    })();
 
     socket.on("message", (raw) => {
       // Wrap the async work in an IIFE with a top-level catch so a
@@ -427,378 +412,37 @@ export async function buildApp() {
     const handleSocketMessage = async (raw: unknown) => {
       const incoming = parseSocketMessage(String(raw));
       if (incoming.type === "frame") {
-        latestFrame = incoming.frame;
+        engine.pushFrame(incoming.frame);
         return;
       }
       if (incoming.type === "nudge") {
-        pendingNextHostId = incoming.hostId;
-        send(socket, { type: "status", message: `Up next: ${incoming.hostId}`, level: "info" });
+        engine.pushNudge(incoming.hostId);
         return;
       }
       if (incoming.type === "cue") {
-        // Cap the queue so a chatty listener can't bloat the prompt
-        // payload past the model's tolerance — keep the freshest 3.
-        pendingCues = [incoming.cue, ...pendingCues].slice(0, 3);
-        send(socket, { type: "status", message: `Cue heard: ${incoming.cue.text.slice(0, 80)}`, level: "info" });
+        engine.pushCue(incoming.cue);
         return;
       }
-      if (timer) clearInterval(timer);
-      if (healthTimer) clearInterval(healthTimer);
       const requestResult = parseLivecastRequest(incoming.rawRequest);
       if (!requestResult.ok) {
         send(socket, { type: "error", message: requestResult.message });
         return;
       }
-      const request = requestResult.request;
-      incrementCounter("showsStarted");
-      const fantasyProvider = createFantasyProvider(request.providerMode, request.customLeague);
-      const sportsProvider = createSportsDataProvider(request.sportsDataMode, request.sportsGameId);
-      const newsProvider = createNewsProvider();
-      const modelProvider = createModelProvider();
-      // Budget-aware commentary/TTS: when caps are exceeded, swap to
-      // never-throws local providers so the show finishes without
-      // burning further vendor budget on a runaway loop.
-      const realCommentaryProvider = createCommentaryProvider();
-      const localCommentaryProvider = new LocalCommentaryProvider();
-      const commentaryProvider = {
-        get id() {
-          return budget.isCommentaryDegraded() ? localCommentaryProvider.id : realCommentaryProvider.id;
-        },
-        draft: (input: Parameters<typeof realCommentaryProvider.draft>[0]) => {
-          incrementCounter("commentaryRequests");
-          return budget.isCommentaryDegraded() ? localCommentaryProvider.draft(input) : realCommentaryProvider.draft(input);
-        },
-        health: () => realCommentaryProvider.health()
-      };
-      const videoProvider = new UserVideoProvider();
-      const realTtsProvider =
-        config.RESOLVED_TTS_PROVIDER === "elevenlabs"
-          ? new ElevenLabsTTSProvider(config.ELEVENLABS_API_KEY, config.ELEVENLABS_VOICE_ID, config.RESOLVED_ELEVENLABS_MODEL_ID, buildHostVoiceMap())
-          : new MockTTSProvider();
-      const mockTtsProvider = new MockTTSProvider();
-      const ttsProvider = {
-        get id() {
-          return budget.isTtsDegraded() ? mockTtsProvider.id : realTtsProvider.id;
-        },
-        synthesize: (input: Parameters<typeof realTtsProvider.synthesize>[0]) => {
-          incrementCounter("ttsRequests");
-          return budget.isTtsDegraded() ? mockTtsProvider.synthesize(input) : realTtsProvider.synthesize(input);
-        },
-        health: () => realTtsProvider.health()
-      };
-      let recentCommentary: string[] = [];
-      let recentHostIds: ("maya" | "theo" | "cam")[] = [];
-
-      try {
-        const [fantasy, game, health] = await Promise.all([
-          fantasyProvider.getLeagueState({
-            leagueId: request.providerMode === "espn" ? request.espnLeagueId : request.sleeperLeagueId,
-            week: request.week,
-            season: request.espnSeason
-          }),
-          sportsProvider.getGameState(),
-          getHealth()
-        ]);
-        send(socket, { type: "snapshot", fantasy, game, health, providers: getActiveProviders(request.customLeague, request.providerMode, request.sportsDataMode) });
-
-        // Fetch the Vegas line once at show start. Lines move on the
-        // order of minutes, so refetching every tick would burn the free
-        // tier. `undefined` is the no-op happy path when no key is set.
-        let odds: GameOdds | undefined;
-        try {
-          odds = await createOddsProvider().getOdds({
-            gameId: game.gameId,
-            sport: game.sport,
-            homeTeam: game.homeTeam,
-            awayTeam: game.awayTeam
-          });
-        } catch (error) {
-          app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Show-start odds fetch failed");
-        }
-
-        // W12: fetch advanced stats for the listener's starters once
-        // at show start. Provider returns only known canonicalIds, so
-        // an empty list is the no-op fallback.
-        const matchKind = rosterMatchKind(fantasy, request.group.listener.rosterId);
-        if (matchKind === "fallback-first" && request.group.listener.rosterId) {
-          // The listener has a claimed rosterId but it doesn't appear
-          // in the league. Surface so the operator catches stale
-          // profile state instead of the listener getting another
-          // person's roster narrated to them.
-          app.log.warn(
-            { listenerRosterId: request.group.listener.rosterId, leagueId: fantasy.leagueId, sport: fantasy.sport },
-            "rosterForListener fallback: claimed rosterId not found in league"
-          );
-        }
-        const showRoster = rosterForListener(fantasy, request.group.listener.rosterId);
-        const starterIds = (showRoster?.starters ?? []).map((player) => player.id);
-        let analytics: PlayerSeasonStats[] = [];
-        if (starterIds.length) {
-          try {
-            analytics = await getDefaultAdvancedStatsProvider().getPlayerSeason({
-              canonicalIds: starterIds,
-              sport: game.sport
-            });
-          } catch (error) {
-            app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Show-start advanced-stats fetch failed");
-          }
-        }
-
-        // ---- SHOW OPENER ----
-        // Emit the personalized welcome before any plays come in. This is
-        // the highest-signal personalization moment per external research:
-        // the listener should know within 30s that the show was made for
-        // them. We try the LLM provider first and fall back to the local
-        // template (which already names lineup) if it fails.
-        try {
-          const openerStarted = performance.now();
-          const listenerRoster = rosterForListener(fantasy, request.group.listener.rosterId);
-          // Inspectability: log the inputs the opener was built from so
-          // we can judge personalization quality after the fact.
-          app.log.info(
-            {
-              listenerName: request.group.listener.name,
-              listenerRosterId: request.group.listener.rosterId,
-              listenerRosterTeamName: listenerRoster?.teamName,
-              starterCount: listenerRoster?.starters.length ?? 0,
-              starters: listenerRoster?.starters.map((s) => `${s.name} (${s.position}, ${s.proTeam})`),
-              hostId: "theo"
-            },
-            "Show opener context"
-          );
-          const opener = createListenerOpener({
-            league: fantasy,
-            game: game.currentPlay,
-            group: request.group,
-            listenerRoster: listenerRoster
-              ? {
-                  ownerName: listenerRoster.ownerName,
-                  teamName: listenerRoster.teamName,
-                  starters: listenerRoster.starters
-                }
-              : undefined,
-            startedAt: openerStarted,
-            observation: { id: "opener-obs", source: "stream-url", summary: "Show open", confidence: 1, observedAt: new Date().toISOString(), latencyMs: 0, usedFrame: false }
-          });
-          opener.text = await commentaryProvider.draft({
-            play: opener.play,
-            observation: opener.observation,
-            impacts: [],
-            moment: opener.moment,
-            group: request.group,
-            news: [],
-            recentCommentary: [],
-            hostId: opener.hostId,
-            listenerRoster,
-            kind: "opener",
-            priorContext: request.priorContext,
-            odds,
-            analytics,
-            fallbackText: opener.text
-          });
-          opener.latency.endToEndMs = Math.round(performance.now() - openerStarted);
-          recentCommentary = [opener.text];
-          recentHostIds = [opener.hostId];
-          budget.recordCommentary(opener.text);
-          send(socket, { type: "commentary", commentary: opener });
-          if (request.ttsEnabled) {
-            budget.recordTts(opener.text);
-            if (budget.shouldDegradeTts()) {
-              app.log.warn({ snapshot: budget.snapshot() }, "Show TTS budget exceeded; degrading to mock");
-              send(socket, { type: "status", message: "TTS budget reached — silent for the rest of the show.", level: "warn" });
-            }
-            for await (const audio of ttsProvider.synthesize({ commentaryId: opener.id, text: opener.text, hostId: opener.hostId })) {
-              if (stopped) break;
-              opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
-              send(socket, { type: "tts", audio });
-            }
-          }
-        } catch (error) {
-          app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Show opener failed; continuing into live ticks");
-        }
-
-        const tick = async () => {
-          if (stopped) return;
-          try {
-            const startedAt = performance.now();
-            await videoProvider.observe(request.video);
-            const play = await sportsProvider.nextPlay();
-            const [gameState, observation, news] = await Promise.all([
-              sportsProvider.getGameState(),
-              modelProvider.observe({ video: request.video, play, frame: latestFrame }),
-              newsProvider.getLatest({ playerIds: play.playerIds, teams: [play.team] })
-            ]);
-            send(socket, { type: "play", play, game: gameState });
-            send(socket, { type: "observation", observation });
-
-            // Listener nudge consumed here. One-shot: we hand it to the
-            // engine, then clear so the next tick goes back to the
-            // deterministic selectHost pick.
-            const forcedHost = pendingNextHostId;
-            pendingNextHostId = undefined;
-            // W18: drain queued cues for this turn. The engine reads
-            // them once and we ack the ids back so the UI can clear
-            // them from the "queued" list.
-            const cuesForTurn = pendingCues;
-            pendingCues = [];
-
-            // W19/W14 wiring: snapshot the relevant markets for this
-            // game on every tick, compare to the last batch we sent
-            // on-air, and surface a swing when one moved >5¢. Failures
-            // fall through silently — markets are commentary color,
-            // never a tick blocker.
-            let marketsForTurn: MarketSnapshot[] = [];
-            let swingForTurn: ReturnType<typeof detectMarketSwings> = undefined;
-            try {
-              const allMarkets = await fetchMarketSnapshots({ sports: [gameState.sport] });
-              marketsForTurn = pickRelevantMarketsForGame(allMarkets, {
-                sport: gameState.sport,
-                teams: [gameState.awayTeam, gameState.homeTeam],
-                players: play.playerIds
-              }, 6);
-              swingForTurn = detectMarketSwings(marketsForTurn, lastMarketsForSwing);
-              lastMarketsForSwing = marketsForTurn;
-            } catch (error) {
-              app.log.warn(
-                { err: error instanceof Error ? error.message : String(error) },
-                "Markets fetch failed for tick — proceeding without market color"
-              );
-            }
-
-            const commentary = createLivecastCommentary({
-              league: fantasy,
-              play,
-              observation,
-              group: request.group,
-              news,
-              startedAt,
-              recentCommentary,
-              recentHostIds,
-              forceHostId: forcedHost
-            });
-            const textStart = performance.now();
-            commentary.text = await commentaryProvider.draft({
-              play,
-              observation,
-              impacts: commentary.fantasyImpacts,
-              moment: commentary.moment,
-              group: request.group,
-              news,
-              recentCommentary,
-              hostId: commentary.hostId,
-              listenerRoster: rosterForListener(fantasy, request.group.listener.rosterId),
-              odds,
-              analytics,
-              listenerCues: cuesForTurn,
-              markets: marketsForTurn.length > 0 ? marketsForTurn : undefined,
-              marketSwing: swingForTurn,
-              fallbackText: commentary.text
-            });
-            commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
-            commentary.latency.endToEndMs = Math.round(performance.now() - startedAt);
-            // Track usage before TTS so the cap kicks in before we burn
-            // ElevenLabs minutes on a hung loop.
-            budget.recordCommentary(commentary.text);
-            if (budget.shouldDegradeCommentary()) {
-              app.log.warn({ snapshot: budget.snapshot() }, "Show commentary budget exceeded; degrading to local templates");
-              send(socket, { type: "status", message: "Commentary budget reached — switching to local templates.", level: "warn" });
-            }
-            recentCommentary = [commentary.text, ...recentCommentary].slice(0, 5);
-            recentHostIds = [...recentHostIds, commentary.hostId].slice(-5);
-            send(socket, { type: "commentary", commentary });
-            if (cuesForTurn.length > 0) {
-              send(socket, {
-                type: "cue-ack",
-                cueIds: cuesForTurn.map((c) => c.id),
-                commentaryId: commentary.id
-              });
-            }
-
-            if (request.ttsEnabled) {
-              budget.recordTts(commentary.text);
-              if (budget.shouldDegradeTts()) {
-                app.log.warn({ snapshot: budget.snapshot() }, "Show TTS budget exceeded; degrading to mock");
-                send(socket, { type: "status", message: "TTS budget reached — silent for the rest of the show.", level: "warn" });
-              }
-              for await (const audio of ttsProvider.synthesize({ commentaryId: commentary.id, text: commentary.text, hostId: commentary.hostId })) {
-                commentary.latency.ttsFirstAudioMs ??= audio.latencyMs;
-                send(socket, { type: "tts", audio });
-              }
-            }
-          } catch (error) {
-            send(socket, { type: "error", message: redactSecret(error instanceof Error ? error.message : "Livecast tick failed.") });
-          }
-        };
-
-        await tick();
-        timer = setInterval(tick, request.cadenceMs ?? 5000);
-        healthTimer = setInterval(() => {
-          // Async work inside setInterval can't reject upward — wrap so a
-          // failed health check doesn't surface as an unhandled rejection.
-          getHealth()
-            .then((health) => send(socket, { type: "health", health }))
-            .catch((error) => app.log.warn({ err: error instanceof Error ? error.message : String(error) }, "Periodic health check failed"));
-        }, 15000);
-      } catch (error) {
-        send(socket, { type: "error", message: redactSecret(error instanceof Error ? error.message : "Unable to start livecast.") });
-      }
+      // start() runs the opener + ticks; the event pump above already
+      // drains engine.events() into the socket so we don't need to
+      // wire each emitted event here.
+      void engine.start(requestResult.request);
     };
 
     socket.on("close", () => {
       incrementCounter("webSocketsClosed");
-      if (!stopped) incrementCounter("showsCompleted");
-      stopped = true;
-      if (timer) clearInterval(timer);
-      if (healthTimer) clearInterval(healthTimer);
+      engine.stop();
     });
   });
 
   return app;
 }
 
-
-/**
- * Per-host ElevenLabs voice IDs from env. Lets Maya / Theo / Cam sound
- * distinct instead of all sharing ELEVENLABS_VOICE_ID. Each host that
- * doesn't get an override falls back to the default voice.
- */
-function buildHostVoiceMap(): import("../providers/ttsProviders").HostVoiceMap {
-  const map: import("../providers/ttsProviders").HostVoiceMap = {};
-  if (config.ELEVENLABS_VOICE_ID_MAYA) map.maya = config.ELEVENLABS_VOICE_ID_MAYA;
-  if (config.ELEVENLABS_VOICE_ID_THEO) map.theo = config.ELEVENLABS_VOICE_ID_THEO;
-  if (config.ELEVENLABS_VOICE_ID_CAM) map.cam = config.ELEVENLABS_VOICE_ID_CAM;
-  return map;
-}
-
-function getActiveProviders(customLeague?: FantasyLeagueState, providerMode: "demo" | "sleeper" | "espn" = "demo", sportsDataMode: "demo" | "espn" = config.SPORTS_DATA_PROVIDER): ActiveProviderSummary {
-  const fantasyProvider = customLeague ? "Custom Demo Fantasy" : providerMode === "espn" ? "ESPN Fantasy" : providerMode === "sleeper" ? "Sleeper Fantasy" : "Demo Fantasy";
-  return {
-    fantasy: fantasyProvider,
-    sportsData: sportsDataMode === "espn" ? "ESPN Scoreboard" : "Demo Sports Data",
-    news: describeNewsStack(),
-    video: "User Video Source",
-    model: modelProviderLabel(),
-    commentary: describeCommentaryStack(),
-    tts: config.RESOLVED_TTS_PROVIDER === "elevenlabs" ? `ElevenLabs ${config.RESOLVED_ELEVENLABS_MODEL_ID}` : "Mock/Browser TTS"
-  };
-}
-
-async function getHealth(): Promise<ProviderHealth[]> {
-  const providers = [
-    new DemoFantasyProvider(),
-    new EspnFantasyProvider({ swid: config.ESPN_SWID, espnS2: config.ESPN_S2 }),
-    new DemoSportsDataProvider(),
-    new EspnSportsDataProvider(),
-    createNewsProvider(),
-    new UserVideoProvider(),
-    createModelProvider(),
-    createCommentaryProvider(),
-    config.RESOLVED_TTS_PROVIDER === "elevenlabs"
-      ? new ElevenLabsTTSProvider(config.ELEVENLABS_API_KEY, config.ELEVENLABS_VOICE_ID, config.RESOLVED_ELEVENLABS_MODEL_ID)
-      : new MockTTSProvider()
-  ];
-  return Promise.all(providers.map((provider) => provider.health()));
-}
 
 // Body validation for the listener-history backend (W8). Built off the
 // shared `ShowHistoryEntry` shape so the runtime check matches the
@@ -957,44 +601,23 @@ function isListenerCue(value: unknown): value is ListenerCue {
   );
 }
 
-function createFantasyProvider(providerMode: "demo" | "sleeper" | "espn" | undefined, customLeague?: FantasyLeagueState) {
-  if (providerMode === "sleeper") return new SleeperFantasyProvider();
-  if (providerMode === "espn") return new EspnFantasyProvider({ swid: config.ESPN_SWID, espnS2: config.ESPN_S2 });
-  return new DemoFantasyProvider(customLeague);
-}
-
-function createSportsDataProvider(sportsDataMode: "demo" | "espn" | undefined, sportsGameId?: string) {
-  // W10: paid live-data backups. Operators with Sportradar /
-  // SportsDataIO contracts pass `sportradar:<gameId>` or
-  // `sportsdataio:<scoreId>` in sportsGameId; the API key comes from
-  // env. Falls through to ESPN when the prefix isn't present so the
-  // free path is unchanged.
-  if (sportsGameId?.startsWith("sportradar:") && config.SPORTRADAR_API_KEY) {
-    return new SportradarSportsDataProvider({
-      apiKey: config.SPORTRADAR_API_KEY,
-      accessLevel: config.SPORTRADAR_ACCESS_LEVEL,
-      gameId: sportsGameId.slice("sportradar:".length)
-    });
-  }
-  if (sportsGameId?.startsWith("sportsdataio:") && config.SPORTSDATAIO_API_KEY) {
-    return new SportsDataIoProvider({
-      apiKey: config.SPORTSDATAIO_API_KEY,
-      scoreId: sportsGameId.slice("sportsdataio:".length)
-    });
-  }
-  if (sportsDataMode === "espn") {
-    const parsed = parseSportPrefixedGameId(sportsGameId);
-    return new EspnSportsDataProvider(fetch, parsed?.eventId, parsed?.sportPath ?? ESPN_SPORTS[0]);
-  }
-  return new DemoSportsDataProvider(sportsGameId);
-}
-
-function parseSportPrefixedGameId(gameId?: string) {
-  if (!gameId) return undefined;
-  const match = ESPN_SPORTS.find((sport) => gameId.startsWith(`${sport.sport}-`));
-  if (!match) return undefined;
-  return { sportPath: match, eventId: gameId.slice(match.sport.length + 1) };
-}
+// Provider factories now live in ./showFactories so the new SSE
+// ShowEngine can import them without pulling in Fastify.
+import {
+  createFantasyProvider,
+  createSportsDataProvider,
+  createModelProvider,
+  parseSportPrefixedGameId,
+  buildHostVoiceMap as _buildHostVoiceMap,
+  getActiveProviders as _getActiveProviders,
+  getHealth as _getHealth
+} from "./showFactories";
+import { redactSecret } from "./redactSecret";
+import { ShowEngine } from "./showEngine";
+const buildHostVoiceMap = _buildHostVoiceMap;
+const getActiveProviders = _getActiveProviders;
+const getHealth = _getHealth;
+export { redactSecret };
 
 function demoGameOptions(): SportsGameOption[] {
   return [
@@ -1059,24 +682,6 @@ function demoGameOptions(): SportsGameOption[] {
       broadcast: "ESPN"
     }
   ];
-}
-
-function createModelProvider(): MultimodalModelProvider {
-  // Delegates to the shared factory so the Next.js Route Handler
-  // (POST /api/vision/observe) and Fastify legacy route stay in sync
-  // on chain construction + fallback order.
-  return createVisionProvider();
-}
-
-function modelProviderLabel() {
-  // Reflect the actual primary in the chain. Nemotron wins whenever
-  // its key is set, regardless of MODEL_PROVIDER, because that's
-  // what createModelProvider() does above.
-  if (config.NEMOTRON_API_KEY) return `Nemotron ${config.NEMOTRON_MODEL}`;
-  if (config.RESOLVED_MODEL_PROVIDER === "openai-vision") return `OpenAI Vision ${config.RESOLVED_OPENAI_MODEL}`;
-  if (config.RESOLVED_MODEL_PROVIDER === "nemotron") return `Nemotron ${config.NEMOTRON_MODEL}`;
-  if (config.RESOLVED_MODEL_PROVIDER === "openai-realtime") return `OpenAI Realtime ${config.RESOLVED_REALTIME_MODEL}`;
-  return "Mock Multimodal Model";
 }
 
 export function buildFantasyPreview(league: FantasyLeagueState, providerMode: "demo" | "sleeper" | "espn", requestedWeek?: number): FantasyImportPreview {
@@ -1287,13 +892,6 @@ function send(socket: { send: (data: string) => void }, event: ClientServerEvent
   socket.send(JSON.stringify(event));
 }
 
-export function redactSecret(message: string) {
-  return message
-    .replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]")
-    .replace(/sk-proj-[A-Za-z0-9_-]+/g, "[redacted]")
-    .replace(/[A-Fa-f0-9]{24,}:[A-Fa-f0-9]{24,}/g, "[redacted]")
-    .replace(/[A-Za-z0-9_-]{20,}:[A-Za-z0-9_-]{20,}/g, "[redacted]");
-}
 
 function validateFantasyLeagueShape(value: unknown): value is FantasyLeagueState {
   if (!value || typeof value !== "object") return false;
