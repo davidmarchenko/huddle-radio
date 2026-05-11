@@ -248,6 +248,14 @@ export type LivecastRequest = {
   video: VideoSourceConfig;
   latestFrame?: VideoFrameSnapshot;
   ttsEnabled: boolean;
+  /**
+   * Optional per-request TTS provider override. When set, wins over the
+   * server's RESOLVED_TTS_PROVIDER for the duration of this show. Lets
+   * the listener flip between ElevenLabs / Fish / Inworld at runtime
+   * from the UI without an env edit + restart. "auto" / undefined keep
+   * the config-resolved default.
+   */
+  ttsProviderOverride?: "auto" | "elevenlabs" | "fish" | "inworld" | "mock";
   cadenceMs?: number;
   /** Cross-show memory derived from the client's localStorage history. */
   priorContext?: string;
@@ -308,10 +316,25 @@ export type FantasyImportPreview = {
   message: string;
 };
 
+/**
+ * Per-provider availability snapshot the client uses to render the
+ * TTS picker. `id` matches LivecastRequest.ttsProviderOverride; `ready`
+ * means an API key is configured (so picking it won't silently fall
+ * back to mock). `current` is true for the env-resolved default.
+ */
+export type TtsProviderOption = {
+  id: "elevenlabs" | "fish" | "inworld" | "mock";
+  label: string;
+  ready: boolean;
+  current: boolean;
+  description: string;
+};
+
 export type ProviderDiagnostics = {
   generatedAt: string;
   providers: ActiveProviderSummary;
   health: ProviderHealth[];
+  ttsProviderOptions: TtsProviderOption[];
   checks: Array<{
     id: string;
     label: string;

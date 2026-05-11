@@ -68,6 +68,25 @@ describe("parseLivecastRequest", () => {
   it("redacts common API key shapes in error messages", () => {
     expect(redactSecret("failed sk-proj-abcdef_1234567890SECRET and abcdefabcdefabcdefabcdefabcdef:abcdefabcdefabcdefabcdefabcdef")).not.toMatch(/SECRET|abcdefabcdef/);
   });
+
+  it("accepts an explicit ttsProviderOverride", () => {
+    const result = parseLivecastRequest(JSON.stringify({ ttsProviderOverride: "inworld" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.request.ttsProviderOverride).toBe("inworld");
+  });
+
+  it("leaves ttsProviderOverride undefined when omitted (defers to server config)", () => {
+    const result = parseLivecastRequest(JSON.stringify({}));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.request.ttsProviderOverride).toBeUndefined();
+  });
+
+  it("rejects an unknown ttsProviderOverride value", () => {
+    const result = parseLivecastRequest(JSON.stringify({ ttsProviderOverride: "azure" }));
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("parseSocketMessage", () => {

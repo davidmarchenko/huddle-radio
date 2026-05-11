@@ -1,8 +1,49 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
-import type { ProviderDiagnostics } from "../shared/contracts";
+import type { ProviderDiagnostics, TtsProviderOption } from "../shared/contracts";
 import { config } from "./config";
 import { getActiveProviders, getHealth } from "./showFactories";
+
+/**
+ * Catalog of TTS providers the client can switch to at runtime via
+ * LivecastRequest.ttsProviderOverride. `ready: true` means the key for
+ * that provider is set on the server, so picking it won't silently fall
+ * back to mock. `current` flags the env-resolved default. Lives in
+ * diagnostics so the picker UI doesn't have to learn server config.
+ */
+function buildTtsProviderOptions(): TtsProviderOption[] {
+  const current = config.RESOLVED_TTS_PROVIDER;
+  return [
+    {
+      id: "elevenlabs",
+      label: "ElevenLabs",
+      ready: Boolean(config.ELEVENLABS_API_KEY),
+      current: current === "elevenlabs",
+      description: "Proven WebSocket Flash v2_5 streaming (~400 ms first byte) + Text-to-Dialogue for multi-host beats."
+    },
+    {
+      id: "fish",
+      label: "Fish Audio",
+      ready: Boolean(config.FISH_API_KEY),
+      current: current === "fish",
+      description: "S2-Pro WebSocket — native multi-speaker streaming with ~150 ms time-to-first-byte."
+    },
+    {
+      id: "inworld",
+      label: "Inworld TTS-2",
+      ready: Boolean(config.INWORLD_API_KEY),
+      current: current === "inworld",
+      description: "Single-voice HTTP, sub-250 ms first byte, best-in-class natural disfluencies and audio tags."
+    },
+    {
+      id: "mock",
+      label: "Browser / Mock",
+      ready: true,
+      current: current === "mock",
+      description: "No external TTS — the client speaks via SpeechSynthesis or stays silent."
+    }
+  ];
+}
 
 /**
  * Diagnostics view: provider health + per-feature readiness checks.
@@ -28,6 +69,7 @@ export async function buildDiagnostics(
     generatedAt: new Date().toISOString(),
     providers: getActiveProviders(undefined, "demo", sportsDataMode),
     health,
+    ttsProviderOptions: buildTtsProviderOptions(),
     checks: [
       {
         id: "espn-private-cookies",

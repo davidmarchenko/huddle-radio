@@ -385,7 +385,7 @@ export class ShowEngine {
     // Each branch in createTTSProvider() returns a provider that
     // implements the same TTSProvider contract; the engine doesn't
     // care which one it gets.
-    const realTtsProvider = createTTSProvider();
+    const realTtsProvider = createTTSProvider(request.ttsProviderOverride);
     const mockTtsProvider = new MockTTSProvider();
     const ttsProvider = {
       synthesize: (input: Parameters<typeof realTtsProvider.synthesize>[0]) => {

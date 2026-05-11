@@ -116,9 +116,28 @@ export function buildHostVoiceMap(): HostVoiceMap {
  *
  * Kept as a factory (not inlined in the engine) so swapping providers
  * is a single config flip — no code paths to delete when experimenting.
+ *
+ * `override` is an optional per-request choice supplied by the client
+ * (LivecastRequest.ttsProviderOverride). "auto"/undefined falls through
+ * to the env-resolved default; anything else wins. We still gate on
+ * whether the corresponding API key is configured — if the listener
+ * picks Inworld but INWORLD_API_KEY is empty, we fall back to mock so
+ * the show doesn't 500 instead of speak.
  */
-export function createTTSProvider(): TTSProvider {
-  switch (config.RESOLVED_TTS_PROVIDER) {
+export function createTTSProvider(
+  override?: "auto" | "elevenlabs" | "fish" | "inworld" | "mock"
+): TTSProvider {
+  const resolved: "elevenlabs" | "fish" | "inworld" | "mock" =
+    !override || override === "auto"
+      ? config.RESOLVED_TTS_PROVIDER
+      : override === "elevenlabs" && !config.ELEVENLABS_API_KEY
+        ? "mock"
+        : override === "fish" && !config.FISH_API_KEY
+          ? "mock"
+          : override === "inworld" && !config.INWORLD_API_KEY
+            ? "mock"
+            : override;
+  switch (resolved) {
     case "elevenlabs":
       return new ElevenLabsTTSProvider(
         config.ELEVENLABS_API_KEY,

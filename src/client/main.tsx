@@ -103,6 +103,12 @@ type PersistedSettings = {
   videoMode?: VideoMode;
   videoUrl?: string;
   ttsEnabled?: boolean;
+  /**
+   * Listener's runtime TTS preference. "auto" / undefined defers to the
+   * server's env-resolved provider. Persisted so the choice survives
+   * page reloads.
+   */
+  ttsProviderOverride?: "auto" | "elevenlabs" | "fish" | "inworld" | "mock";
   speechRate?: number;
   group?: GroupSettings;
   customLeagueJson?: string;
@@ -158,6 +164,13 @@ function App() {
   // to true so the audio path always engages; users can still toggle
   // off via the checkbox during the session if needed.
   const [ttsEnabled, setTtsEnabled] = useState(true);
+  // Listener-chosen TTS provider. "auto" defers to the server config so
+  // operators with only one key configured don't have to pick. The
+  // dropdown in the Voice setup pane writes here; the value rides along
+  // on LivecastRequest and wins over RESOLVED_TTS_PROVIDER for the show.
+  const [ttsProviderOverride, setTtsProviderOverride] = useState<
+    "auto" | "elevenlabs" | "fish" | "inworld" | "mock"
+  >(persisted.ttsProviderOverride ?? "auto");
   const [speechRate, setSpeechRate] = useState(persisted.speechRate ?? 1);
   const [group, setGroup] = useState<GroupSettings>(normalizeGroupSettings(persisted.group));
   const [profile, setProfile] = useState<UserProfile | undefined>(persisted.profile);
@@ -324,6 +337,7 @@ function App() {
       videoMode,
       videoUrl,
       ttsEnabled,
+      ttsProviderOverride,
       speechRate,
       group,
       customLeagueJson,
@@ -332,7 +346,7 @@ function App() {
       profileNudgeDismissed,
       pastShows
     });
-  }, [providerMode, sportsDataMode, sportsGameId, sleeperLeagueId, espnLeagueId, espnSeason, week, cadenceSeconds, videoMode, videoUrl, ttsEnabled, speechRate, group, customLeagueJson, showAdvanced, profile, profileNudgeDismissed, pastShows]);
+  }, [providerMode, sportsDataMode, sportsGameId, sleeperLeagueId, espnLeagueId, espnSeason, week, cadenceSeconds, videoMode, videoUrl, ttsEnabled, ttsProviderOverride, speechRate, group, customLeagueJson, showAdvanced, profile, profileNudgeDismissed, pastShows]);
 
   useEffect(() => {
     void refreshSportsGames(sportsDataMode);
@@ -778,6 +792,7 @@ function App() {
         customLeague: providerMode === "demo" ? customLeague : undefined,
         video: { mode: videoMode, url: videoUrl || undefined },
         ttsEnabled,
+        ttsProviderOverride: ttsProviderOverride === "auto" ? undefined : ttsProviderOverride,
         cadenceMs: cadenceSeconds * 1000,
         priorContext
       },
@@ -2228,6 +2243,35 @@ function App() {
               <label className="toggle">
                 <input type="checkbox" checked={ttsEnabled} onChange={(event) => setTtsEnabled(event.target.checked)} />
                 Speak commentary
+              </label>
+              <label>
+                Voice provider
+                <select
+                  value={ttsProviderOverride}
+                  onChange={(event) =>
+                    setTtsProviderOverride(
+                      event.target.value as "auto" | "elevenlabs" | "fish" | "inworld" | "mock"
+                    )
+                  }
+                >
+                  <option value="auto">
+                    Auto{diagnostics?.ttsProviderOptions
+                      ? ` (${diagnostics.ttsProviderOptions.find((o) => o.current)?.label ?? "default"})`
+                      : ""}
+                  </option>
+                  {(diagnostics?.ttsProviderOptions ?? []).map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                      {option.ready ? "" : " — needs API key"}
+                    </option>
+                  ))}
+                </select>
+                <span className="hint">
+                  {ttsProviderOverride === "auto"
+                    ? "Server picks based on which API keys are configured."
+                    : diagnostics?.ttsProviderOptions?.find((o) => o.id === ttsProviderOverride)?.description ??
+                      "Switch providers to compare latency and voice quality."}
+                </span>
               </label>
               <label>
                 Commentary cadence

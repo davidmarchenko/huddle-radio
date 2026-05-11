@@ -500,6 +500,11 @@ const LivecastRequestSchema = z.object({
   cadenceMs: z.number().int().min(3000).max(15000).default(5000),
   customLeague: z.custom<FantasyLeagueState>((value) => validateFantasyLeagueShape(value)).optional(),
   ttsEnabled: z.boolean().default(true),
+  // Optional runtime override of the TTS provider. "auto" / omitted ==
+  // use the server's RESOLVED_TTS_PROVIDER (env-resolved default). When
+  // present, wins over config for this show so the listener can flip
+  // ElevenLabs / Fish / Inworld from the UI without restarting.
+  ttsProviderOverride: z.enum(["auto", "elevenlabs", "fish", "inworld", "mock"]).optional(),
   // Cross-show memory the client derives from its localStorage history.
   // Free-form prose so the LLM can reference the listener's recent
   // shows in the opener ("last week Mahomes burned you, let's see…").
