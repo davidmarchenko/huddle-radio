@@ -98,7 +98,9 @@ afterEach(() => {
 });
 
 function stubStartOk(sessionId: string) {
-  const fetchSpy = vi.fn(async (input: string | URL | Request) => {
+  // Mirror the real fetch signature (input, init?) so call[1] reads
+  // as the init arg in TypeScript without an undefined cast.
+  const fetchSpy = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     if (url.endsWith("/api/live/start")) {
       return new Response(JSON.stringify({ sessionId }), {

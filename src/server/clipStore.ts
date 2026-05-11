@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { put as vercelBlobPut } from "@vercel/blob";
 
 /**
  * W9: clip archival.
@@ -24,10 +25,21 @@ export type ClipMetadata = {
   mimeType: string;
   byteLength: number;
   storedAt: number;
+  /**
+   * Canonical, externally-fetchable URL for the clip. Local
+   * (FileClipStore) returns undefined and the route handler builds a
+   * relative `/api/clips/<id>` URL the legacy Fastify GET serves.
+   * Vercel Blob–backed stores return their CDN URL directly so the
+   * client can share the link without a round-trip through our
+   * server.
+   */
+  url?: string;
 };
 
 export interface ClipStore {
   put(input: { listenerId: string; commentaryId?: string; mimeType: string; data: Buffer }): Promise<ClipMetadata>;
+  /** Read is only used by the Fastify GET route; Blob-backed stores
+   * return undefined and the client uses metadata.url instead. */
   read(id: string): Promise<{ metadata: ClipMetadata; data: Buffer } | undefined>;
 }
 
@@ -119,10 +131,96 @@ export function extensionFor(mimeType: string): string {
   return "bin";
 }
 
+/**
+ * Vercel Blob–backed clip store. Used in production deploys where the
+ * function filesystem is read-only / ephemeral and we need clips to
+ * survive across invocations. Each upload returns the public Blob CDN
+ * URL directly so the share blurb embeds a real link the recipient can
+ * click without round-tripping through our server.
+ *
+ * Lazy-imports `@vercel/blob` so test runs without the package
+ * resolved still pass; the constructor throws only when actually
+ * instantiated without the dep.
+ */
+export class BlobClipStore implements ClipStore {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private readonly putFn: (pathname: string, body: Buffer | Blob, opts: any) => Promise<{ url: string; pathname: string }>;
+
+  constructor(
+    options: {
+      // Injected so tests can stub the upload without hitting Vercel
+      // Blob's network. Production passes vercelBlobPut from the
+      // top-level @vercel/blob import.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      put: (pathname: string, body: Buffer | Blob, opts: any) => Promise<{ url: string; pathname: string }>;
+    }
+  ) {
+    this.putFn = options.put;
+  }
+
+  async put({
+    listenerId,
+    commentaryId,
+    mimeType,
+    data
+  }: {
+    listenerId: string;
+    commentaryId?: string;
+    mimeType: string;
+    data: Buffer;
+  }): Promise<ClipMetadata> {
+    if (!LISTENER_ID_PATTERN.test(listenerId)) {
+      throw new Error("Invalid listenerId.");
+    }
+    if (data.byteLength === 0) {
+      throw new Error("Empty audio payload.");
+    }
+    if (data.byteLength > 8 * 1024 * 1024) {
+      throw new Error("Clip too large (max 8MB).");
+    }
+    const id = generateClipId();
+    const extension = extensionFor(mimeType);
+    // Namespace by listener so a listener can later list / delete
+    // their own clips without collecting somebody else's. Vercel
+    // Blob's filename is treated as a path under the store.
+    const pathname = `clips/${listenerId}/${id}.${extension}`;
+    const result = await this.putFn(pathname, data, {
+      access: "public",
+      contentType: mimeType,
+      // Blob filenames are unique by suffix; we already have a
+      // collision-resistant id so disable suffixing to keep URLs clean.
+      addRandomSuffix: false
+    });
+    return {
+      id,
+      listenerId,
+      commentaryId,
+      mimeType,
+      byteLength: data.byteLength,
+      storedAt: Date.now(),
+      url: result.url
+    };
+  }
+
+  // Blob-backed clips are served directly from the Blob CDN; the
+  // server doesn't need to proxy them. The legacy GET route is only
+  // for FileClipStore deployments.
+  async read(): Promise<undefined> {
+    return undefined;
+  }
+}
+
 let defaultStore: ClipStore | undefined;
 
 export function getDefaultClipStore(): ClipStore {
   if (defaultStore) return defaultStore;
+  // Prefer Vercel Blob in production / preview deploys (token set by
+  // the Marketplace integration). Fall back to filesystem locally so
+  // npm run dev keeps working without provisioning Blob.
+  if (process.env.BLOB_READ_WRITE_TOKEN) {
+    defaultStore = new BlobClipStore({ put: vercelBlobPut });
+    return defaultStore;
+  }
   const baseDir = process.env.CLIP_STORE_DIR ?? path.resolve("data/clips");
   defaultStore = new FileClipStore(baseDir);
   return defaultStore;

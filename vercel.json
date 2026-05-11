@@ -1,0 +1,35 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "functions": {
+    "src/app/api/live/stream/route.ts": {
+      "maxDuration": 300,
+      "memory": 1024
+    },
+    "src/app/api/live/start/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "src/app/api/vision/observe/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "src/app/api/asr/transcribe/route.ts": {
+      "maxDuration": 90,
+      "memory": 1024
+    },
+    "src/app/api/clip/subtitles/route.ts": {
+      "maxDuration": 90,
+      "memory": 1024
+    },
+    "src/app/api/clips/route.ts": {
+      "maxDuration": 30,
+      "memory": 512
+    },
+    "src/app/api/markets/route.ts": {
+      "maxDuration": 15,
+      "memory": 512
+    }
+  }
+}

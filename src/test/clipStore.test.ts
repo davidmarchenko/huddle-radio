@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { extensionFor, FileClipStore, resetDefaultClipStore } from "../server/clipStore";
+import { BlobClipStore, extensionFor, FileClipStore, resetDefaultClipStore } from "../server/clipStore";
 import { buildApp } from "../server/app";
 
 describe("extensionFor", () => {
@@ -109,5 +109,80 @@ describe("clip endpoints", () => {
     const response = await app.inject({ method: "GET", url: "/api/clips/missing" });
     expect(response.statusCode).toBe(404);
     await app.close();
+  });
+});
+
+describe("BlobClipStore", () => {
+  it("uploads to Vercel Blob and surfaces the CDN URL on metadata", async () => {
+    // Stub the @vercel/blob put fn so the test never touches the
+    // network. We assert on the upload contract: namespaced path,
+    // public access, content type honored, returned URL passed
+    // straight back through metadata.url.
+    const put = vi.fn(async (pathname: string, _body: Buffer, _opts: unknown) => ({
+      url: `https://blob.example/${pathname}`,
+      pathname
+    }));
+    const store = new BlobClipStore({ put });
+    const data = Buffer.from("audio-bytes");
+    const meta = await store.put({
+      listenerId: "listener-abc",
+      commentaryId: "commentary-xyz",
+      mimeType: "audio/webm",
+      data
+    });
+    expect(meta.byteLength).toBe(data.byteLength);
+    expect(meta.mimeType).toBe("audio/webm");
+    expect(meta.url).toBe(`https://blob.example/clips/listener-abc/${meta.id}.webm`);
+    // Path is namespaced by listenerId so a listener can later
+    // enumerate / delete their own clips without scanning the global
+    // namespace.
+    const [pathname, body, opts] = put.mock.calls[0];
+    expect(pathname).toMatch(/^clips\/listener-abc\//);
+    expect(body).toBe(data);
+    expect(opts).toMatchObject({ access: "public", contentType: "audio/webm", addRandomSuffix: false });
+  });
+
+  it("rejects an empty payload before calling the upload backend", async () => {
+    const put = vi.fn();
+    const store = new BlobClipStore({ put });
+    await expect(
+      store.put({
+        listenerId: "listener-1",
+        mimeType: "audio/webm",
+        data: Buffer.alloc(0)
+      })
+    ).rejects.toThrow(/empty/i);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("rejects an oversized payload before calling the upload backend", async () => {
+    const put = vi.fn();
+    const store = new BlobClipStore({ put });
+    await expect(
+      store.put({
+        listenerId: "listener-1",
+        mimeType: "audio/webm",
+        data: Buffer.alloc(9 * 1024 * 1024) // 9 MB > 8 MB cap
+      })
+    ).rejects.toThrow(/large|max/i);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed listenerId so a path-traversal attempt can't bleed across listeners", async () => {
+    const put = vi.fn();
+    const store = new BlobClipStore({ put });
+    await expect(
+      store.put({
+        listenerId: "../escape",
+        mimeType: "audio/webm",
+        data: Buffer.from("hi")
+      })
+    ).rejects.toThrow(/listenerId/i);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("read() returns undefined — Blob clips are served from the CDN, not proxied", async () => {
+    const store = new BlobClipStore({ put: vi.fn() });
+    expect(await store.read()).toBeUndefined();
   });
 });

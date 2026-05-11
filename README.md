@@ -126,6 +126,65 @@ npm run verify:nemotron
 
 See `docs/nim-on-prem.md` for the on-prem NIM cutover.
 
+## Deploying to Vercel
+
+The app is configured for one-click Vercel deploys via `vercel.json`.
+Every demo-critical surface (live show via SSE, vision, ASR,
+subtitles, markets, clip storage) runs as a Next.js Route Handler
+under `src/app/api/`. The legacy Fastify server is **only** needed
+for local dev — it does not deploy.
+
+```bash
+npm i -g vercel
+vercel link            # link to a project (or 'vercel' to create one)
+vercel env pull .env.local   # populate local env from Vercel
+vercel deploy          # preview deploy
+vercel deploy --prod   # production
+```
+
+### Provisioning storage
+
+The clip-share flow needs Vercel Blob in production (filesystem-
+backed `FileClipStore` only works locally — Vercel Functions have
+read-only / ephemeral filesystems). Add the Blob store via the
+Marketplace:
+
+```bash
+vercel integration add vercel-blob   # auto-provisions BLOB_READ_WRITE_TOKEN
+vercel env pull .env.local --yes     # refresh local env
+```
+
+When `BLOB_READ_WRITE_TOKEN` is set, `getDefaultClipStore()` swaps
+to `BlobClipStore` automatically — no code change.
+
+### Function configuration (`vercel.json`)
+
+`src/app/api/live/stream/route.ts` is the SSE endpoint — it holds
+the response open for the lifetime of the show. Capped at **300s**
+to stay within the Hobby plan limit; client `EventSource` auto-
+reconnects past that and a fresh session starts via
+`POST /api/live/start`. Pro/Enterprise can bump to 800s.
+
+Other long-running routes (vision/ASR/subtitles) are configured at
+60–90s — generous enough that a single Nemotron call has slack
+without leaving idle Functions billable.
+
+### Known limitations on Vercel
+
+- **In-process session store.** `showSessionStore.ts` keeps active
+  `ShowEngine` instances in a module-level `Map`. Works under low
+  traffic when Vercel pins repeat requests to the same instance;
+  multi-instance traffic could land cue/frame POSTs on the wrong
+  instance. Multi-instance correctness requires either Redis-
+  backing the session state or pulling the engine onto a separate
+  long-lived host (Render/Fly). See showSessionStore.ts docstring.
+- **Fastify-only routes.** `/api/health`, `/api/model-stack`,
+  `/api/diagnostics`, `/api/history/shows` haven't been ported. They
+  fail silently on Vercel; the UI surfaces that consume them are
+  diagnostics-only and degrade cleanly.
+- **WebSocket (`/ws/livecast`).** Doesn't deploy. The client uses
+  the SSE path on Vercel; the WS path is local-dev only.
+
 ## Environment Setup
 
 Copy the template:
