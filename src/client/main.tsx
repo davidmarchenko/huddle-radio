@@ -215,6 +215,11 @@ function App() {
     (item: LivecastCommentary | undefined): string | undefined => item?.text,
     []
   );
+  // Set of commentary ids whose text we have but whose audio is still
+  // generating server-side (T2D buffers the whole MP3 before delivery,
+  // ~2-5s). The UI shows a "recording" indicator on these so it doesn't
+  // feel like a frozen app while we wait.
+  const [pendingAudioCommentaryIds, setPendingAudioCommentaryIds] = useState<Set<string>>(() => new Set());
   const [health, setHealth] = useState<ProviderHealth[]>([]);
   const [providers, setProviders] = useState<ActiveProviderSummary>(defaultProviderSummary);
   const [mediaManifest, setMediaManifest] = useState<MediaCacheManifest>();
@@ -732,6 +737,7 @@ function App() {
     setPlays([]);
     setCommentary([]);
     setTtsLatencyByCommentary({});
+    setPendingAudioCommentaryIds(new Set());
     setLastObservation(undefined);
     setFrameCaptureStatus("Connecting frame capture");
 
@@ -834,6 +840,20 @@ function App() {
       if (message.type === "commentary") {
         setLastObservation(message.commentary.observation);
         setCommentary((current) => [message.commentary, ...current].slice(0, 10));
+        // Mark this commentary as audio-pending so the card shows a
+        // "recording" indicator until the first TTS chunk lands.
+        // T2D buffers the whole MP3 before delivery (~2-5s), and
+        // without this the listener stares at silent text wondering
+        // if the show froze.
+        if (ttsEnabled && !usingMockTts) {
+          const commId = message.commentary.id;
+          setPendingAudioCommentaryIds((prev) => {
+            if (prev.has(commId)) return prev;
+            const next = new Set(prev);
+            next.add(commId);
+            return next;
+          });
+        }
         if (ttsEnabled && usingMockTts && "speechSynthesis" in window) {
           const utterance = new SpeechSynthesisUtterance(message.commentary.text);
           utterance.rate = speechRate;
@@ -853,6 +873,13 @@ function App() {
       if (message.type === "tts") {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
+        // Audio has arrived — clear the "recording" indicator.
+        setPendingAudioCommentaryIds((prev) => {
+          if (!prev.has(message.audio.commentaryId)) return prev;
+          const next = new Set(prev);
+          next.delete(message.audio.commentaryId);
+          return next;
+        });
         if (message.audio.base64Audio) {
           // W9: stash chunks for later clip archival. Mock TTS never
           // provides bytes, so this only fills for the real ElevenLabs
@@ -1156,6 +1183,7 @@ function App() {
     setCommentary([]);
     setPlays([]);
     setTtsLatencyByCommentary({});
+    setPendingAudioCommentaryIds(new Set());
     setLastObservation(undefined);
     setFrameCaptureStatus("Livecast stopped.");
     setStatus("Stopped");
@@ -1199,6 +1227,7 @@ function App() {
     setPlays([]);
     setCommentary([]);
     setTtsLatencyByCommentary({});
+    setPendingAudioCommentaryIds(new Set());
     void refreshSportsGames("demo");
     void refreshDiagnostics("demo");
   };
@@ -1470,6 +1499,7 @@ function App() {
     setCommentary([]);
     setPlays([]);
     setTtsLatencyByCommentary({});
+    setPendingAudioCommentaryIds(new Set());
   };
 
   const openSetup = (pane: SetupPane = setupPane) => {
@@ -1834,12 +1864,27 @@ function App() {
                   />
                 ) : (
                   <>
-                    <section className="cast-player-card" aria-label="Livecast player">
+                    <section
+                      className="cast-player-card"
+                      aria-label="Livecast player"
+                      data-awaiting-audio={
+                        commentary[0] && pendingAudioCommentaryIds.has(commentary[0].id) ? "true" : undefined
+                      }
+                    >
                       <div className="cast-art" aria-hidden="true">
                         <Waveform isPlaying={audioPlaying} levels={audioLevels} />
                       </div>
                       <div className="cast-copy">
-                        <span>{isLive ? "Now casting" : "Ready to cast"}</span>
+                        <span>
+                          {commentary[0] && pendingAudioCommentaryIds.has(commentary[0].id) ? (
+                            <span className="cast-status cast-status--recording">
+                              <span className="cast-status__dot" aria-hidden="true" />
+                              {HOST_PERSONAS[commentary[0].hostId].name} is recording…
+                            </span>
+                          ) : (
+                            isLive ? "Now casting" : "Ready to cast"
+                          )}
+                        </span>
                         <strong>{commentary[0]?.moment.headline ?? (game ? `${game.awayTeam} at ${game.homeTeam}` : "Demo watch party")}</strong>
                         <p>{displayedTurnText(commentary[0]) ?? (isLive ? "Following play-by-play, stats, and fantasy swings in real time." : "Personalized audio commentary is staged and ready.")}</p>
                       </div>

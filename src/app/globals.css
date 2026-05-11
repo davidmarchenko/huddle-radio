@@ -16516,3 +16516,53 @@ body {
   font-size: 11px;
   word-break: break-word;
 }
+
+/* "Recording" indicator while T2D buffers audio server-side.
+   Pulsing red dot + label replaces the "Now casting" eyebrow when a
+   commentary has arrived as text but its audio is still generating.
+   Keeps the user oriented during the ~2-5s T2D buffer window. */
+.cast-status--recording {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: var(--hr-weight-black);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #ff9aa6;
+}
+
+.cast-status__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #ff5a6b;
+  box-shadow: 0 0 0 0 rgba(255, 90, 107, 0.6);
+  animation: cast-rec-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cast-rec-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(255, 90, 107, 0.6); transform: scale(1); }
+  60%  { box-shadow: 0 0 0 8px rgba(255, 90, 107, 0);  transform: scale(1.08); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 90, 107, 0);    transform: scale(1); }
+}
+
+/* Subtle background pulse on the whole card while awaiting audio —
+   tells the listener the show is generating, not stuck. */
+.cast-player-card[data-awaiting-audio="true"] {
+  position: relative;
+  overflow: hidden;
+}
+.cast-player-card[data-awaiting-audio="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.04) 50%, transparent 75%);
+  background-size: 200% 100%;
+  animation: cast-shimmer 1.8s linear infinite;
+  pointer-events: none;
+}
+@keyframes cast-shimmer {
+  0%   { background-position: -100% 0; }
+  100% { background-position: 100% 0; }
+}
