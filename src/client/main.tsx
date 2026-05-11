@@ -895,11 +895,14 @@ function App() {
   // W9: archive a moment's audio as a clip and return the public URL.
   // Returns undefined when no audio was captured (mock TTS path) or
   // when the upload fails — the caller falls back to text-only share.
-  const archiveClip = useCallback(async (commentaryId: string): Promise<string | undefined> => {
+  // Merge a commentary turn's TTS audio chunks into a single base64
+  // payload + mime type. Shared by archiveClip (which uploads the
+  // bytes for sharing) and getClipSubtitles (which posts the bytes
+  // to ASR for caption generation). Returns undefined when nothing
+  // was captured for that turn (mock TTS path, etc.).
+  const buildClipPayload = useCallback((commentaryId: string): { audioBase64: string; mimeType: string } | undefined => {
     const captured = clipChunksRef.current.get(commentaryId);
     if (!captured || captured.chunks.length === 0) return undefined;
-    // Concatenate the per-chunk base64 strings into a single base64
-    // payload by decoding each, joining the bytes, and re-encoding.
     let totalLength = 0;
     const decoded: Uint8Array[] = [];
     for (const chunk of captured.chunks) {
@@ -919,20 +922,57 @@ function App() {
     }
     let binary = "";
     for (let i = 0; i < merged.length; i++) binary += String.fromCharCode(merged[i]);
-    const audioBase64 = btoa(binary);
+    return { audioBase64: btoa(binary), mimeType: captured.mimeType };
+  }, []);
+
+  const archiveClip = useCallback(async (commentaryId: string): Promise<string | undefined> => {
+    const payload = buildClipPayload(commentaryId);
+    if (!payload) return undefined;
     try {
       const response = await fetch("/api/clips", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ listenerId, commentaryId, mimeType: captured.mimeType, audioBase64 })
+        body: JSON.stringify({ listenerId, commentaryId, mimeType: payload.mimeType, audioBase64: payload.audioBase64 })
       });
       if (!response.ok) return undefined;
-      const payload = await response.json() as { url?: string };
-      return payload.url;
+      const result = await response.json() as { url?: string };
+      return result.url;
     } catch {
       return undefined;
     }
-  }, []);
+  }, [buildClipPayload, listenerId]);
+
+  // W21 client half: post the captured TTS audio for this turn to
+  // the Nemotron ASR + WebVTT route and return the caption track.
+  // Independent of archiveClip so the share UX can show separate
+  // progress for "uploading clip" vs "transcribing for captions."
+  const getClipSubtitles = useCallback(
+    async (commentaryId: string): Promise<{ vtt: string; text: string } | undefined> => {
+      const payload = buildClipPayload(commentaryId);
+      if (!payload) return undefined;
+      const audio = {
+        id: commentaryId,
+        capturedAt: new Date().toISOString(),
+        source: "broadcast" as const,
+        mimeType: payload.mimeType,
+        dataUrl: `data:${payload.mimeType};base64,${payload.audioBase64}`
+      };
+      try {
+        const response = await fetch("/api/clip/subtitles", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ audio })
+        });
+        if (!response.ok) return undefined;
+        const result = (await response.json()) as { vtt?: string; text?: string };
+        if (!result.vtt) return undefined;
+        return { vtt: result.vtt, text: result.text ?? "" };
+      } catch {
+        return undefined;
+      }
+    },
+    [buildClipPayload]
+  );
 
   // Unmount cleanup. Without this, navigating away or closing the tab
   // mid-show leaves the WebSocket open server-side and the ESPN/TTS
@@ -1579,6 +1619,7 @@ function App() {
         observation={lastObservation}
         modelLabel={providers.model}
         onArchiveClip={archiveClip}
+        onGetClipSubtitles={getClipSubtitles}
         pregameNews={pregameNews}
         pregameOdds={pregameOdds}
         friendMatchups={friendMatchups}
@@ -2313,6 +2354,7 @@ function HuddleExperience({
   onNudgeHost,
   onSubmitCue,
   onArchiveClip,
+  onGetClipSubtitles,
   observation,
   modelLabel,
   pregameNews,
@@ -2378,6 +2420,7 @@ function HuddleExperience({
   onNudgeHost: (hostId: HostId) => void;
   onSubmitCue?: (cue: ListenerCue) => boolean;
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
+  onGetClipSubtitles?: (commentaryId: string) => Promise<{ vtt: string; text: string } | undefined>;
   observation?: LivecastCommentary["observation"];
   modelLabel?: string;
   pregameNews: NewsItem[];
@@ -2488,6 +2531,7 @@ function HuddleExperience({
             listenerStakes={listenerStakes}
             listenerRecapHighlight={listenerRecapHighlight}
             onArchiveClip={onArchiveClip}
+            onGetClipSubtitles={onGetClipSubtitles}
             profile={profile}
           />
         )}
@@ -4108,7 +4152,7 @@ function ListenerStakesCard({ stakes }: { stakes: NonNullable<ReturnType<typeof 
   );
 }
 
-function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport, onArchiveClip }: { highlight: NonNullable<ReturnType<typeof buildListenerRecapHighlight>>; listenerName: string; gameLabel?: string; sport?: SportLeague; onArchiveClip?: (commentaryId: string) => Promise<string | undefined> }) {
+function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport, onArchiveClip, onGetClipSubtitles }: { highlight: NonNullable<ReturnType<typeof buildListenerRecapHighlight>>; listenerName: string; gameLabel?: string; sport?: SportLeague; onArchiveClip?: (commentaryId: string) => Promise<string | undefined>; onGetClipSubtitles?: (commentaryId: string) => Promise<{ vtt: string; text: string } | undefined> }) {
   const isWin = highlight.kind === "win";
   const eyebrow = isWin ? `${listenerName}, your moment of the show` : `${listenerName}, the play that stung`;
   const deltaLabel = `${highlight.pointsDelta > 0 ? "+" : ""}${highlight.pointsDelta.toFixed(1)} pts`;
@@ -4129,17 +4173,44 @@ function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport, onAr
     return lines.join("\n");
   }, [hostName, highlight, listenerName, gameLabel, sport]);
   const [shareState, setShareState] = useState<"idle" | "copied" | "shared" | "failed">("idle");
+  // W21: cached subtitle track for this clip. Generated in parallel
+  // with the archive upload so the user sees a "Captions ready"
+  // affordance without an extra click.
+  const [subtitles, setSubtitles] = useState<{ vtt: string; text: string } | undefined>();
+  const [subtitleStatus, setSubtitleStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle");
   const handleShare = async () => {
     // Try to archive the moment's audio first so the share blurb can
     // include a real clip link. Falls through silently to text-only on
-    // any failure (no audio captured, network error, etc.).
+    // any failure (no audio captured, network error, etc.). Kick off
+    // subtitle generation in parallel so the captions track is ready
+    // by the time the user looks for it.
     let clipUrl: string | undefined;
     if (highlight.commentaryId && onArchiveClip) {
+      const captionTask =
+        onGetClipSubtitles && subtitleStatus !== "ready"
+          ? (() => {
+              setSubtitleStatus("loading");
+              return onGetClipSubtitles(highlight.commentaryId!).then(
+                (track) => {
+                  if (track) {
+                    setSubtitles(track);
+                    setSubtitleStatus("ready");
+                  } else {
+                    setSubtitleStatus("failed");
+                  }
+                },
+                () => setSubtitleStatus("failed")
+              );
+            })()
+          : Promise.resolve();
       try {
         clipUrl = await onArchiveClip(highlight.commentaryId);
       } catch {
         clipUrl = undefined;
       }
+      // Don't block the share text on captions — but await so the
+      // network request isn't cancelled by component unmount.
+      void captionTask;
     }
     const finalText = clipUrl ? `${shareText}\n${new URL(clipUrl, window.location.origin).toString()}` : shareText;
     // Mobile: native share sheet. Desktop: clipboard fallback.
@@ -4191,6 +4262,21 @@ function ListenerHighlightCard({ highlight, listenerName, gameLabel, sport, onAr
           <span className={`icon ${shareState === "copied" || shareState === "shared" ? "icon-check" : "icon-share"}`} aria-hidden="true" />
           {buttonLabel}
         </button>
+        {subtitleStatus === "loading" && (
+          <span className="listener-highlight-captions is-loading" aria-live="polite">Generating captions…</span>
+        )}
+        {subtitleStatus === "ready" && subtitles && (
+          <a
+            className="listener-highlight-captions is-ready"
+            href={`data:text/vtt;charset=utf-8,${encodeURIComponent(subtitles.vtt)}`}
+            download={`huddle-${highlight.commentaryId ?? "clip"}.vtt`}
+          >
+            Download captions (.vtt)
+          </a>
+        )}
+        {subtitleStatus === "failed" && (
+          <span className="listener-highlight-captions is-failed">Captions unavailable</span>
+        )}
       </div>
     </article>
   );
@@ -4576,6 +4662,7 @@ function HuddleRecap({
   listenerStakes,
   listenerRecapHighlight,
   onArchiveClip,
+  onGetClipSubtitles,
   profile
 }: {
   game?: SportsGameState;
@@ -4591,6 +4678,7 @@ function HuddleRecap({
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   listenerRecapHighlight?: ReturnType<typeof buildListenerRecapHighlight>;
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
+  onGetClipSubtitles?: (commentaryId: string) => Promise<{ vtt: string; text: string } | undefined>;
   profile?: UserProfile;
 }) {
   const hasListener = Boolean(profile) && listenerStakes?.status === "ready";
@@ -4620,6 +4708,7 @@ function HuddleRecap({
             gameLabel={game ? `${game.awayTeam} vs ${game.homeTeam}` : undefined}
             sport={game?.sport}
             onArchiveClip={onArchiveClip}
+            onGetClipSubtitles={onGetClipSubtitles}
           />
         )}
         {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}

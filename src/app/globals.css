@@ -16198,3 +16198,25 @@ body {
     box-shadow: 0 0 0 6px color-mix(in srgb, #76b900 12%, transparent);
   }
 }
+
+/* W21: caption status / download link in the share row. */
+.listener-highlight-captions {
+  font-size: 0.78rem;
+  color: var(--hr-text-muted);
+  align-self: center;
+}
+
+.listener-highlight-captions.is-loading {
+  color: color-mix(in srgb, var(--hr-text) 64%, transparent);
+}
+
+.listener-highlight-captions.is-ready {
+  color: #5a8a00;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.listener-highlight-captions.is-failed {
+  color: #c2304a;
+}
