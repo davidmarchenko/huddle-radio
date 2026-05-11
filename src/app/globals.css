@@ -880,6 +880,49 @@ video {
   line-height: 1.45;
 }
 
+/* Multi-speaker dialogue inside a commentary turn. Each line carries
+ * a speaker label tinted by the host's accent color so the visual
+ * rhythm matches the voice rotation in the audio.
+ */
+.commentary-dialogue {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.commentary-dialogue__line {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: baseline;
+  padding-left: 0.65rem;
+  border-left: 2px solid transparent;
+}
+
+.commentary-dialogue__line[data-accent="violet"] { border-left-color: #a78bfa; }
+.commentary-dialogue__line[data-accent="orange"] { border-left-color: #f59e0b; }
+.commentary-dialogue__line[data-accent="gold"]   { border-left-color: #fbbf24; }
+
+.commentary-dialogue__speaker {
+  font-size: 0.72rem;
+  font-weight: var(--hr-weight-black);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #c8d1da;
+  padding: 0.18rem 0.45rem;
+  border-radius: var(--hr-radius-pill);
+  background: #22303a;
+  align-self: start;
+}
+
+.commentary-dialogue__line[data-accent="violet"] .commentary-dialogue__speaker { color: #ddd6fe; }
+.commentary-dialogue__line[data-accent="orange"] .commentary-dialogue__speaker { color: #fde68a; }
+.commentary-dialogue__line[data-accent="gold"]   .commentary-dialogue__speaker { color: #fef3c7; }
+
+.commentary-dialogue__text {
+  margin: 0;
+  line-height: 1.45;
+}
+
 .metrics {
   display: flex;
   flex-wrap: wrap;

@@ -1,8 +1,10 @@
-import type { CommentaryKind, ProviderHealth } from "../shared/contracts";
+import type { CommentaryKind, DialogueLine, ProviderHealth } from "../shared/contracts";
 import {
   buildCommentaryPayload,
   buildOpenerSystemPrompt,
   buildPlaySystemPrompt,
+  joinDialogueLines,
+  parseDialogueResponse,
   resolveHostPersona,
   sanitizeCommentary,
   type CommentaryDraftInput
@@ -33,10 +35,11 @@ export class GeminiCommentaryProvider implements CommentaryProvider {
     private readonly fetcher: Fetcher = fetch
   ) {}
 
-  async draft(input: CommentaryDraftInput): Promise<string> {
-    if (!this.apiKey) return input.fallbackText;
+  async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
+    const leadHostId = input.hostId ?? "theo";
+    if (!this.apiKey) return [{ hostId: leadHostId, text: input.fallbackText }];
 
-    const persona = resolveHostPersona(input.hostId);
+    const persona = resolveHostPersona(leadHostId);
     const kind: CommentaryKind = input.kind ?? "play";
     const system = kind === "opener" ? buildOpenerSystemPrompt(persona) : buildPlaySystemPrompt(persona);
     const payload = buildCommentaryPayload(input, persona);
@@ -50,8 +53,12 @@ export class GeminiCommentaryProvider implements CommentaryProvider {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: "user", parts: [{ text: JSON.stringify(payload) }] }],
         generationConfig: {
-          maxOutputTokens: kind === "opener" ? 320 : 200,
-          temperature: 0.8
+          // Bigger budget than the legacy single-line path: each turn
+          // is now 3-7 short lines of JSON.
+          maxOutputTokens: kind === "opener" ? 800 : 600,
+          temperature: 0.8,
+          // Force JSON output so we can parse the dialogue reliably.
+          responseMimeType: "application/json"
         }
       })
     });
@@ -63,13 +70,24 @@ export class GeminiCommentaryProvider implements CommentaryProvider {
 
     const json = (await response.json()) as GeminiResponse;
     if (json.error?.message) throw new Error(`Gemini error: ${json.error.message}`);
-    const text = (json.candidates ?? [])
+    const raw = (json.candidates ?? [])
       .flatMap((candidate) => candidate.content?.parts ?? [])
       .map((part) => part.text ?? "")
       .join(" ")
-      .trim()
-      .replace(/\s+/g, " ");
-    return sanitizeCommentary(text || input.fallbackText, input.fallbackText);
+      .trim();
+    const parsed = parseDialogueResponse(raw, leadHostId);
+    if (parsed && parsed.length > 0) {
+      const joined = joinDialogueLines(parsed);
+      const safe = sanitizeCommentary(joined, input.fallbackText);
+      if (safe === input.fallbackText) {
+        return [{ hostId: leadHostId, text: input.fallbackText }];
+      }
+      return parsed;
+    }
+    if (raw) {
+      return [{ hostId: leadHostId, text: sanitizeCommentary(raw.replace(/\s+/g, " "), input.fallbackText) }];
+    }
+    return [{ hostId: leadHostId, text: input.fallbackText }];
   }
 
   async health(): Promise<ProviderHealth> {

@@ -242,6 +242,7 @@ describe("buildListenerRecapHighlight", () => {
       kind: "play",
       hostId: "maya",
       text,
+      lines: [{ hostId: "maya", text }],
       fantasyImpacts: [impact],
       moment: { priority: "notable", headline: "x", summary: "y", reasons: [], targetFriendIds: [], score: 1 },
       observation,

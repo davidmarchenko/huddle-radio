@@ -1,8 +1,10 @@
-import type { CommentaryKind, ProviderHealth } from "../shared/contracts";
+import type { CommentaryKind, DialogueLine, ProviderHealth } from "../shared/contracts";
 import {
   buildCommentaryPayload,
   buildOpenerSystemPrompt,
   buildPlaySystemPrompt,
+  joinDialogueLines,
+  parseDialogueResponse,
   resolveHostPersona,
   sanitizeCommentary,
   type CommentaryDraftInput
@@ -31,10 +33,11 @@ export class AnthropicCommentaryProvider implements CommentaryProvider {
     private readonly fetcher: Fetcher = fetch
   ) {}
 
-  async draft(input: CommentaryDraftInput): Promise<string> {
-    if (!this.apiKey) return input.fallbackText;
+  async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
+    const leadHostId = input.hostId ?? "theo";
+    if (!this.apiKey) return [{ hostId: leadHostId, text: input.fallbackText }];
 
-    const persona = resolveHostPersona(input.hostId);
+    const persona = resolveHostPersona(leadHostId);
     const kind: CommentaryKind = input.kind ?? "play";
     const system = kind === "opener" ? buildOpenerSystemPrompt(persona) : buildPlaySystemPrompt(persona);
     const payload = buildCommentaryPayload(input, persona);
@@ -48,7 +51,9 @@ export class AnthropicCommentaryProvider implements CommentaryProvider {
       },
       body: JSON.stringify({
         model: this.model,
-        max_tokens: kind === "opener" ? 320 : 200,
+        // Same dialogue-shape budget as OpenAI: bigger than the legacy
+        // single-line path because each turn is now 3-7 lines of JSON.
+        max_tokens: kind === "opener" ? 800 : 600,
         system,
         messages: [{ role: "user", content: JSON.stringify(payload) }]
       })
@@ -61,13 +66,24 @@ export class AnthropicCommentaryProvider implements CommentaryProvider {
 
     const json = (await response.json()) as AnthropicResponse;
     if (json.error?.message) throw new Error(`Anthropic error: ${json.error.message}`);
-    const text = (json.content ?? [])
+    const raw = (json.content ?? [])
       .filter((block) => block.type === "text" && block.text)
       .map((block) => block.text!)
       .join(" ")
-      .trim()
-      .replace(/\s+/g, " ");
-    return sanitizeCommentary(text || input.fallbackText, input.fallbackText);
+      .trim();
+    const parsed = parseDialogueResponse(raw, leadHostId);
+    if (parsed && parsed.length > 0) {
+      const joined = joinDialogueLines(parsed);
+      const safe = sanitizeCommentary(joined, input.fallbackText);
+      if (safe === input.fallbackText) {
+        return [{ hostId: leadHostId, text: input.fallbackText }];
+      }
+      return parsed;
+    }
+    if (raw) {
+      return [{ hostId: leadHostId, text: sanitizeCommentary(raw.replace(/\s+/g, " "), input.fallbackText) }];
+    }
+    return [{ hostId: leadHostId, text: input.fallbackText }];
   }
 
   async health(): Promise<ProviderHealth> {

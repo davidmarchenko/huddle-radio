@@ -39,23 +39,33 @@ const input: CommentaryDraftInput = {
 };
 
 describe("GeminiCommentaryProvider", () => {
-  it("returns the fallback text when no API key is configured", async () => {
-    expect(await new GeminiCommentaryProvider(undefined).draft(input)).toBe(input.fallbackText);
+  it("returns the fallback wrapped as a single dialogue line when no API key is configured", async () => {
+    const lines = await new GeminiCommentaryProvider(undefined).draft(input);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe(input.fallbackText);
   });
 
-  it("posts to generateContent with the systemInstruction and contents", async () => {
+  it("posts to generateContent and parses the JSON dialogue response", async () => {
     const captured: { url?: string; init?: RequestInit } = {};
+    const dialogueJson = JSON.stringify({
+      lines: [
+        { speaker: "theo", text: "Mahomes goes deep, Alex." },
+        { speaker: "maya", text: "Right, and the safety bit." }
+      ]
+    });
     const provider = new GeminiCommentaryProvider("test-key", "gemini-1.5-pro", async (url, init) => {
       captured.url = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
       captured.init = init;
       return new Response(
-        JSON.stringify({ candidates: [{ content: { parts: [{ text: "Theo here — Mahomes goes deep." }] } }] }),
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: dialogueJson }] } }] }),
         { status: 200 }
       );
     });
 
-    const text = await provider.draft(input);
-    expect(text).toBe("Theo here — Mahomes goes deep.");
+    const lines = await provider.draft(input);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ hostId: "theo", text: "Mahomes goes deep, Alex." });
+    expect(lines[1]).toMatchObject({ hostId: "maya" });
     expect(captured.url).toContain("gemini-1.5-pro");
     expect(captured.url).toContain("key=test-key");
     const body = JSON.parse(String(captured.init?.body));

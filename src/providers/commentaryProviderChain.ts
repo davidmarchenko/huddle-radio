@@ -1,4 +1,4 @@
-import type { ProviderHealth } from "../shared/contracts";
+import type { DialogueLine, ProviderHealth } from "../shared/contracts";
 import type { CommentaryDraftInput } from "./commentaryPrompts";
 import type { CommentaryProvider } from "./openAICommentaryProvider";
 
@@ -29,19 +29,19 @@ export class CommentaryProviderChain implements CommentaryProvider {
     private readonly options: CommentaryChainOptions = {}
   ) {}
 
-  async draft(input: CommentaryDraftInput): Promise<string> {
+  async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
     let lastError: unknown;
     for (const provider of this.providers) {
       try {
-        const text = await this.withTimeout(provider.draft(input));
-        if (text && text.length > 0) return text;
+        const lines = await this.withTimeout(provider.draft(input));
+        if (lines && lines.length > 0) return lines;
       } catch (error) {
         lastError = error;
         this.recordFallback(provider.id, error);
       }
     }
     if (lastError) throw lastError;
-    return input.fallbackText;
+    return [{ hostId: input.hostId ?? "theo", text: input.fallbackText }];
   }
 
   async health(): Promise<ProviderHealth> {

@@ -62,6 +62,11 @@ export function createLivecastCommentary(input: {
     kind: "play",
     hostId,
     text,
+    // Single-line dialogue stub. The engine overwrites .lines + .text
+    // (and may shift .hostId) once the LLM returns the actual
+    // multi-speaker dialogue; this seed keeps the local fallback path
+    // (no LLM key, parse failure) consistent with the new shape.
+    lines: [{ hostId, text }],
     fantasyImpacts: impacts,
     moment,
     observation: input.observation,
@@ -99,6 +104,7 @@ export function createListenerOpener(input: {
     kind: "opener",
     hostId: "theo",
     text,
+    lines: [{ hostId: "theo", text }],
     fantasyImpacts: [],
     moment: { priority: "major", headline: "Show open", summary: "Personalized welcome", reasons: ["personalized-opener"], targetFriendIds: [], score: 1 },
     observation: input.observation,

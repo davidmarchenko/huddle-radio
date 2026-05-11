@@ -86,7 +86,9 @@ describe("buildPlaySystemPrompt listenerCues directive", () => {
   it("instructs the host to address one cue per turn without quoting verbatim", () => {
     const prompt = buildPlaySystemPrompt(resolveHostPersona("maya"));
     expect(prompt).toMatch(/listenerCues/);
-    expect(prompt).toMatch(/answer or acknowledge ONE cue per turn/);
-    expect(prompt).toMatch(/Don't quote it back verbatim/);
+    // Phrasing shifted with the multi-speaker rewrite — ONE host
+    // addresses ONE cue, never quotes verbatim, never lists cues.
+    expect(prompt).toMatch(/ONE host addresses ONE cue/);
+    expect(prompt).toMatch(/Don't quote verbatim/);
   });
 });

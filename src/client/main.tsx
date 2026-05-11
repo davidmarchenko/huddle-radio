@@ -37,6 +37,7 @@ import {
   type MediaLookupIndex
 } from "../shared/mediaManifest";
 import type { ModelStackProfile } from "../shared/modelStack";
+import { HOST_PERSONAS } from "../shared/hostPersonas";
 import { buildProductReadiness } from "../shared/productReadiness";
 import { buildSessionDirector, type SessionDirectorPlan, type SessionDirectorStepState } from "../shared/sessionDirector";
 import { buildTranscriptExport } from "../shared/transcriptExport";
@@ -136,7 +137,11 @@ function App() {
   const [espnLeagueId, setEspnLeagueId] = useState(persisted.espnLeagueId ?? "");
   const [espnSeason, setEspnSeason] = useState(persisted.espnSeason ?? new Date().getFullYear());
   const [week, setWeek] = useState(persisted.week ?? 7);
-  const [cadenceSeconds, setCadenceSeconds] = useState(persisted.cadenceSeconds ?? 5);
+  // 10s default: lines up with the multi-speaker turn length so audio
+  // playback keeps pace with commentary generation. Listener can dial
+  // faster (3s) or slower (15s) via the cadence slider; tighter than
+  // ~6s starts queuing audio because each turn is ~8-12s of speech.
+  const [cadenceSeconds, setCadenceSeconds] = useState(persisted.cadenceSeconds ?? 10);
   const [videoMode, setVideoMode] = useState<VideoMode>(persisted.videoMode ?? "stream-url");
   const [videoUrl, setVideoUrl] = useState(persisted.videoUrl ?? "");
   const [videoNotice, setVideoNotice] = useState(() => initialVideoNotice(persisted.videoUrl));
@@ -791,7 +796,16 @@ function App() {
       }
       if (message.type === "play") {
         setGame(message.game);
-        setPlays((current) => [message.play, ...current].slice(0, 8));
+        // Dedup by play.id: ESPN's pre-game scoreboard returns the
+        // same placeholder play (id ending in `-pre-0-0.0`) on every
+        // tick. Without this guard the play array fills with
+        // duplicates and React fires "duplicate key" warnings for
+        // every render. Keep the existing entry's position; refresh
+        // its data only.
+        setPlays((current) => {
+          const filtered = current.filter((existing) => existing.id !== message.play.id);
+          return [message.play, ...filtered].slice(0, 8);
+        });
       }
       if (message.type === "commentary") {
         setLastObservation(message.commentary.observation);
@@ -5744,6 +5758,15 @@ function SetupGuide({
 }
 
 function CommentaryCard({ item, ttsLatency }: { item: LivecastCommentary; ttsLatency?: number }) {
+  // Multi-speaker dialogue rendering: each line shows the speaker
+  // with their accent color so the visual rhythm matches the
+  // voice-switching audio. Falls back to the joined transcript if
+  // for some reason `lines` is empty (defensive — the engine never
+  // emits empty lines but old clients caching a pre-dialogue
+  // commentary shape would otherwise blank out).
+  const lines = item.lines && item.lines.length > 0
+    ? item.lines
+    : [{ hostId: item.hostId, text: item.text }];
   return (
     <article className="commentary-card" data-priority={item.moment.priority}>
       <div className="moment-banner">
@@ -5751,7 +5774,17 @@ function CommentaryCard({ item, ttsLatency }: { item: LivecastCommentary; ttsLat
         <strong>{item.moment.headline}</strong>
         <b>{item.moment.score}</b>
       </div>
-      <p>{item.text}</p>
+      <div className="commentary-dialogue">
+        {lines.map((line, index) => {
+          const persona = HOST_PERSONAS[line.hostId];
+          return (
+            <div className="commentary-dialogue__line" data-accent={persona.accent} key={`${item.id}-${index}`}>
+              <span className="commentary-dialogue__speaker">{persona.name}</span>
+              <p className="commentary-dialogue__text">{line.text}</p>
+            </div>
+          );
+        })}
+      </div>
       <div className="metrics">
         <span>model {item.latency.modelResponseMs}ms</span>
         <span>text {item.latency.textGenerationMs}ms</span>

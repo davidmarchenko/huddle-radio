@@ -1,10 +1,12 @@
 import type {
   ClientServerEvent,
+  DialogueLine,
   GameOdds,
   HostId,
   ListenerCue,
   LivecastRequest,
   PlayerSeasonStats,
+  TTSAudioChunk,
   VideoFrameSnapshot,
   MarketSnapshot
 } from "../shared/contracts";
@@ -20,7 +22,7 @@ import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProvider
 import { UserVideoProvider } from "../providers/userVideoProvider";
 import { config } from "./config";
 import { fetchMarketSnapshots, pickRelevantMarketsForGame } from "./marketsProvider";
-import { detectMarketSwings } from "../providers/commentaryPrompts";
+import { detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
 import { redactSecret } from "./redactSecret";
 import {
   createFantasyProvider,
@@ -62,6 +64,77 @@ export type ShowEngineLogger = {
   error: (obj: unknown, msg?: string) => void;
 };
 
+/**
+ * Stream the full multi-speaker audio for a commentary turn. Each
+ * line's TTS request fires IN PARALLEL (one ElevenLabs WebSocket per
+ * line, capped at the number of dialogue lines — 3 for play turns,
+ * 5 for the opener — both well under the Creator-tier 3-concurrent
+ * cap when one engine is active). Chunks are delivered back to the
+ * caller in strict line order so the listener hears Maya → Theo →
+ * Cam in the same order the LLM authored, even though synth happens
+ * concurrently.
+ *
+ * Why head-of-line drain: line N+1's chunks may finish synthesizing
+ * while line N is still in flight. Naive serial synth would idle the
+ * second WS slot; a naive `Promise.all + concat` would wait for the
+ * slowest line before yielding the first chunk. This pattern emits
+ * line N's chunks the instant they arrive and falls through to line
+ * N+1's already-buffered chunks the instant N completes — minimal
+ * gap between speakers, no head-of-line blocking.
+ */
+async function* streamDialogueAudio(
+  lines: DialogueLine[],
+  commentaryId: string,
+  synthesize: (input: { commentaryId: string; text: string; hostId?: HostId }) => AsyncIterable<TTSAudioChunk>,
+  isStopped: () => boolean
+): AsyncGenerator<TTSAudioChunk> {
+  const lineState = lines.map(() => ({
+    chunks: [] as TTSAudioChunk[],
+    done: false
+  }));
+  let notify: (() => void) | undefined;
+  const ping = () => {
+    const cb = notify;
+    notify = undefined;
+    cb?.();
+  };
+
+  // Start every line synth concurrently. Failures are swallowed per
+  // line so a mid-turn WS error on line 3 still lets lines 1-2 play.
+  const launches = lines.map(async (line, lineIndex) => {
+    try {
+      for await (const chunk of synthesize({ commentaryId, text: line.text, hostId: line.hostId })) {
+        if (isStopped()) return;
+        lineState[lineIndex].chunks.push(chunk);
+        ping();
+      }
+    } catch {
+      // Swallow: the lost line is silent but the rest of the turn
+      // continues. Logging happens at the engine level via the
+      // surrounding try/catch when the queue is consumed.
+    } finally {
+      lineState[lineIndex].done = true;
+      ping();
+    }
+  });
+
+  let currentLine = 0;
+  while (currentLine < lineState.length) {
+    if (isStopped()) break;
+    while (lineState[currentLine].chunks.length > 0) {
+      yield lineState[currentLine].chunks.shift()!;
+    }
+    if (lineState[currentLine].done) {
+      currentLine += 1;
+      continue;
+    }
+    await new Promise<void>((resolve) => { notify = resolve; });
+  }
+
+  // Drain remaining promises so we don't leak unhandled rejections.
+  await Promise.allSettled(launches);
+}
+
 const NOOP_LOGGER: ShowEngineLogger = {
   info: () => undefined,
   warn: () => undefined,
@@ -85,6 +158,12 @@ export class ShowEngine {
   private lastMarketsForSwing: MarketSnapshot[] = [];
   private recentCommentary: string[] = [];
   private recentHostIds: HostId[] = [];
+  /** Wall-clock ms of the last commentary turn we delivered. Used to skip "minor" plays that arrive while a topic is still mid-thread. */
+  private lastCommentaryAtMs = 0;
+  /** Consecutive minor plays we've skipped. Capped so the show can't go silent on a long stretch of nothing-plays. */
+  private consecutiveSkipped = 0;
+  /** Most recently observed play id. When the next tick returns the same id (pre-game placeholder, scoreboard hiccup), there's literally nothing new to commentate on. */
+  private lastSeenPlayId?: string;
 
   constructor(options: { id?: string; logger?: ShowEngineLogger } = {}) {
     this.id = options.id ?? `show-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -175,29 +254,12 @@ export class ShowEngine {
           )
         : new MockTTSProvider();
     const mockTtsProvider = new MockTTSProvider();
-    // Serialize TTS requests per-engine: ElevenLabs subscriptions cap
-    // concurrent requests (the demo plan is 3). With v3 HTTP TTS
-    // taking 1-3s and the engine ticking every 5s, back-to-back
-    // commentary turns overlap. The lock makes turn N+1 wait for
-    // turn N's audio to finish before kicking off the next API
-    // call, keeping us at concurrency 1 from this engine and
-    // leaving the rest of the quota for other sessions.
-    let ttsLock: Promise<void> = Promise.resolve();
     const ttsProvider = {
-      async *synthesize(input: Parameters<typeof realTtsProvider.synthesize>[0]) {
+      synthesize: (input: Parameters<typeof realTtsProvider.synthesize>[0]) => {
         incrementCounter("ttsRequests");
-        const previous = ttsLock;
-        let release!: () => void;
-        ttsLock = new Promise<void>((resolve) => { release = resolve; });
-        try {
-          await previous;
-          const provider = budget.isTtsDegraded() ? mockTtsProvider : realTtsProvider;
-          for await (const chunk of provider.synthesize(input)) {
-            yield chunk;
-          }
-        } finally {
-          release();
-        }
+        return budget.isTtsDegraded()
+          ? mockTtsProvider.synthesize(input)
+          : realTtsProvider.synthesize(input);
       }
     };
 
@@ -310,7 +372,7 @@ export class ShowEngine {
             usedFrame: false
           }
         });
-        opener.text = await commentaryProvider.draft({
+        const openerLines = await commentaryProvider.draft({
           play: opener.play,
           observation: opener.observation,
           impacts: [],
@@ -326,11 +388,15 @@ export class ShowEngine {
           analytics,
           fallbackText: opener.text
         });
+        opener.lines = openerLines;
+        opener.text = joinDialogueLines(openerLines);
+        opener.hostId = openerLines[0].hostId;
         opener.latency.endToEndMs = Math.round(performance.now() - openerStarted);
         this.recentCommentary = [opener.text];
         this.recentHostIds = [opener.hostId];
         this.budget.recordCommentary(opener.text);
         this.queue.push({ type: "commentary", commentary: opener });
+        this.lastCommentaryAtMs = Date.now();
         if (request.ttsEnabled) {
           this.budget.recordTts(opener.text);
           if (this.budget.shouldDegradeTts()) {
@@ -344,11 +410,16 @@ export class ShowEngine {
               level: "warn"
             });
           }
-          for await (const audio of ttsProvider.synthesize({
-            commentaryId: opener.id,
-            text: opener.text,
-            hostId: opener.hostId
-          })) {
+          // Per-line streaming TTS, parallelized across lines but
+          // emitted in line order via streamDialogueAudio. First
+          // audio reaches the listener in ~300ms (flash WS first
+          // byte) regardless of how many lines the opener has.
+          for await (const audio of streamDialogueAudio(
+            openerLines,
+            opener.id,
+            (input) => ttsProvider.synthesize(input),
+            () => this.stopped
+          )) {
             if (this.stopped) break;
             opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
             this.queue.push({ type: "tts", audio });
@@ -440,8 +511,51 @@ export class ShowEngine {
             recentHostIds: this.recentHostIds,
             forceHostId: forcedHost
           });
+
+          // Duplicate-play guard: ESPN's pre-game / scheduled
+          // scoreboard returns the same placeholder play (id ending
+          // in `-pre-0-0.0`) every tick until kickoff. There's
+          // literally nothing new to commentate on, and it floods
+          // the client UI with React duplicate-key warnings when
+          // the play array stores them. Skip without counting
+          // toward the routine cap — duplicates are not "minor
+          // plays we're holding back," they're a missing data
+          // signal we should silently ignore. Listener cues / market
+          // swings still escape the skip because they carry NEW
+          // information the listener wants to hear about.
+          const hasUserSignal = cuesForTurn.length > 0 || !!swingForTurn;
+          if (play.id === this.lastSeenPlayId && !hasUserSignal) {
+            this.logger.info(
+              { playId: play.id, type: play.type },
+              "Skipping duplicate play (no new game state since last tick)"
+            );
+            return;
+          }
+          this.lastSeenPlayId = play.id;
+
+          // Topic threading: if this play landed as "routine" (no
+          // fantasy impact, no big game moment) and our last
+          // commentary turn is still recent, skip this tick entirely.
+          // The hosts stay on the previous topic instead of pivoting
+          // to a play nobody cares about. Cap consecutive skips so
+          // the show can't go silent during a long stretch of
+          // nothing-plays.
+          const TOPIC_HOLD_MS = 18_000;
+          const MAX_SKIPS_IN_A_ROW = 2;
+          const isRoutine = commentary.moment.priority === "routine";
+          const recentTopic = Date.now() - this.lastCommentaryAtMs < TOPIC_HOLD_MS;
+          if (isRoutine && recentTopic && !hasUserSignal && this.consecutiveSkipped < MAX_SKIPS_IN_A_ROW) {
+            this.consecutiveSkipped += 1;
+            this.logger.info(
+              { playId: play.id, type: play.type, consecutiveSkipped: this.consecutiveSkipped },
+              "Skipping routine play to keep the previous topic threaded"
+            );
+            return;
+          }
+          this.consecutiveSkipped = 0;
+
           const textStart = performance.now();
-          commentary.text = await commentaryProvider.draft({
+          const dialogueLines = await commentaryProvider.draft({
             play,
             observation,
             impacts: commentary.fantasyImpacts,
@@ -458,6 +572,9 @@ export class ShowEngine {
             marketSwing: swingForTurn,
             fallbackText: commentary.text
           });
+          commentary.lines = dialogueLines;
+          commentary.text = joinDialogueLines(dialogueLines);
+          commentary.hostId = dialogueLines[0].hostId;
           commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
           commentary.latency.endToEndMs = Math.round(performance.now() - startedAt);
           // Track usage before TTS so the cap kicks in before we burn
@@ -477,6 +594,7 @@ export class ShowEngine {
           this.recentCommentary = [commentary.text, ...this.recentCommentary].slice(0, 5);
           this.recentHostIds = [...this.recentHostIds, commentary.hostId].slice(-5);
           this.queue.push({ type: "commentary", commentary });
+          this.lastCommentaryAtMs = Date.now();
           if (cuesForTurn.length > 0) {
             this.queue.push({
               type: "cue-ack",
@@ -498,11 +616,14 @@ export class ShowEngine {
                 level: "warn"
               });
             }
-            for await (const audio of ttsProvider.synthesize({
-              commentaryId: commentary.id,
-              text: commentary.text,
-              hostId: commentary.hostId
-            })) {
+            // Per-line streaming TTS, parallelized across lines but
+            // emitted in line order via streamDialogueAudio.
+            for await (const audio of streamDialogueAudio(
+              commentary.lines,
+              commentary.id,
+              (input) => ttsProvider.synthesize(input),
+              () => this.stopped
+            )) {
               if (this.stopped) break;
               commentary.latency.ttsFirstAudioMs ??= audio.latencyMs;
               this.queue.push({ type: "tts", audio });
@@ -520,7 +641,12 @@ export class ShowEngine {
       if (!this.stopped) {
         this.tickTimer = setInterval(() => {
           void tick();
-        }, request.cadenceMs ?? 5000);
+        // 10s tick default lines up with the multi-speaker turn shape:
+        // ~3 dialogue lines × ~3s of audio each = 8-12s of speech per
+        // turn. A shorter cadence overlaps audio across turns and the
+        // queue grows unbounded; a longer one feels slow. Listeners
+        // can still bias faster/slower via cadenceMs in the request.
+        }, request.cadenceMs ?? 10000);
         this.healthTimer = setInterval(() => {
           getHealth()
             .then((healthSnapshot) => this.queue.push({ type: "health", health: healthSnapshot }))

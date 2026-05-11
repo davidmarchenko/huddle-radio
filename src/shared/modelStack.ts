@@ -34,7 +34,14 @@ export const recommendedModelDefaults = {
   commentaryFastModel: "gpt-5-mini",
   realtimeModel: "gpt-realtime",
   realtimeFastModel: "gpt-realtime-mini",
+  // Both presets resolve to flash_v2_5: it supports the WebSocket
+  // streaming endpoint (~300ms first byte) while eleven_v3 is HTTP-only
+  // (1-3s synth blocks the conversation pacing the engine is aiming
+  // for). flash_v2_5 trades a small bit of expressive range for the
+  // tight back-and-forth a podcast-style show needs. If a single-take
+  // narration job ever needs v3's quality, set ELEVENLABS_EXPRESSIVE_MODEL_ID
+  // explicitly per-deploy.
   ttsLowLatencyModel: "eleven_flash_v2_5",
-  ttsExpressiveModel: "eleven_v3",
+  ttsExpressiveModel: "eleven_flash_v2_5",
   multimodalLocalModel: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"
 };

@@ -33,9 +33,9 @@ describe("optional real provider smoke tests", () => {
       expect(true).toBe(true);
       return;
     }
-    let text: string;
+    let lines: import("../shared/contracts").DialogueLine[];
     try {
-      text = await new OpenAICommentaryProvider(process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL ?? "gpt-4.1-mini").draft({
+      lines = await new OpenAICommentaryProvider(process.env.OPENAI_API_KEY, process.env.OPENAI_MODEL ?? "gpt-4.1-mini").draft({
         play: demoPlays[0],
         observation: {
           id: "obs",
@@ -63,8 +63,10 @@ describe("optional real provider smoke tests", () => {
       }
       throw error;
     }
-    expect(text).not.toBe("fallback");
-    expect(text.length).toBeGreaterThan(10);
+    expect(lines.length).toBeGreaterThan(0);
+    const joined = lines.map((l) => l.text).join(" ");
+    expect(joined).not.toBe("fallback");
+    expect(joined.length).toBeGreaterThan(10);
   }, 45000);
 
   it("reports ElevenLabs ready when ELEVENLABS_API_KEY is present", async () => {

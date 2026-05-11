@@ -73,8 +73,8 @@ describe("demo providers", () => {
 });
 
 describe("commentary and TTS providers", () => {
-  it("local commentary returns fallback text unchanged", async () => {
-    const text = await new LocalCommentaryProvider().draft({
+  it("local commentary returns fallback text wrapped as a single dialogue line", async () => {
+    const lines = await new LocalCommentaryProvider().draft({
       play: demoPlays[0],
       observation: { id: "obs", source: "stream-url", summary: "summary", confidence: 0.8, observedAt: new Date().toISOString(), latencyMs: 1 },
       impacts: [],
@@ -83,11 +83,12 @@ describe("commentary and TTS providers", () => {
       recentCommentary: [],
       fallbackText: "fallback"
     });
-    expect(text).toBe("fallback");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe("fallback");
   });
 
-  it("OpenAI commentary falls back when no API key is configured", async () => {
-    const text = await new OpenAICommentaryProvider(undefined).draft({
+  it("OpenAI commentary falls back to a single line when no API key is configured", async () => {
+    const lines = await new OpenAICommentaryProvider(undefined).draft({
       play: demoPlays[0],
       observation: { id: "obs", source: "stream-url", summary: "summary", confidence: 0.8, observedAt: new Date().toISOString(), latencyMs: 1 },
       impacts: [],
@@ -96,7 +97,8 @@ describe("commentary and TTS providers", () => {
       recentCommentary: [],
       fallbackText: "safe fallback"
     });
-    expect(text).toBe("safe fallback");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe("safe fallback");
   });
 
   it("mock TTS yields one final non-audio metadata chunk", async () => {

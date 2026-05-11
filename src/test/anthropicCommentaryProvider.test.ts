@@ -39,24 +39,34 @@ const input: CommentaryDraftInput = {
 };
 
 describe("AnthropicCommentaryProvider", () => {
-  it("returns the fallback text when no API key is configured", async () => {
+  it("returns the fallback wrapped as a single dialogue line when no API key is configured", async () => {
     const provider = new AnthropicCommentaryProvider(undefined);
-    expect(await provider.draft(input)).toBe(input.fallbackText);
+    const lines = await provider.draft(input);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe(input.fallbackText);
   });
 
-  it("posts to the Messages API with the persona system prompt and JSON payload", async () => {
+  it("posts to the Messages API and parses the JSON dialogue response", async () => {
     const captured: { url?: string; init?: RequestInit } = {};
+    const dialogueJson = JSON.stringify({
+      lines: [
+        { speaker: "maya", text: "Mahomes is at 9.4 yards an attempt." },
+        { speaker: "theo", text: "Right, exactly the script Alex needed." }
+      ]
+    });
     const provider = new AnthropicCommentaryProvider("test-key", "claude-sonnet-4-6", async (url, init) => {
       captured.url = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
       captured.init = init;
       return new Response(
-        JSON.stringify({ content: [{ type: "text", text: "Maya here — Mahomes hits Kelce." }] }),
+        JSON.stringify({ content: [{ type: "text", text: dialogueJson }] }),
         { status: 200, headers: { "content-type": "application/json" } }
       );
     });
 
-    const text = await provider.draft(input);
-    expect(text).toBe("Maya here — Mahomes hits Kelce.");
+    const lines = await provider.draft(input);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ hostId: "maya", text: "Mahomes is at 9.4 yards an attempt." });
+    expect(lines[1]).toMatchObject({ hostId: "theo" });
     expect(captured.url).toBe("https://api.anthropic.com/v1/messages");
     expect((captured.init?.headers as Record<string, string>)["x-api-key"]).toBe("test-key");
     const body = JSON.parse(String(captured.init?.body));
@@ -75,11 +85,16 @@ describe("AnthropicCommentaryProvider", () => {
     await expect(provider.draft(input)).rejects.toThrow(/Anthropic commentary request failed: 429/);
   });
 
-  it("scrubs commentary that leaks credentials", async () => {
+  it("scrubs dialogue that leaks credentials and falls back to a safe single line", async () => {
+    const dialogueJson = JSON.stringify({
+      lines: [{ speaker: "maya", text: "your api key is sk-foo" }]
+    });
     const provider = new AnthropicCommentaryProvider("test-key", "claude-sonnet-4-6", async () =>
-      new Response(JSON.stringify({ content: [{ type: "text", text: "your api key is sk-foo" }] }), { status: 200 })
+      new Response(JSON.stringify({ content: [{ type: "text", text: dialogueJson }] }), { status: 200 })
     );
-    expect(await provider.draft(input)).toBe(input.fallbackText);
+    const lines = await provider.draft(input);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].text).toBe(input.fallbackText);
   });
 
   it("reports ready when keyed and disabled when not", async () => {

@@ -333,11 +333,28 @@ export type HostId = "maya" | "theo" | "cam";
  */
 export type CommentaryKind = "opener" | "play";
 
+/**
+ * One line of multi-speaker dialogue inside a commentary turn. Each
+ * line gets TTS'd with the matching host's voice; the client UI renders
+ * lines in order with speaker labels. Lines are short — ~100 chars
+ * each — so the audio feels like a real conversation, not a montage of
+ * paragraphs. The single-host model that preceded this lives on as the
+ * degenerate `lines.length === 1` case (used by the local fallback).
+ */
+export type DialogueLine = {
+  hostId: HostId;
+  text: string;
+};
+
 export type LivecastCommentary = {
   id: string;
   kind: CommentaryKind;
+  /** Primary speaker — first host in `lines`. Drives UI accent color + the host-rotation history. */
   hostId: HostId;
+  /** Joined transcript across all lines. Kept for clip captions, search, and any non-audio surface. */
   text: string;
+  /** Multi-speaker breakdown. Always non-empty; single-host commentary degenerates to one line. */
+  lines: DialogueLine[];
   fantasyImpacts: FantasyImpact[];
   moment: MomentCue;
   observation: VideoObservation;
