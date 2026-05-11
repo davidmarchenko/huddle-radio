@@ -11771,15 +11771,15 @@ body {
   box-shadow: none !important;
 }
 
-.huddle-app.phase-pregame .pregame-rail > article > span:first-child {
-  display: block;
+/* Pregame-rail card eyebrow: spacing only. The earlier version of
+   this rule duplicated the eyebrow typography (mono/xxs/uppercase)
+   and force-set `display: block`, which clobbered the canonical
+   `.huddle-app .eyebrow` flex layout — that's why icon/text gap
+   wasn't rendering on Tonight's matchup, Storylines, etc. The
+   canonical rule now owns typography + flex layout; this rule only
+   adds the bottom-margin spacing under the eyebrow inside rail cards. */
+.huddle-app.phase-pregame .pregame-rail > article > .eyebrow:first-child {
   margin-bottom: var(--hr-space-2);
-  color: var(--hr-text-muted);
-  font-family: var(--hr-font-mono);
-  font-size: 0.72rem;
-  font-weight: var(--hr-weight-semi);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
 }
 
 /* Pregame layout spacing — tighten the page-level padding so the hero
