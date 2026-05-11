@@ -61,10 +61,12 @@ export async function POST(request: Request) {
       error: (obj, msg) => console.error(JSON.stringify({ event: "live.engine.error", ...flatten(obj), msg }))
     }
   });
+  const sessionId = await registerSession(engine);
+  // Stamp before start() so per-turn summaries can group by show.
+  engine.setSessionId(sessionId);
   // Fire and forget — events buffer in the engine's AsyncEventQueue
   // and drain into the SSE stream below.
   void engine.start(parsed.request);
-  const sessionId = await registerSession(engine);
   // The SSE consumer is attached by definition — we're streaming into it
   // on the same request. Skip the ATTACH_GRACE_MS reaper.
   markSessionConsumed(sessionId);

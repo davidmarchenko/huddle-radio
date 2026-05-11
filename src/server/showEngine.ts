@@ -18,7 +18,9 @@ import { incrementCounter, ShowUsageBudget } from "./metrics";
 import { rosterForListener, rosterMatchKind } from "./rosterMatch";
 import { getDefaultAdvancedStatsProvider } from "./advancedStatsProvider";
 import { LocalCommentaryProvider } from "../providers/openAICommentaryProvider";
+import { CommentaryProviderChain } from "../providers/commentaryProviderChain";
 import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProviders";
+import { recordTurn, type TurnSummary } from "./turnSummaries";
 import { UserVideoProvider } from "../providers/userVideoProvider";
 import { config } from "./config";
 import { fetchMarketSnapshots, pickRelevantMarketsForGame } from "./marketsProvider";
@@ -164,6 +166,30 @@ async function* streamDialogueAudio(
   }
 }
 
+/** Coerce a partial TurnSummary into the full shape, falling back to safe
+ *  defaults so a half-populated summary (early failure) still serializes
+ *  cleanly to JSON and the diagnostics UI. */
+function buildTickSummary(partial: Partial<TurnSummary>, startedAtIso: string): TurnSummary {
+  return {
+    turnId: partial.turnId ?? `tick-${Date.now()}`,
+    kind: "play",
+    sessionId: partial.sessionId ?? "",
+    engineId: partial.engineId ?? "(unknown)",
+    leadHostId: partial.leadHostId ?? "theo",
+    finalHostIds: partial.finalHostIds ?? [],
+    lineCount: partial.lineCount ?? 0,
+    commentaryProvider: partial.commentaryProvider ?? "(unknown)",
+    ttsEnabled: partial.ttsEnabled ?? false,
+    ttsProvider: partial.ttsProvider,
+    ttsChunks: partial.ttsChunks ?? 0,
+    ttsFirstByteMs: partial.ttsFirstByteMs,
+    textGenerationMs: partial.textGenerationMs,
+    totalMs: partial.totalMs ?? 0,
+    errorReason: partial.errorReason,
+    startedAt: partial.startedAt ?? startedAtIso
+  };
+}
+
 const NOOP_LOGGER: ShowEngineLogger = {
   info: () => undefined,
   warn: () => undefined,
@@ -193,10 +219,18 @@ export class ShowEngine {
   private lastSeenPlayId?: string;
   /** Consecutive ticks where the play id was unchanged. Capped — past the cap we force a turn so a pre-game game doesn't go silent forever. */
   private duplicatePlayCount = 0;
+  /** Session id assigned by the route handler post-construction. Stamped on turn summaries
+   *  so the diagnostics endpoint can group by show. Empty until setSessionId fires. */
+  private sessionId = "";
 
   constructor(options: { id?: string; logger?: ShowEngineLogger } = {}) {
     this.id = options.id ?? `show-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     this.logger = options.logger ?? NOOP_LOGGER;
+  }
+
+  /** Stamp the session id post-construction so turn summaries can group by show. */
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
   }
 
   /** Async iterable of outbound events. Single-consumer. */
@@ -263,14 +297,27 @@ export class ShowEngine {
     const budget = this.budget;
     const realCommentaryProvider = createCommentaryProvider();
     const localCommentaryProvider = new LocalCommentaryProvider();
+    /** Provider id that answered the most recent commentary draft. Used
+     *  for per-turn observability — the engine reads this after each draft
+     *  to stamp the turn summary. */
+    let lastCommentaryProviderId = "(no-draft-yet)";
     const commentaryProvider = {
-      draft: (input: Parameters<typeof realCommentaryProvider.draft>[0]) => {
+      draft: async (input: Parameters<typeof realCommentaryProvider.draft>[0]) => {
         incrementCounter("commentaryRequests");
-        return budget.isCommentaryDegraded()
-          ? localCommentaryProvider.draft(input)
-          : realCommentaryProvider.draft(input);
+        if (budget.isCommentaryDegraded()) {
+          const lines = await localCommentaryProvider.draft(input);
+          lastCommentaryProviderId = `${localCommentaryProvider.id} (budget-degraded)`;
+          return lines;
+        }
+        const lines = await realCommentaryProvider.draft(input);
+        lastCommentaryProviderId =
+          realCommentaryProvider instanceof CommentaryProviderChain
+            ? realCommentaryProvider.lastProviderId ?? realCommentaryProvider.id
+            : realCommentaryProvider.id;
+        return lines;
       }
     };
+    const commentaryProviderLabel = () => lastCommentaryProviderId;
 
     const videoProvider = new UserVideoProvider();
     const realTtsProvider =
@@ -365,8 +412,24 @@ export class ShowEngine {
       // the listener should know within 30s that the show was made for
       // them. We try the LLM provider first and fall back to the local
       // template (which already names lineup) if it fails.
+      // Hoisted so the summary record can fire in both the happy path
+      // and the catch — same fields, single source of truth.
+      const openerStarted = performance.now();
+      const openerStartedIso = new Date().toISOString();
+      let openerSummary: Partial<TurnSummary> = {
+        kind: "opener",
+        sessionId: this.sessionId,
+        engineId: this.id,
+        leadHostId: "theo",
+        finalHostIds: [],
+        lineCount: 0,
+        commentaryProvider: "(unknown)",
+        ttsEnabled: request.ttsEnabled,
+        ttsProvider: config.RESOLVED_TTS_PROVIDER,
+        ttsChunks: 0,
+        startedAt: openerStartedIso
+      };
       try {
-        const openerStarted = performance.now();
         const listenerRoster = rosterForListener(fantasy, request.group.listener.rosterId);
         this.logger.info(
           {
@@ -426,6 +489,17 @@ export class ShowEngine {
         this.budget.recordCommentary(opener.text);
         this.queue.push({ type: "commentary", commentary: opener });
         this.lastCommentaryAtMs = Date.now();
+        openerSummary.turnId = opener.id;
+        openerSummary.leadHostId = opener.hostId;
+        openerSummary.finalHostIds = openerLines.map((l) => l.hostId);
+        openerSummary.lineCount = openerLines.length;
+        openerSummary.commentaryProvider = commentaryProviderLabel();
+        const chainErrors = realCommentaryProvider instanceof CommentaryProviderChain
+          ? realCommentaryProvider.lastTurnErrors
+          : [];
+        if (chainErrors.length > 0) {
+          openerSummary.errorReason = `${chainErrors[0].providerId}: ${chainErrors[0].message.slice(0, 120)}`;
+        }
         if (request.ttsEnabled) {
           this.budget.recordTts(opener.text);
           if (this.budget.shouldDegradeTts()) {
@@ -453,19 +527,53 @@ export class ShowEngine {
             if (this.stopped) break;
             opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
             this.queue.push({ type: "tts", audio });
+            openerSummary.ttsChunks = (openerSummary.ttsChunks ?? 0) + 1;
           }
+          openerSummary.ttsFirstByteMs = opener.latency.ttsFirstAudioMs;
         }
       } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        openerSummary.errorReason = `opener-threw: ${msg.slice(0, 160)}`;
         this.logger.warn(
-          { err: error instanceof Error ? error.message : String(error) },
+          { err: msg },
           "Show opener failed; continuing into live ticks"
         );
+      } finally {
+        openerSummary.totalMs = Math.round(performance.now() - openerStarted);
+        recordTurn({
+          turnId: openerSummary.turnId ?? `opener-${Date.now()}`,
+          kind: "opener",
+          sessionId: openerSummary.sessionId ?? "",
+          engineId: openerSummary.engineId ?? this.id,
+          leadHostId: openerSummary.leadHostId ?? "theo",
+          finalHostIds: openerSummary.finalHostIds ?? [],
+          lineCount: openerSummary.lineCount ?? 0,
+          commentaryProvider: openerSummary.commentaryProvider ?? "(unknown)",
+          ttsEnabled: openerSummary.ttsEnabled ?? false,
+          ttsProvider: openerSummary.ttsProvider,
+          ttsChunks: openerSummary.ttsChunks ?? 0,
+          ttsFirstByteMs: openerSummary.ttsFirstByteMs,
+          totalMs: openerSummary.totalMs ?? 0,
+          errorReason: openerSummary.errorReason,
+          startedAt: openerSummary.startedAt ?? openerStartedIso
+        });
       }
 
       const tick = async () => {
         if (this.stopped) return;
+        const startedAt = performance.now();
+        const startedAtIso = new Date().toISOString();
+        let tickSummary: Partial<TurnSummary> = {
+          kind: "play",
+          sessionId: this.sessionId,
+          engineId: this.id,
+          ttsEnabled: request.ttsEnabled,
+          ttsProvider: config.RESOLVED_TTS_PROVIDER,
+          ttsChunks: 0,
+          startedAt: startedAtIso
+        };
+        let recordedAtEnd = false;
         try {
-          const startedAt = performance.now();
           await videoProvider.observe(request.video);
           const play = await sportsProvider.nextPlay();
           const [gameState, observation, news] = await Promise.all([
@@ -618,6 +726,18 @@ export class ShowEngine {
           commentary.hostId = dialogueLines[0].hostId;
           commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
           commentary.latency.endToEndMs = Math.round(performance.now() - startedAt);
+          tickSummary.turnId = commentary.id;
+          tickSummary.leadHostId = commentary.hostId;
+          tickSummary.finalHostIds = dialogueLines.map((l) => l.hostId);
+          tickSummary.lineCount = dialogueLines.length;
+          tickSummary.commentaryProvider = commentaryProviderLabel();
+          tickSummary.textGenerationMs = commentary.latency.textGenerationMs;
+          const tickChainErrors = realCommentaryProvider instanceof CommentaryProviderChain
+            ? realCommentaryProvider.lastTurnErrors
+            : [];
+          if (tickChainErrors.length > 0) {
+            tickSummary.errorReason = `${tickChainErrors[0].providerId}: ${tickChainErrors[0].message.slice(0, 120)}`;
+          }
           // Track usage before TTS so the cap kicks in before we burn
           // ElevenLabs minutes on a hung loop.
           this.budget.recordCommentary(commentary.text);
@@ -669,13 +789,30 @@ export class ShowEngine {
               if (this.stopped) break;
               commentary.latency.ttsFirstAudioMs ??= audio.latencyMs;
               this.queue.push({ type: "tts", audio });
+              tickSummary.ttsChunks = (tickSummary.ttsChunks ?? 0) + 1;
             }
+            tickSummary.ttsFirstByteMs = commentary.latency.ttsFirstAudioMs;
           }
+          tickSummary.totalMs = Math.round(performance.now() - startedAt);
+          recordTurn(buildTickSummary(tickSummary, startedAtIso));
+          recordedAtEnd = true;
         } catch (error) {
+          const msg = error instanceof Error ? error.message : "Livecast tick failed.";
+          tickSummary.errorReason = `tick-threw: ${msg.slice(0, 160)}`;
           this.queue.push({
             type: "error",
-            message: redactSecret(error instanceof Error ? error.message : "Livecast tick failed.")
+            message: redactSecret(msg)
           });
+        } finally {
+          // Only record if we didn't already record at the happy-path
+          // boundary. The duplicate-skip early-return path doesn't
+          // produce a turn — no commentary, no TTS — so we skip the
+          // summary too. Recording every skip would bloat the buffer
+          // and bury the real turns we want to see.
+          if (!recordedAtEnd && tickSummary.errorReason) {
+            tickSummary.totalMs = Math.round(performance.now() - startedAt);
+            recordTurn(buildTickSummary(tickSummary, startedAtIso));
+          }
         }
       };
 

@@ -46,6 +46,7 @@ import { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
 import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
+import { DebugPanel } from "./DebugPanel";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -2260,6 +2261,7 @@ function App() {
           setProfileEditorIntent("demo");
         }}
       />
+      <DebugPanel />
     </main>
   );
 }

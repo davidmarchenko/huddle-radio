@@ -16383,3 +16383,129 @@ body {
 .markets-board-delta.is-down {
   color: #c2304a;
 }
+
+/* ---------- Debug panel ---------- */
+/* Toggleable via Cmd+D / Ctrl+D. Surfaces the last 20 turn summaries
+   so debugging "the show felt broken" is a glance, not a tail -F. */
+.debug-panel {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: min(420px, 92vw);
+  z-index: 10000;
+  background: rgba(15, 16, 22, 0.96);
+  color: #f4f6fb;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  padding: 12px 14px;
+  font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.debug-panel__header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.debug-panel__header strong {
+  font-size: 13px;
+}
+
+.debug-panel__hint {
+  opacity: 0.55;
+  font-size: 10.5px;
+  flex: 1;
+}
+
+.debug-panel__close {
+  background: none;
+  border: 0;
+  color: #f4f6fb;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.debug-panel__close:hover {
+  opacity: 1;
+}
+
+.debug-panel__error {
+  background: rgba(194, 48, 74, 0.18);
+  border: 1px solid rgba(194, 48, 74, 0.4);
+  color: #ffb6bd;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.debug-panel__empty {
+  opacity: 0.6;
+  padding: 18px 8px;
+  text-align: center;
+}
+
+.debug-panel__turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debug-panel__turn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.debug-panel__turn--error {
+  border-color: rgba(255, 122, 137, 0.5);
+  background: rgba(194, 48, 74, 0.1);
+}
+
+.debug-panel__row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.debug-panel__row--meta {
+  opacity: 0.7;
+  font-size: 11px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+
+.debug-panel__badge {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.debug-panel__provider {
+  font-weight: 600;
+}
+
+.debug-panel__hosts {
+  opacity: 0.75;
+  margin-left: auto;
+}
+
+.debug-panel__error-reason {
+  margin-top: 4px;
+  color: #ff9aa6;
+  font-size: 11px;
+  word-break: break-word;
+}

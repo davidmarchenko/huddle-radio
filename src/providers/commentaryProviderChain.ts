@@ -23,24 +23,48 @@ export type CommentaryChainOptions = {
 export class CommentaryProviderChain implements CommentaryProvider {
   id = "commentary-chain";
   private readonly fallbackHits = new Map<string, number>();
+  /** Last provider whose draft() returned non-empty lines. Read by the engine
+   *  for per-turn observability — the chain hides which step won, this exposes it. */
+  private _lastProviderId?: string;
+  /** Errors from this turn's fallthrough, oldest first. Reset on each draft(). */
+  private _lastTurnErrors: Array<{ providerId: string; message: string }> = [];
 
   constructor(
     private readonly providers: CommentaryProvider[],
     private readonly options: CommentaryChainOptions = {}
   ) {}
 
+  /** Provider id that won the last draft(). Undefined before the first draft. */
+  get lastProviderId(): string | undefined {
+    return this._lastProviderId;
+  }
+
+  /** Errors collected during the last draft()'s fallthrough, oldest first. */
+  get lastTurnErrors(): ReadonlyArray<{ providerId: string; message: string }> {
+    return this._lastTurnErrors;
+  }
+
   async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
+    this._lastTurnErrors = [];
     let lastError: unknown;
     for (const provider of this.providers) {
       try {
         const lines = await this.withTimeout(provider.draft(input));
-        if (lines && lines.length > 0) return lines;
+        if (lines && lines.length > 0) {
+          this._lastProviderId = provider.id;
+          return lines;
+        }
       } catch (error) {
         lastError = error;
+        this._lastTurnErrors.push({
+          providerId: provider.id,
+          message: error instanceof Error ? error.message : String(error)
+        });
         this.recordFallback(provider.id, error);
       }
     }
     if (lastError) throw lastError;
+    this._lastProviderId = "(no-provider)";
     return [{ hostId: input.hostId ?? "theo", text: input.fallbackText }];
   }
 
