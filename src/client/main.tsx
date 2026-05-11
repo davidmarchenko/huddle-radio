@@ -794,6 +794,17 @@ function App() {
       if (message.type === "tts") {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
+        // Diagnostic: surface every TTS dispatch in the console so we
+        // can see whether events arrive AND whether the audio chunk
+        // has the bytes we expect to play. Stripped once the audio
+        // path is debugged.
+        console.log("[huddle.tts]", {
+          provider: message.audio.provider,
+          mimeType: message.audio.mimeType,
+          base64Bytes: message.audio.base64Audio?.length ?? 0,
+          isFinal: message.audio.isFinal,
+          audioContextState: audioContextRef.current?.state ?? "none"
+        });
         if (message.audio.base64Audio) {
           // W9: stash chunks for later clip archival. Mock TTS never
           // provides bytes, so this only fills for the real ElevenLabs
@@ -819,7 +830,11 @@ function App() {
             if (oldestKey) clipChunksRef.current.delete(oldestKey);
           }
           audioQueueRef.current = audioQueueRef.current.then(() => {
-            if (livecastSessionRef.current !== sessionId) return;
+            if (livecastSessionRef.current !== sessionId) {
+              console.log("[huddle.tts] dropped — session no longer current");
+              return;
+            }
+            console.log("[huddle.tts] playing chunk", message.audio.commentaryId);
             return playBase64Audio(message.audio.base64Audio!, message.audio.mimeType, {
               audioContext: audioContextRef.current ?? undefined,
               isCancelled: () => livecastSessionRef.current !== sessionId,
@@ -6145,10 +6160,23 @@ async function playBase64Audio(
       }
     }
     options.onAudioStart(audio);
-    await audio.play();
+    try {
+      await audio.play();
+    } catch (error) {
+      // Most common cause: browser autoplay policy blocked the play
+      // because the AudioContext wasn't unlocked by a user gesture.
+      // Log so we can tell autoplay-block apart from "audio decoded
+      // and played silently for some other reason."
+      console.warn("[huddle.tts] audio.play() rejected", error instanceof Error ? error.message : error);
+      finish(() => undefined);
+      return;
+    }
     await new Promise<void>((resolve) => {
       audio.addEventListener("ended", () => finish(resolve), { once: true });
-      audio.addEventListener("error", () => finish(resolve), { once: true });
+      audio.addEventListener("error", (event) => {
+        console.warn("[huddle.tts] audio element error", (event as Event & { message?: string }).message ?? "(no detail)");
+        finish(resolve);
+      }, { once: true });
       audio.addEventListener("pause", () => finish(resolve), { once: true });
     });
   } finally {
