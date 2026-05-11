@@ -256,6 +256,29 @@ describe("POST /api/live/frame", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  it("acknowledges (200) a frame against an unknown session instead of 404", async () => {
+    // Frames are best-effort: under Vercel autoscale a frame POST may
+    // land on a different Function instance than the engine. We drop
+    // silently rather than spam the console with a 404 for every
+    // dropped frame.
+    const frame: VideoFrameSnapshot = {
+      id: "f1",
+      capturedAt: new Date().toISOString(),
+      source: "screen-share",
+      width: 640,
+      height: 360,
+      dataUrl: "data:image/jpeg;base64,QUJD"
+    };
+    const res = await framePost(
+      jsonRequest("http://test.local/api/live/frame", { sessionId: "does-not-exist", frame })
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok?: boolean; dropped?: boolean; reason?: string };
+    expect(body.ok).toBe(true);
+    expect(body.dropped).toBe(true);
+    expect(body.reason).toBe("missing");
+  });
 });
 
 describe("POST /api/live/stop", () => {
