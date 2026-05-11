@@ -292,6 +292,15 @@ label {
 }
 
 .eyebrow {
+  /* Inline-flex so icon-prefixed eyebrows ("<icon> Label") get a real
+     gap between glyph and text. Text-only eyebrows degrade to a single
+     flex item with no visible side effect. The gap value lives on the
+     element as --eyebrow-icon-gap so descendant overrides stay in
+     sync without three sources of truth. */
+  --eyebrow-icon-gap: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eyebrow-icon-gap);
   margin: 0 0 0.15rem;
   color: #61dca3;
   text-transform: uppercase;
@@ -6363,13 +6372,14 @@ body:has(.huddle-app) {
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
+  /* Defers to the --eyebrow-icon-gap token from the base .eyebrow rule
+     so a single edit moves all icon/text spacing in lockstep. */
+  gap: var(--eyebrow-icon-gap);
 }
 
 .huddle-app .eyebrow > .icon {
   --icon-size: 0.85rem;
   flex-shrink: 0;
-  margin-right: 0.05rem;
 }
 
 .huddle-sidebar {
@@ -11790,7 +11800,8 @@ body {
 }
 
 .huddle-app.phase-pregame .pregame-hero .eyebrow {
-  display: block;
+  /* Inherit the inline-flex layout from the base .eyebrow rule so the
+     icon-prefix gap survives. The override here is just spacing. */
   margin-bottom: var(--hr-space-2);
 }
 
@@ -13137,11 +13148,13 @@ body {
   border-color: transparent !important;
 }
 
-/* Eyebrow standard — apply to every eyebrow once, drop overrides. */
+/* Eyebrow standard — apply to every eyebrow once, drop overrides.
+   Gap defers to the --eyebrow-icon-gap token defined on the base
+   .eyebrow rule so the spacing is centrally tunable. */
 .huddle-app .eyebrow {
   display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: var(--eyebrow-icon-gap);
   font-family: var(--hr-font-mono) !important;
   font-size: var(--hr-text-xxs) !important;
   font-weight: var(--hr-weight-medium) !important;
