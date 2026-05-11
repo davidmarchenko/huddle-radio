@@ -146,13 +146,12 @@ describe("startLiveSession", () => {
     // chunk, the snapshot + commentary (and the TTS audio attached
     // to commentary turns) would silently never reach onEvent —
     // exactly the symptom the user was seeing post-deploy.
-    let pushChunk: ((chunk: Uint8Array) => void) | null = null;
-    let closeStream: (() => void) | null = null;
+    const ctl: { push?: (chunk: Uint8Array) => void; close?: () => void } = {};
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        pushChunk = (chunk) => controller.enqueue(chunk);
-        closeStream = () => controller.close();
+        ctl.push = (chunk) => controller.enqueue(chunk);
+        ctl.close = () => controller.close();
       }
     });
     vi.stubGlobal(
@@ -172,13 +171,13 @@ describe("startLiveSession", () => {
     const handshake = `event: session-ready\ndata: ${JSON.stringify({ type: "session-ready", sessionId: "session-multi" })}\n\n`;
     const snapshot = `event: snapshot\ndata: ${JSON.stringify({ type: "snapshot", fantasy: {}, game: {}, health: [], providers: {} })}\n\n`;
     const commentary = `event: commentary\ndata: ${JSON.stringify({ type: "commentary", commentary: { id: "c1", text: "opener" } })}\n\n`;
-    pushChunk!(encoder.encode(handshake + snapshot + commentary));
+    ctl.push!(encoder.encode(handshake + snapshot + commentary));
     const handle = await sessionPromise;
     expect(handle).toBeDefined();
     // Wait for the drain loop's microtask to flush the post-handshake events.
     await new Promise((r) => setTimeout(r, 20));
     expect(events.map((e) => e.type)).toEqual(["snapshot", "commentary"]);
-    closeStream?.();
+    ctl.close?.();
   });
 
   it("dispatches typed SSE events through onEvent in JSON-parsed form", async () => {
