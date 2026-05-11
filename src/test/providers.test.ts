@@ -73,7 +73,7 @@ describe("demo providers", () => {
 });
 
 describe("commentary and TTS providers", () => {
-  it("local commentary produces multi-speaker dialogue rotating peers off the lead", async () => {
+  it("local commentary returns one full-thought turn led by the assigned host", async () => {
     const lines = await new LocalCommentaryProvider().draft({
       play: demoPlays[0],
       observation: { id: "obs", source: "stream-url", summary: "summary", confidence: 0.8, observedAt: new Date().toISOString(), latencyMs: 1 },
@@ -84,15 +84,44 @@ describe("commentary and TTS providers", () => {
       hostId: "theo",
       fallbackText: "fallback"
     });
-    // At minimum the lead's call, then a peer reactor — never one
-    // host monologuing. (Color line may be empty when no odds/markets
-    // are present, hence >= 2 instead of exactly 3.)
+    // Each turn = one host with the floor. Without a market swing or
+    // listener cue, the local fallback produces just the lead's turn —
+    // the architecture is "turns, not interruptions."
+    expect(lines.length).toBeGreaterThanOrEqual(1);
+    expect(lines[0].hostId).toBe("theo");
+    expect(lines[0].text.length).toBeGreaterThan(20);
+  });
+
+  it("local commentary adds a peer turn when a market swing is present", async () => {
+    const lines = await new LocalCommentaryProvider().draft({
+      play: demoPlays[0],
+      observation: { id: "obs", source: "stream-url", summary: "summary", confidence: 0.8, observedAt: new Date().toISOString(), latencyMs: 1 },
+      impacts: [],
+      group: { listener: { name: "Alex", rosterId: "roster-alex" }, tone: "pg", homeTeamBias: "balanced", friends: [{ id: "a", name: "Alex", favoriteTeam: "KC" }] },
+      news: [],
+      recentCommentary: [],
+      hostId: "theo",
+      marketSwing: {
+        market: {
+          source: "kalshi",
+          externalId: "k1",
+          sport: "nfl",
+          marketKind: "moneyline",
+          title: "Chiefs ML",
+          outcomeLabel: "Chiefs to win",
+          yesPriceCents: 64,
+          observedAt: new Date().toISOString()
+        },
+        deltaCents: 12,
+        direction: "warming"
+      },
+      fallbackText: "fallback"
+    });
     expect(lines.length).toBeGreaterThanOrEqual(2);
     expect(lines[0].hostId).toBe("theo");
-    // Subsequent line must route to one of the OTHER hosts; the whole
-    // point of the rewrite is to stop sounding like one person.
-    const peerHosts = lines.slice(1).map((l) => l.hostId);
-    expect(peerHosts.every((h) => h !== "theo")).toBe(true);
+    // Second turn routes to a different host so the listener hears
+    // the swing color from a fresh voice.
+    expect(lines[1].hostId).not.toBe("theo");
   });
 
   it("OpenAI commentary falls back to a single line when no API key is configured", async () => {

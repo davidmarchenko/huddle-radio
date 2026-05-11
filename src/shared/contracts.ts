@@ -379,6 +379,15 @@ export type TTSAudioChunk = {
   base64Audio?: string;
   isFinal: boolean;
   latencyMs: number;
+  /** Which turn in the multi-turn commentary this chunk belongs to (0-based).
+   *  The client uses this to swap the on-screen transcript to the
+   *  currently-spoken turn — so the listener never sees a turn that
+   *  hasn't started playing yet. Optional for backward compatibility
+   *  with mock/test providers that don't track turns. */
+  lineIndex?: number;
+  /** Host speaking this turn. Mirrors DialogueLine.hostId so the client
+   *  doesn't need to cross-reference the commentary object when rendering. */
+  lineHostId?: HostId;
 };
 
 export type ClientServerEvent =

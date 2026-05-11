@@ -112,7 +112,12 @@ async function* streamDialogueAudio(
     try {
       for await (const chunk of synthesize({ commentaryId, text: line.text, hostId: line.hostId })) {
         if (isStopped()) return;
-        lineState[lineIndex].chunks.push(chunk);
+        // Stamp every chunk with the turn it came from. The client
+        // swaps the on-screen transcript to whichever turn is being
+        // spoken, so it never shows a future turn the listener hasn't
+        // heard yet — fixes the "user sees the script" failure mode.
+        const annotated: TTSAudioChunk = { ...chunk, lineIndex, lineHostId: line.hostId };
+        lineState[lineIndex].chunks.push(annotated);
         ping();
       }
     } catch (error) {

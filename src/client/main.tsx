@@ -201,6 +201,28 @@ function App() {
   const [plays, setPlays] = useState<SportsPlay[]>([]);
   const [commentary, setCommentary] = useState<LivecastCommentary[]>([]);
   const [ttsLatencyByCommentary, setTtsLatencyByCommentary] = useState<Record<string, number>>({});
+  /** Which turn within each commentary is currently being spoken. Drives
+   *  the on-screen transcript so we never show a turn that hasn't
+   *  started playing — fixes the "user sees the script for unspoken
+   *  thoughts" problem. Key: commentary.id, value: lineIndex of the
+   *  active turn (the latest one whose audio has started). */
+  const [activeTurnByCommentary, setActiveTurnByCommentary] = useState<Record<string, number>>({});
+  // Pick the text the listener is hearing right now for a given
+  // commentary. Falls back to the first turn until audio starts (the
+  // server stamps every TTS chunk with its turn index; the dispatcher
+  // bumps activeTurnByCommentary as each turn's audio lands). Used by
+  // every surface that captions the show — the player card, the live
+  // rail, the feed rows — so nothing leaks a script of unspoken thoughts.
+  const displayedTurnText = useCallback(
+    (item: LivecastCommentary | undefined): string | undefined => {
+      if (!item) return undefined;
+      const turns = item.lines && item.lines.length > 0 ? item.lines : undefined;
+      if (!turns) return item.text;
+      const idx = Math.min(activeTurnByCommentary[item.id] ?? 0, turns.length - 1);
+      return turns[idx]?.text ?? item.text;
+    },
+    [activeTurnByCommentary]
+  );
   const [health, setHealth] = useState<ProviderHealth[]>([]);
   const [providers, setProviders] = useState<ActiveProviderSummary>(defaultProviderSummary);
   const [mediaManifest, setMediaManifest] = useState<MediaCacheManifest>();
@@ -714,6 +736,7 @@ function App() {
     setPlays([]);
     setCommentary([]);
     setTtsLatencyByCommentary({});
+    setActiveTurnByCommentary({});
     setLastObservation(undefined);
     setFrameCaptureStatus("Connecting frame capture");
 
@@ -835,6 +858,19 @@ function App() {
       if (message.type === "tts") {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
+        // Swap the on-screen transcript to the currently-spoken turn.
+        // Server stamps every chunk with its turn index; we just keep
+        // the highest one we've seen so re-renders never retract a
+        // turn that's already been shown.
+        if (typeof message.audio.lineIndex === "number") {
+          const lineIdx = message.audio.lineIndex;
+          const commId = message.audio.commentaryId;
+          setActiveTurnByCommentary((current) => {
+            const existing = current[commId] ?? -1;
+            if (lineIdx <= existing) return current;
+            return { ...current, [commId]: lineIdx };
+          });
+        }
         if (message.audio.base64Audio) {
           // W9: stash chunks for later clip archival. Mock TTS never
           // provides bytes, so this only fills for the real ElevenLabs
@@ -1134,6 +1170,7 @@ function App() {
     setCommentary([]);
     setPlays([]);
     setTtsLatencyByCommentary({});
+    setActiveTurnByCommentary({});
     setLastObservation(undefined);
     setFrameCaptureStatus("Livecast stopped.");
     setStatus("Stopped");
@@ -1177,6 +1214,7 @@ function App() {
     setPlays([]);
     setCommentary([]);
     setTtsLatencyByCommentary({});
+    setActiveTurnByCommentary({});
     void refreshSportsGames("demo");
     void refreshDiagnostics("demo");
   };
@@ -1448,6 +1486,7 @@ function App() {
     setCommentary([]);
     setPlays([]);
     setTtsLatencyByCommentary({});
+    setActiveTurnByCommentary({});
   };
 
   const openSetup = (pane: SetupPane = setupPane) => {
@@ -1819,7 +1858,7 @@ function App() {
                       <div className="cast-copy">
                         <span>{isLive ? "Now casting" : "Ready to cast"}</span>
                         <strong>{commentary[0]?.moment.headline ?? (game ? `${game.awayTeam} at ${game.homeTeam}` : "Demo watch party")}</strong>
-                        <p>{commentary[0]?.text ?? (isLive ? "Following play-by-play, stats, and fantasy swings in real time." : "Personalized audio commentary is staged and ready.")}</p>
+                        <p>{displayedTurnText(commentary[0]) ?? (isLive ? "Following play-by-play, stats, and fantasy swings in real time." : "Personalized audio commentary is staged and ready.")}</p>
                       </div>
                     </section>
                     <div className="cast-controls">
@@ -1864,6 +1903,7 @@ function App() {
             hasVideoSource={hasVideoSource}
             group={group}
             ttsEnabled={ttsEnabled}
+            displayedTurnText={displayedTurnText}
             onStart={startLivecast}
             onStop={stopLivecast}
             onValidate={validateFrameNow}
@@ -5408,6 +5448,7 @@ function LiveRail({
   hasVideoSource,
   group,
   ttsEnabled,
+  displayedTurnText,
   onStart,
   onStop,
   onValidate,
@@ -5427,6 +5468,9 @@ function LiveRail({
   hasVideoSource: boolean;
   group: GroupSettings;
   ttsEnabled: boolean;
+  /** Resolves a commentary item to the text the listener is hearing
+   *  right now — never a future turn's script. */
+  displayedTurnText: (item: LivecastCommentary | undefined) => string | undefined;
   onStart: () => void;
   onStop: () => void;
   onValidate: () => void;
@@ -5434,7 +5478,7 @@ function LiveRail({
   onDemo: () => void;
 }) {
   const latest = commentary[0];
-  const feedItems = buildLiveFeedItems({ game, plays, commentary, impacts: topImpacts, producerBrief });
+  const feedItems = buildLiveFeedItems({ game, plays, commentary, impacts: topImpacts, producerBrief, displayedTurnText });
   if (!isLive && commentary.length === 0) {
     return (
       <section className="setup-rail-card" data-mode={plan.mode}>
@@ -5493,7 +5537,7 @@ function LiveRail({
       <div className="rail-now">
         <span>{latest ? latest.moment.priority : "pregame"}</span>
         <strong>{latest?.moment.headline ?? "Pregame angle locked"}</strong>
-        <p>{latest?.text ?? producerBrief.lines[0] ?? "The host will mix play-by-play, fantasy impact, and group context."}</p>
+        <p>{displayedTurnText(latest) ?? producerBrief.lines[0] ?? "The host will mix play-by-play, fantasy impact, and group context."}</p>
       </div>
 
       <div className="moment-feed" aria-label="Moment by moment updates">
@@ -5527,13 +5571,15 @@ function buildLiveFeedItems({
   plays,
   commentary,
   impacts,
-  producerBrief
+  producerBrief,
+  displayedTurnText
 }: {
   game?: SportsGameState;
   plays: SportsPlay[];
   commentary: LivecastCommentary[];
   impacts: FantasyImpact[];
   producerBrief: ProducerBrief;
+  displayedTurnText: (item: LivecastCommentary | undefined) => string | undefined;
 }) {
   const items: Array<{ id: string; kind: string; title: string; body: string; meta?: string }> = [];
   if (game) {
@@ -5550,7 +5596,7 @@ function buildLiveFeedItems({
       id: `call-${item.id}`,
       kind: "Host",
       title: item.moment.headline,
-      body: item.moment.summary || item.text,
+      body: item.moment.summary || displayedTurnText(item) || item.text,
       meta: `${item.moment.priority} · ${item.latency.endToEndMs}ms`
     });
   });
@@ -5748,16 +5794,23 @@ function SetupGuide({
   );
 }
 
-function CommentaryCard({ item, ttsLatency }: { item: LivecastCommentary; ttsLatency?: number }) {
-  // Multi-speaker dialogue rendering: each line shows the speaker
-  // with their accent color so the visual rhythm matches the
-  // voice-switching audio. Falls back to the joined transcript if
-  // for some reason `lines` is empty (defensive — the engine never
-  // emits empty lines but old clients caching a pre-dialogue
-  // commentary shape would otherwise blank out).
-  const lines = item.lines && item.lines.length > 0
+function CommentaryCard({ item, ttsLatency, activeTurn }: { item: LivecastCommentary; ttsLatency?: number; activeTurn?: number }) {
+  // Multi-turn commentary, rendered as a single "now speaking" caption.
+  // We pick the turn whose audio is currently playing (server stamps
+  // every TTS chunk with its turn index; the dispatcher tracks the
+  // highest seen). This keeps the on-screen text in lockstep with
+  // what's actually being spoken — no scripts of unspoken thoughts,
+  // no overlap, no "simulation of brains." The audio is the
+  // experience; the caption mirrors it.
+  const turns = item.lines && item.lines.length > 0
     ? item.lines
     : [{ hostId: item.hostId, text: item.text }];
+  // Until the first TTS chunk lands (activeTurn undefined), preview
+  // the first turn so the card isn't blank. Once audio starts the
+  // dispatcher advances activeTurn through the turns in order.
+  const turnIndex = activeTurn !== undefined ? Math.min(activeTurn, turns.length - 1) : 0;
+  const turn = turns[turnIndex];
+  const persona = HOST_PERSONAS[turn.hostId];
   return (
     <article className="commentary-card" data-priority={item.moment.priority}>
       <div className="moment-banner">
@@ -5765,16 +5818,14 @@ function CommentaryCard({ item, ttsLatency }: { item: LivecastCommentary; ttsLat
         <strong>{item.moment.headline}</strong>
         <b>{item.moment.score}</b>
       </div>
-      <div className="commentary-dialogue">
-        {lines.map((line, index) => {
-          const persona = HOST_PERSONAS[line.hostId];
-          return (
-            <div className="commentary-dialogue__line" data-accent={persona.accent} key={`${item.id}-${index}`}>
-              <span className="commentary-dialogue__speaker">{persona.name}</span>
-              <p className="commentary-dialogue__text">{line.text}</p>
-            </div>
-          );
-        })}
+      <div className="commentary-monologue" data-accent={persona.accent}>
+        <span className="commentary-monologue__speaker">
+          {persona.name}
+          {turns.length > 1 && (
+            <span className="commentary-monologue__turn-count"> · turn {turnIndex + 1} of {turns.length}</span>
+          )}
+        </span>
+        <p className="commentary-monologue__text">{turn.text}</p>
       </div>
       <div className="metrics">
         <span>model {item.latency.modelResponseMs}ms</span>

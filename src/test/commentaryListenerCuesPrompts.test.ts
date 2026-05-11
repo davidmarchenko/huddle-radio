@@ -83,12 +83,12 @@ describe("buildCommentaryPayload listenerCues handling", () => {
 });
 
 describe("buildPlaySystemPrompt listenerCues directive", () => {
-  it("instructs the host to address one cue per turn without quoting verbatim", () => {
+  it("instructs the master writer to address one cue without quoting verbatim", () => {
     const prompt = buildPlaySystemPrompt(resolveHostPersona("maya"));
     expect(prompt).toMatch(/listenerCues/);
-    // Phrasing shifted with the multi-speaker rewrite — ONE host
-    // addresses ONE cue, never quotes verbatim, never lists cues.
-    expect(prompt).toMatch(/ONE host addresses ONE cue/);
+    // Phrasing shifted with the multi-turn rewrite — ONE turn (one host
+    // holding the floor) addresses ONE cue, never quotes verbatim, never lists cues.
+    expect(prompt).toMatch(/ONE turn addresses ONE cue/);
     expect(prompt).toMatch(/Don't quote verbatim/);
   });
 });

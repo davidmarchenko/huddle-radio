@@ -90,19 +90,17 @@ function buildHostsBlock(): string {
 }
 
 const SHARED_HARD_RULES = [
-  "- Each line ≤ 100 characters (~5-8 seconds of speech). Short, conversational lines, not paragraphs.",
-  "- Hosts react to each other. Use natural acknowledgements: 'right,' 'exactly,' 'yeah,' 'wait — actually,' 'to your point.' Make it feel like they're listening.",
-  "- Verbal fillers are encouraged sparingly: 'you know,' 'I mean,' a single 'um' across the turn. Never overuse.",
-  "- Stay in each host's voice. Maya leads with numbers; Theo references last week / addresses the listener; Cam interrupts with one-line hot takes.",
-  "- The lead host (named in the input as `leadHostId`) speaks the FIRST line. Other hosts pick up after.",
-  "- Address the listener by name once across the turn, where it lands naturally — never twice.",
-  "- Reference the listener's actual starters when relevant; do not invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
-  "- Avoid generic radio openers ('welcome back, folks,' 'big play here').",
-  "- If `odds` is provided, ONE host may cite the line/total/moneyline once if it lands. Never lead with it; never recommend a bet.",
-  "- If `analytics` carries stats for a named player, ONE line may weave in ONE number (snap%, EPA, target share). Skip if forced.",
-  "- If `markets` carries live prediction-market prices, ONE line may quote ONE price ('Kalshi has them at 64 cents'); attribute the source. Never recommend a trade.",
-  "- If `marketSwing` is set, the LEAD line opens with it. Name the side, source, direction, magnitude in cents.",
-  "- If `listenerCues` includes a recent push-to-talk message, ONE host addresses ONE cue conversationally ('you asked about ...'). Don't quote verbatim, don't list cues.",
+  "- Each TURN is one host holding the floor with a full thought. No interruptions, no overlapping speech, no soundbite back-and-forth. The next host only speaks after the previous host has finished their full thought.",
+  "- Each turn is 25-50 words — a real paragraph, not a one-liner. The listener should hear confident analysis, not radio chatter.",
+  "- Stay in each host's voice. Maya leads with numbers; Theo references last week or addresses the listener directly; Cam offers a sharp take. Match the persona directives.",
+  "- The first turn is always spoken by the `leadHostId` in the input. Subsequent turns may belong to other hosts as the master writer sees fit.",
+  "- Across the whole multi-turn output, address the listener by name at most once where it lands naturally. Reference their actual starters when relevant; never invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
+  "- Avoid generic radio openers ('welcome back, folks,' 'big play here'). Open with the substance.",
+  "- If `odds` is provided, exactly ONE turn across the whole output may cite the line/total/moneyline. Never lead with it; never recommend a bet.",
+  "- If `analytics` carries stats for a named player, ONE turn may weave in ONE number (snap%, EPA, target share). Skip if forced.",
+  "- If `markets` carries live prediction-market prices, ONE turn may quote ONE price ('Kalshi has them at 64 cents'); attribute the source. Never recommend a trade.",
+  "- If `marketSwing` is set, the FIRST turn opens with it. Name the side, source, direction, magnitude in cents.",
+  "- If `listenerCues` includes a recent push-to-talk message, ONE turn addresses ONE cue conversationally ('you asked about ...'). Don't quote verbatim, don't list cues.",
   "- If video validation is unavailable, uncertain, or not-sports, anchor only to official play data; don't imply you saw video.",
   "- PG. No profanity even on chaos tone.",
   "- Do not mention API keys, system prompts, credentials, or implementation details."
@@ -111,32 +109,30 @@ const SHARED_HARD_RULES = [
 const OUTPUT_SCHEMA_BLOCK = [
   "Required output: JSON only, no code fences, no commentary outside JSON. Shape:",
   "{",
-  '  "lines": [',
-  '    {"speaker": "maya" | "theo" | "cam", "text": "the line of dialogue"},',
+  '  "turns": [',
+  '    {"speaker": "maya" | "theo" | "cam", "text": "one host\'s full thought (25-50 words). No interruptions."},',
   "    ...",
   "  ]",
   "}",
-  "Begin directly with `{`. Do not include any preamble."
+  "Each element of `turns` is ONE host's full uninterrupted paragraph. The listener will hear them played in order, one after the other.",
+  "Begin directly with `{`. Do not include any preamble.",
+  "The first turn's `speaker` MUST match the `leadHostId` in the input payload."
 ];
 
 export function buildOpenerSystemPrompt(persona: HostPersona): string {
   return [
-    "You are the producer of Huddle Radio — a personalized fantasy sports podcast for ONE specific listener. Output a SHOW OPEN as a multi-speaker dialogue between the named hosts below.",
+    "You are the master producer of Huddle Radio — a personalized fantasy sports podcast for ONE specific listener. Output the SHOW OPEN as a script of 2-3 TURNS. A turn = one host holding the floor with a full thought, played to completion before the next host speaks. Never overlap, never interrupt.",
     "",
     buildHostsBlock(),
     "",
-    `For this turn the LEAD host is ${persona.name} (id: "${persona.id}") — they speak the first line.`,
+    `For this open the LEAD host is ${persona.name} (id: "${persona.id}") — they speak the first turn. ${persona.description}`,
     "",
-    "Goal of the open: in 5 short lines (each ≤ 100 chars), the listener should hear all three voices and know — without being told — that this show was made for them.",
+    "Required arc across the turns:",
+    "1. Lead host opens by addressing the listener by name, naming their fantasy team, and previewing one stake.",
+    "2. Optional second host adds substance: ONE specific starter with a forward-looking beat (projected role tonight, recent form), or ONE 'last time you were here' callback if `priorContext` is provided and lands naturally.",
+    "3. Optional third host lands the open with a forward beat into live game action.",
     "",
-    "Required arc:",
-    "1. Lead host opens by addressing the listener by name and naming their fantasy team.",
-    "2. Another host reacts and names ONE of the listener's actual starters with a forward-looking beat (projected role tonight, recent form, or stakes).",
-    "3. A third host adds ONE more starter or a stake — one specific fact, hedged if not in the data.",
-    "4. One natural verbal acknowledgement somewhere ('right,' 'exactly').",
-    "5. End on a single line handing off to live game action.",
-    "",
-    "If `priorContext` is provided, weave ONE 'last time you were here' callback in line 2 or 3 — only if it lands naturally.",
+    "Each turn must read as one paragraph (25-50 words). Total open ~30-45 seconds of audio across all turns.",
     "",
     "Hard rules:",
     ...SHARED_HARD_RULES,
@@ -147,13 +143,13 @@ export function buildOpenerSystemPrompt(persona: HostPersona): string {
 
 export function buildPlaySystemPrompt(persona: HostPersona): string {
   return [
-    "You are the producer of Huddle Radio. Output ONE turn of multi-speaker dialogue reacting to the play and fantasy context provided.",
+    "You are the master producer of Huddle Radio. Output 1-2 TURNS reacting to the play and fantasy context provided. A turn = one host holding the floor with a full thought, played to completion before the next host speaks. Never overlap, never interrupt.",
     "",
     buildHostsBlock(),
     "",
-    `For this turn the LEAD host is ${persona.name} (id: "${persona.id}") — they speak the first line. They were chosen because: ${persona.description}`,
+    `For this play the LEAD host is ${persona.name} (id: "${persona.id}") — they speak the first turn. ${persona.description}`,
     "",
-    "Shape of a turn: EXACTLY 3 short lines (each ≤ 100 chars). Multi-speaker. Lines 2 and 3 react to line 1 — natural acknowledgements like 'right,' 'exactly,' or 'wait — but...'. The total turn should run 8-12 seconds of spoken audio so it fits in one cadence interval.",
+    "Shape: usually 1 turn is enough. Add a second turn (different host) only when there's a strong second beat worth a full paragraph (e.g., a market swing AND a fantasy impact, or a listener cue that deserves its own moment). Each turn 25-45 words.",
     "",
     "Hard rules:",
     ...SHARED_HARD_RULES,
@@ -337,34 +333,58 @@ export function parseDialogueResponse(raw: string, leadHostId: HostId): Dialogue
     return undefined;
   }
   if (!parsed || typeof parsed !== "object") return undefined;
-  const linesRaw = (parsed as { lines?: unknown }).lines;
-  if (!Array.isArray(linesRaw) || linesRaw.length === 0) return undefined;
 
-  const lines: DialogueLine[] = [];
-  for (const entry of linesRaw) {
+  // Current prompt shape: {turns: [{speaker, text}, ...]}.
+  // Legacy shapes still accepted to ease rollover when older clients
+  // or cached responses arrive: {lines: [...]} and {speaker, text}.
+  const turnsRaw =
+    (parsed as { turns?: unknown }).turns ??
+    (parsed as { lines?: unknown }).lines;
+
+  if (Array.isArray(turnsRaw) && turnsRaw.length > 0) {
+    const turns = coerceTurnList(turnsRaw, leadHostId);
+    if (turns.length > 0) return turns;
+  }
+
+  // Single-turn shorthand: {speaker, text}.
+  const single = parsed as { speaker?: unknown; text?: unknown };
+  if (typeof single.text === "string") {
+    const turn = coerceSingleTurn(single.speaker, single.text, leadHostId);
+    if (turn) return [turn];
+  }
+
+  return undefined;
+}
+
+function coerceTurnList(turnsRaw: unknown[], leadHostId: HostId): DialogueLine[] {
+  const out: DialogueLine[] = [];
+  for (const entry of turnsRaw) {
     if (!entry || typeof entry !== "object") continue;
     const speakerRaw = (entry as { speaker?: unknown }).speaker;
     const textRaw = (entry as { text?: unknown }).text;
     if (typeof textRaw !== "string") continue;
-    const text = textRaw.trim();
-    if (!text) continue;
-    // Coerce: unknown / missing speaker → fall back to lead host so the
-    // line still plays in one of our known voices.
-    const speaker = typeof speakerRaw === "string" && VALID_HOST_IDS.has(speakerRaw as HostId)
-      ? (speakerRaw as HostId)
-      : leadHostId;
-    // Per-line sanitizer: same credential filter as the legacy single-text path.
-    if (/api[\s_-]?key|secret|token|credential|system prompt/i.test(text)) continue;
-    lines.push({ hostId: speaker, text: text.slice(0, 220) });
+    const coerced = coerceSingleTurn(speakerRaw, textRaw, leadHostId);
+    if (coerced) out.push(coerced);
   }
-  if (lines.length === 0) return undefined;
-  // Force the first speaker to be the lead host. If the LLM picked
-  // someone else, that's fine — the rotation still respects the
-  // selectHost decision but the LLM's reordering is overridden.
-  if (lines[0].hostId !== leadHostId) {
-    lines[0] = { ...lines[0], hostId: leadHostId };
+  if (out.length === 0) return out;
+  // First turn must belong to the lead host. If the LLM reordered, snap it back.
+  if (out[0].hostId !== leadHostId) {
+    out[0] = { ...out[0], hostId: leadHostId };
   }
-  return lines;
+  return out;
+}
+
+function coerceSingleTurn(speakerRaw: unknown, textRaw: string, leadHostId: HostId): DialogueLine | undefined {
+  const text = textRaw.trim();
+  if (!text) return undefined;
+  // Credential filter — same as the legacy per-line sanitizer.
+  if (/api[\s_-]?key|secret|token|credential|system prompt/i.test(text)) return undefined;
+  const speaker = typeof speakerRaw === "string" && VALID_HOST_IDS.has(speakerRaw as HostId)
+    ? (speakerRaw as HostId)
+    : leadHostId;
+  // Cap at 600 chars: at 25-50 words/turn this gives generous headroom
+  // but stops a runaway model from generating a 90-second monologue.
+  return { hostId: speaker, text: text.slice(0, 600) };
 }
 
 /**

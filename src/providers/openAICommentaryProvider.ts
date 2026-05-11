@@ -62,21 +62,16 @@ export class LocalCommentaryProvider implements CommentaryProvider {
 }
 
 /**
- * Deterministic multi-speaker dialogue used when every LLM in the chain
- * is unavailable (quota, network, missing keys). Three short lines that
- * rotate the lead host, a contextual color line, and a reactor — so the
- * show still feels like a two-or-three person podcast instead of one
- * person monologuing.
- *
- * The contracts are intentionally narrow: never quotes raw input verbatim
- * (would let upstream junk leak into TTS), routes the second/third lines
- * to peers of the lead (rotation feels conversational), and pulls color
- * from whichever signal happens to be richest this turn (odds, markets,
- * fantasy impact, listener cue). The fallbackText is always a viable
- * single-line replacement if every signal is empty.
+ * Deterministic multi-turn dialogue used when every LLM in the chain
+ * is unavailable (quota, network, missing keys). Produces 1-2 full-thought
+ * turns: the lead host holds the floor with the substance (play call +
+ * one color beat + forward-looking landing), and a peer optionally adds
+ * a second full thought when there's a strong secondary signal worth a
+ * paragraph. Each turn is a complete paragraph spoken without
+ * interruption — same contract as the LLM, just deterministic content.
  */
 function buildLocalDialogue(input: CommentaryDraftInput, leadHostId: HostId): DialogueLine[] {
-  const peers = pickPeers(leadHostId);
+  const peerHostId = pickPeer(leadHostId);
   const listenerName = input.group.listener.name;
   const kind = input.kind ?? "play";
 
@@ -88,36 +83,58 @@ function buildLocalDialogue(input: CommentaryDraftInput, leadHostId: HostId): Di
       .join(" and ");
     const matchupBlurb = describeMatchup(input);
     const oddsBlurb = describeOdds(input);
-    const lines: DialogueLine[] = [
-      { hostId: leadHostId, text: clip(`${listenerName}, welcome in. ${team} is rolling${starterSummary ? ` with ${starterSummary}` : ""}.`) },
-      { hostId: peers[0], text: clip(matchupBlurb || "We've got a live one ahead — let's get into it.") }
-    ];
-    if (oddsBlurb) lines.push({ hostId: peers[1], text: clip(oddsBlurb) });
-    return lines;
+    const leadTurn = clip(
+      [
+        `${listenerName}, welcome in.`,
+        `${team} is rolling${starterSummary ? ` with ${starterSummary}` : ""}.`,
+        matchupBlurb,
+        "Let's get into it."
+      ].filter(Boolean).join(" ")
+    );
+    const turns: DialogueLine[] = [{ hostId: leadHostId, text: leadTurn }];
+    if (oddsBlurb) {
+      turns.push({ hostId: peerHostId, text: clip(`${oddsBlurb} We're tracking it across the whole show.`) });
+    }
+    return turns;
   }
 
-  // Play turn. Lead does the call, peer 1 adds color, peer 2 reacts.
-  const callBlurb = describePlay(input);
-  const colorBlurb = pickColorLine(input);
-  const reactorBlurb = pickReactor(input, listenerName);
+  // Play turn: lead host gets the substance (call + color + landing) as
+  // ONE full thought. Peer adds a second turn only when there's a
+  // genuinely meaningful market swing or listener cue worth a paragraph.
+  const call = describePlay(input);
+  const color = pickColorLine(input);
+  const reactor = pickReactor(input, listenerName);
+  const leadParagraph = [call, color, reactor].filter(Boolean).join(" ");
+  if (!leadParagraph) return [];
+  const turns: DialogueLine[] = [{ hostId: leadHostId, text: clip(leadParagraph) }];
 
-  const lines: DialogueLine[] = [];
-  if (callBlurb) lines.push({ hostId: leadHostId, text: clip(callBlurb) });
-  if (colorBlurb) lines.push({ hostId: peers[0], text: clip(colorBlurb) });
-  if (reactorBlurb) lines.push({ hostId: peers[1], text: clip(reactorBlurb) });
-  return lines;
+  // Second turn — only fires when a market swing or listener cue is
+  // present. Otherwise we stay with one turn; padding for the sake of
+  // multi-host coverage is what made the show feel chatty.
+  if (input.marketSwing) {
+    const dir = input.marketSwing.direction === "warming" ? "warming up" : "cooling off";
+    turns.push({
+      hostId: peerHostId,
+      text: clip(`That market move is real — ${input.marketSwing.market.title} ${dir} ${Math.abs(input.marketSwing.deltaCents)} cents on the move. Worth watching the rest of the drive.`)
+    });
+  } else if (input.listenerCues && input.listenerCues.length > 0) {
+    turns.push({
+      hostId: peerHostId,
+      text: clip(`Quick callback to what you asked — we're tracking that thread and will weigh in once the next series settles.`)
+    });
+  }
+  return turns;
 }
 
 const HOST_ORDER: HostId[] = ["theo", "maya", "cam"];
-
-function pickPeers(lead: HostId): [HostId, HostId] {
+function pickPeer(lead: HostId): HostId {
   const idx = HOST_ORDER.indexOf(lead);
-  return [HOST_ORDER[(idx + 1) % 3], HOST_ORDER[(idx + 2) % 3]];
+  return HOST_ORDER[(idx + 1) % HOST_ORDER.length];
 }
 
 function clip(text: string): string {
   const cleaned = text.replace(/\s+/g, " ").trim();
-  return cleaned.length > 180 ? `${cleaned.slice(0, 177)}...` : cleaned;
+  return cleaned.length > 600 ? `${cleaned.slice(0, 597)}...` : cleaned;
 }
 
 function describeMatchup(input: CommentaryDraftInput): string {
