@@ -142,7 +142,10 @@ function App() {
   // playback keeps pace with commentary generation. Listener can dial
   // faster (3s) or slower (15s) via the cadence slider; tighter than
   // ~6s starts queuing audio because each turn is ~8-12s of speech.
-  const [cadenceSeconds, setCadenceSeconds] = useState(persisted.cadenceSeconds ?? 10);
+  // 25s default: each tick produces 2-3 multi-host turns via
+  // Text-to-Dialogue (~20-30s of audio). Anything tighter overlaps
+  // the next tick on top of the previous audio.
+  const [cadenceSeconds, setCadenceSeconds] = useState(persisted.cadenceSeconds ?? 25);
   const [videoMode, setVideoMode] = useState<VideoMode>(persisted.videoMode ?? "stream-url");
   const [videoUrl, setVideoUrl] = useState(persisted.videoUrl ?? "");
   const [videoNotice, setVideoNotice] = useState(() => initialVideoNotice(persisted.videoUrl));
@@ -201,27 +204,15 @@ function App() {
   const [plays, setPlays] = useState<SportsPlay[]>([]);
   const [commentary, setCommentary] = useState<LivecastCommentary[]>([]);
   const [ttsLatencyByCommentary, setTtsLatencyByCommentary] = useState<Record<string, number>>({});
-  /** Which turn within each commentary is currently being spoken. Drives
-   *  the on-screen transcript so we never show a turn that hasn't
-   *  started playing — fixes the "user sees the script for unspoken
-   *  thoughts" problem. Key: commentary.id, value: lineIndex of the
-   *  active turn (the latest one whose audio has started). */
-  const [activeTurnByCommentary, setActiveTurnByCommentary] = useState<Record<string, number>>({});
-  // Pick the text the listener is hearing right now for a given
-  // commentary. Falls back to the first turn until audio starts (the
-  // server stamps every TTS chunk with its turn index; the dispatcher
-  // bumps activeTurnByCommentary as each turn's audio lands). Used by
-  // every surface that captions the show — the player card, the live
-  // rail, the feed rows — so nothing leaks a script of unspoken thoughts.
+  // ElevenLabs Text-to-Dialogue returns ONE seamless MP3 per turn-set —
+  // we don't get per-turn timing on the way out, so progressive reveal
+  // would just be guessing. The caption is the full joined transcript;
+  // the audio is the experience. Kept as a helper so the call sites
+  // stay symmetric with a future timestamps-based reveal (T2D has a
+  // timestamps variant we can swap in without touching consumers).
   const displayedTurnText = useCallback(
-    (item: LivecastCommentary | undefined): string | undefined => {
-      if (!item) return undefined;
-      const turns = item.lines && item.lines.length > 0 ? item.lines : undefined;
-      if (!turns) return item.text;
-      const idx = Math.min(activeTurnByCommentary[item.id] ?? 0, turns.length - 1);
-      return turns[idx]?.text ?? item.text;
-    },
-    [activeTurnByCommentary]
+    (item: LivecastCommentary | undefined): string | undefined => item?.text,
+    []
   );
   const [health, setHealth] = useState<ProviderHealth[]>([]);
   const [providers, setProviders] = useState<ActiveProviderSummary>(defaultProviderSummary);
@@ -736,7 +727,6 @@ function App() {
     setPlays([]);
     setCommentary([]);
     setTtsLatencyByCommentary({});
-    setActiveTurnByCommentary({});
     setLastObservation(undefined);
     setFrameCaptureStatus("Connecting frame capture");
 
@@ -858,19 +848,6 @@ function App() {
       if (message.type === "tts") {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
-        // Swap the on-screen transcript to the currently-spoken turn.
-        // Server stamps every chunk with its turn index; we just keep
-        // the highest one we've seen so re-renders never retract a
-        // turn that's already been shown.
-        if (typeof message.audio.lineIndex === "number") {
-          const lineIdx = message.audio.lineIndex;
-          const commId = message.audio.commentaryId;
-          setActiveTurnByCommentary((current) => {
-            const existing = current[commId] ?? -1;
-            if (lineIdx <= existing) return current;
-            return { ...current, [commId]: lineIdx };
-          });
-        }
         if (message.audio.base64Audio) {
           // W9: stash chunks for later clip archival. Mock TTS never
           // provides bytes, so this only fills for the real ElevenLabs
@@ -1170,7 +1147,6 @@ function App() {
     setCommentary([]);
     setPlays([]);
     setTtsLatencyByCommentary({});
-    setActiveTurnByCommentary({});
     setLastObservation(undefined);
     setFrameCaptureStatus("Livecast stopped.");
     setStatus("Stopped");
@@ -1214,7 +1190,6 @@ function App() {
     setPlays([]);
     setCommentary([]);
     setTtsLatencyByCommentary({});
-    setActiveTurnByCommentary({});
     void refreshSportsGames("demo");
     void refreshDiagnostics("demo");
   };
@@ -1486,7 +1461,6 @@ function App() {
     setCommentary([]);
     setPlays([]);
     setTtsLatencyByCommentary({});
-    setActiveTurnByCommentary({});
   };
 
   const openSetup = (pane: SetupPane = setupPane) => {
@@ -2203,7 +2177,7 @@ function App() {
               </label>
               <label>
                 Commentary cadence
-                <input type="range" min="3" max="15" value={cadenceSeconds} onChange={(event) => setCadenceSeconds(Number(event.target.value))} />
+                <input type="range" min="10" max="45" value={cadenceSeconds} onChange={(event) => setCadenceSeconds(Number(event.target.value))} />
                 <span className="hint">{cadenceSeconds}s between calls</span>
               </label>
               <label>
@@ -5794,23 +5768,14 @@ function SetupGuide({
   );
 }
 
-function CommentaryCard({ item, ttsLatency, activeTurn }: { item: LivecastCommentary; ttsLatency?: number; activeTurn?: number }) {
-  // Multi-turn commentary, rendered as a single "now speaking" caption.
-  // We pick the turn whose audio is currently playing (server stamps
-  // every TTS chunk with its turn index; the dispatcher tracks the
-  // highest seen). This keeps the on-screen text in lockstep with
-  // what's actually being spoken — no scripts of unspoken thoughts,
-  // no overlap, no "simulation of brains." The audio is the
-  // experience; the caption mirrors it.
-  const turns = item.lines && item.lines.length > 0
-    ? item.lines
-    : [{ hostId: item.hostId, text: item.text }];
-  // Until the first TTS chunk lands (activeTurn undefined), preview
-  // the first turn so the card isn't blank. Once audio starts the
-  // dispatcher advances activeTurn through the turns in order.
-  const turnIndex = activeTurn !== undefined ? Math.min(activeTurn, turns.length - 1) : 0;
-  const turn = turns[turnIndex];
-  const persona = HOST_PERSONAS[turn.hostId];
+function CommentaryCard({ item, ttsLatency }: { item: LivecastCommentary; ttsLatency?: number }) {
+  // Text-to-Dialogue plays the full multi-host turn-set as one seamless
+  // audio asset. We can't reliably know which turn is being spoken
+  // without timestamps, so the card just shows the full transcript
+  // with the lead host's accent and a "& crew" tag. Future: switch to
+  // T2D's timestamps variant and re-introduce a "now speaking" highlight.
+  const lead = HOST_PERSONAS[item.hostId];
+  const hasCrew = (item.lines?.length ?? 0) > 1;
   return (
     <article className="commentary-card" data-priority={item.moment.priority}>
       <div className="moment-banner">
@@ -5818,14 +5783,12 @@ function CommentaryCard({ item, ttsLatency, activeTurn }: { item: LivecastCommen
         <strong>{item.moment.headline}</strong>
         <b>{item.moment.score}</b>
       </div>
-      <div className="commentary-monologue" data-accent={persona.accent}>
+      <div className="commentary-monologue" data-accent={lead.accent}>
         <span className="commentary-monologue__speaker">
-          {persona.name}
-          {turns.length > 1 && (
-            <span className="commentary-monologue__turn-count"> · turn {turnIndex + 1} of {turns.length}</span>
-          )}
+          {lead.name}
+          {hasCrew && <span className="commentary-monologue__turn-count"> & crew</span>}
         </span>
-        <p className="commentary-monologue__text">{turn.text}</p>
+        <p className="commentary-monologue__text">{item.text}</p>
       </div>
       <div className="metrics">
         <span>model {item.latency.modelResponseMs}ms</span>

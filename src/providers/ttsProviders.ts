@@ -264,6 +264,90 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     };
   }
 
+  /**
+   * Purpose-built multi-speaker generation via ElevenLabs Text-to-Dialogue
+   * (`POST /v1/text-to-dialogue`). One call returns one seamless MP3 with
+   * natural turn-taking, pacing, and (with audio tags) emotional delivery
+   * across all hosts — exactly what makes this feel like a real podcast
+   * instead of a sequence of robot-spliced voice clips.
+   *
+   * Forces `eleven_v3` regardless of the instance's configured model
+   * because T2D ONLY supports v3 — the older flash / multilingual models
+   * are 404'd on this endpoint. Falls back to a single retry on 429.
+   * Throws on any other failure so the caller's chain logger fires.
+   */
+  async synthesizeDialogue(input: {
+    commentaryId: string;
+    turns: Array<{ text: string; hostId?: HostId }>;
+  }): Promise<TTSAudioChunk> {
+    if (!this.apiKey) {
+      throw new Error("ELEVENLABS_API_KEY is required for text-to-dialogue.");
+    }
+    const start = performance.now();
+    const inputs = input.turns.map((turn) => ({
+      text: turn.text,
+      voice_id: this.resolveVoiceId(turn.hostId)
+    }));
+    const body = JSON.stringify({
+      inputs,
+      // T2D is v3-only; the model id on this provider may be flash_v2_5
+      // for the streaming WS path, but for dialogue we must hit v3.
+      model_id: "eleven_v3",
+      output_format: "mp3_44100_128"
+    });
+
+    const MAX_ATTEMPTS = 3;
+    let response: Response | undefined;
+    let lastDetail = "";
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      response = await fetch("https://api.elevenlabs.io/v1/text-to-dialogue", {
+        method: "POST",
+        headers: {
+          "xi-api-key": this.apiKey,
+          "content-type": "application/json",
+          accept: "audio/mpeg"
+        },
+        body
+      });
+      if (response.ok) break;
+      if (response.status !== 429) {
+        let detail = `HTTP ${response.status}`;
+        try {
+          const text = await response.text();
+          if (text) detail = `${detail}: ${text.slice(0, 200)}`;
+        } catch {
+          /* body unreadable */
+        }
+        throw new Error(`ElevenLabs Text-to-Dialogue failed: ${detail}`);
+      }
+      // 429 path — same retry shape as the HTTP TTS fallback so backoff
+      // behavior is uniform across both endpoints.
+      try { lastDetail = (await response.text()).slice(0, 200); } catch { /* body unreadable */ }
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterMs = retryAfterHeader && /^\d+(\.\d+)?$/.test(retryAfterHeader)
+        ? Math.min(Number(retryAfterHeader) * 1000, 8000)
+        : Math.min(500 * 2 ** attempt + Math.random() * 200, 6000);
+      if (attempt === MAX_ATTEMPTS - 1) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, retryAfterMs));
+    }
+    if (!response || !response.ok) {
+      throw new Error(
+        `ElevenLabs Text-to-Dialogue failed: HTTP ${response?.status ?? "unknown"}${lastDetail ? `: ${lastDetail}` : ""}`
+      );
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString("base64");
+    return {
+      id: crypto.randomUUID(),
+      commentaryId: input.commentaryId,
+      provider: this.id,
+      mimeType: "audio/mpeg",
+      base64Audio: base64,
+      isFinal: true,
+      latencyMs: Math.round(performance.now() - start)
+    };
+  }
+
   async health(): Promise<ProviderHealth> {
     const transport = this.modelId === "eleven_v3" || this.modelId.startsWith("eleven_v3_") ? "HTTP" : "WebSocket";
     return {
@@ -271,7 +355,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
       label: "ElevenLabs TTS",
       status: this.apiKey ? "ready" : "disabled",
       detail: this.apiKey
-        ? `Configured for ${transport} streaming TTS with ${this.modelId}.${this.perHostVoiceSummary()}`
+        ? `Configured for ${transport} streaming TTS with ${this.modelId}; multi-turn falls back to v3 Text-to-Dialogue.${this.perHostVoiceSummary()}`
         : "Set ELEVENLABS_API_KEY to enable streaming TTS."
     };
   }

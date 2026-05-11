@@ -621,5 +621,17 @@ export interface TTSProvider {
    * support per-host voices ignore it.
    */
   synthesize(input: { commentaryId: string; text: string; hostId?: HostId }): AsyncIterable<TTSAudioChunk>;
+  /**
+   * Optional purpose-built multi-speaker generation. When implemented,
+   * the engine sends ALL turns in a single call and gets back one
+   * seamless audio asset with natural turn-taking + pacing handled by
+   * the model (ElevenLabs Text-to-Dialogue). Providers without this
+   * capability omit the method and the engine falls back to per-line
+   * `synthesize` calls.
+   */
+  synthesizeDialogue?(input: {
+    commentaryId: string;
+    turns: Array<{ text: string; hostId?: HostId }>;
+  }): Promise<TTSAudioChunk>;
   health(): Promise<ProviderHealth>;
 }

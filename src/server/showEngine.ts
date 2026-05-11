@@ -84,6 +84,59 @@ export type ShowEngineLogger = {
  * N+1's already-buffered chunks the instant N completes — minimal
  * gap between speakers, no head-of-line blocking.
  */
+/**
+ * Pick the right TTS strategy for a multi-turn commentary.
+ *
+ * - 2+ turns AND the provider exposes `synthesizeDialogue` → one
+ *   ElevenLabs Text-to-Dialogue call returns a SINGLE seamless MP3
+ *   with natural turn-taking handled by the model. Yields one chunk.
+ *   This is the entertainment path — what listeners actually want.
+ *
+ * - Single-turn OR provider lacks dialogue support (mock, older
+ *   instance) → existing per-line WebSocket streaming via
+ *   `streamDialogueAudio`. Same head-of-line drain as before.
+ *
+ * On T2D failure, falls back to the per-line path so a transient
+ * dialogue endpoint failure (rate limit, 500, model rejection) still
+ * gets the listener audio. The fallback path is logged so operators
+ * can see when the entertainment path is degrading.
+ */
+async function* selectTTSStrategy(
+  lines: DialogueLine[],
+  commentaryId: string,
+  ttsProvider: {
+    synthesize: (input: { commentaryId: string; text: string; hostId?: HostId }) => AsyncIterable<TTSAudioChunk>;
+    synthesizeDialogue?: (input: {
+      commentaryId: string;
+      turns: Array<{ text: string; hostId?: HostId }>;
+    }) => Promise<TTSAudioChunk>;
+  },
+  isStopped: () => boolean,
+  logger: ShowEngineLogger
+): AsyncGenerator<TTSAudioChunk> {
+  if (lines.length >= 2 && ttsProvider.synthesizeDialogue) {
+    try {
+      const chunk = await ttsProvider.synthesizeDialogue({
+        commentaryId,
+        turns: lines.map((line) => ({ text: line.text, hostId: line.hostId }))
+      });
+      if (!isStopped()) yield chunk;
+      return;
+    } catch (error) {
+      logger.warn(
+        {
+          commentaryId,
+          turnCount: lines.length,
+          err: error instanceof Error ? error.message : String(error)
+        },
+        "Text-to-Dialogue failed — falling back to per-turn streaming"
+      );
+      // Fall through to per-line streaming below.
+    }
+  }
+  yield* streamDialogueAudio(lines, commentaryId, ttsProvider.synthesize, isStopped, logger);
+}
+
 async function* streamDialogueAudio(
   lines: DialogueLine[],
   commentaryId: string,
@@ -341,7 +394,17 @@ export class ShowEngine {
         return budget.isTtsDegraded()
           ? mockTtsProvider.synthesize(input)
           : realTtsProvider.synthesize(input);
-      }
+      },
+      // Forward multi-speaker dialogue calls to the real provider when
+      // it supports them AND we aren't budget-degraded. Mock has no
+      // dialogue path; selectTTSStrategy falls back to per-line.
+      synthesizeDialogue:
+        !budget.isTtsDegraded() && realTtsProvider instanceof ElevenLabsTTSProvider
+          ? (input: Parameters<ElevenLabsTTSProvider["synthesizeDialogue"]>[0]) => {
+              incrementCounter("ttsRequests");
+              return realTtsProvider.synthesizeDialogue(input);
+            }
+          : undefined
     };
 
     try {
@@ -522,10 +585,10 @@ export class ShowEngine {
           // emitted in line order via streamDialogueAudio. First
           // audio reaches the listener in ~300ms (flash WS first
           // byte) regardless of how many lines the opener has.
-          for await (const audio of streamDialogueAudio(
+          for await (const audio of selectTTSStrategy(
             openerLines,
             opener.id,
-            (input) => ttsProvider.synthesize(input),
+            ttsProvider,
             () => this.stopped,
             this.logger
           )) {
@@ -784,10 +847,10 @@ export class ShowEngine {
             }
             // Per-line streaming TTS, parallelized across lines but
             // emitted in line order via streamDialogueAudio.
-            for await (const audio of streamDialogueAudio(
+            for await (const audio of selectTTSStrategy(
               commentary.lines,
               commentary.id,
-              (input) => ttsProvider.synthesize(input),
+              ttsProvider,
               () => this.stopped,
               this.logger
             )) {
@@ -825,12 +888,13 @@ export class ShowEngine {
       if (!this.stopped) {
         this.tickTimer = setInterval(() => {
           void tick();
-        // 10s tick default lines up with the multi-speaker turn shape:
-        // ~3 dialogue lines × ~3s of audio each = 8-12s of speech per
-        // turn. A shorter cadence overlaps audio across turns and the
-        // queue grows unbounded; a longer one feels slow. Listeners
-        // can still bias faster/slower via cadenceMs in the request.
-        }, request.cadenceMs ?? 10000);
+        // 25s tick default lines up with the Text-to-Dialogue turn shape:
+        // 2-3 turns × ~30-60 words each = ~20-30s of speech per tick,
+        // plus a beat for the audio asset to generate (~2-5s) and a
+        // small breathing-room buffer. Shorter cadences overlap audio
+        // across ticks and the queue grows unbounded; longer feels slow.
+        // Listeners can still bias faster/slower via cadenceMs.
+        }, request.cadenceMs ?? 25000);
         this.healthTimer = setInterval(() => {
           getHealth()
             .then((healthSnapshot) => this.queue.push({ type: "health", health: healthSnapshot }))
