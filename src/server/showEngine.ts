@@ -389,6 +389,22 @@ export class ShowEngine {
             );
             swingForTurn = detectMarketSwings(marketsForTurn, this.lastMarketsForSwing);
             this.lastMarketsForSwing = marketsForTurn;
+            if (swingForTurn) {
+              // Tell the UI which ticker row the host is about to lead
+              // with so the markets overlay can flash that row in sync
+              // with the call.
+              this.queue.push({
+                type: "market-swing",
+                source: swingForTurn.market.source,
+                externalId: swingForTurn.market.externalId,
+                title: swingForTurn.market.title,
+                outcome: swingForTurn.market.outcomeLabel,
+                fromCents: swingForTurn.market.yesPriceCents - swingForTurn.deltaCents,
+                toCents: swingForTurn.market.yesPriceCents,
+                deltaCents: swingForTurn.deltaCents,
+                direction: swingForTurn.direction
+              });
+            }
           } catch (error) {
             this.logger.warn(
               { err: error instanceof Error ? error.message : String(error) },

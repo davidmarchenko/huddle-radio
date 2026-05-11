@@ -38,6 +38,7 @@ const KNOWN_EVENT_TYPES = [
   "health",
   "status",
   "cue-ack",
+  "market-swing",
   "error"
 ];
 

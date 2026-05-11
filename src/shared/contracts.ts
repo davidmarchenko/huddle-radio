@@ -378,6 +378,24 @@ export type ClientServerEvent =
    * from the "queued cues" indicator.
    */
   | { type: "cue-ack"; cueIds: string[]; commentaryId: string }
+  /**
+   * Markets just moved meaningfully on this game. The persona prompt
+   * is also being instructed to lead with this swing in the next
+   * turn, so the UI can flash the ticker entry to mirror the call.
+   * Source / outcome let the client identify which ticker row to
+   * highlight; deltaCents + direction drive the visual treatment.
+   */
+  | {
+      type: "market-swing";
+      source: "kalshi" | "polymarket";
+      externalId: string;
+      title: string;
+      outcome: string;
+      fromCents: number;
+      toCents: number;
+      deltaCents: number;
+      direction: "warming" | "cooling";
+    }
   | { type: "error"; message: string };
 
 export interface FantasyProvider {

@@ -200,6 +200,10 @@ function App() {
   const [importStatus, setImportStatus] = useState("Ready to validate");
   const [frameCaptureStatus, setFrameCaptureStatus] = useState("Frame validation waits for livecast start.");
   const [lastObservation, setLastObservation] = useState<LivecastCommentary["observation"]>();
+  // Most recent market-swing event from the server. The MarketsTicker
+  // uses its externalId to flash the matching row in sync with the
+  // host leading with that swing on-air.
+  const [lastMarketSwing, setLastMarketSwing] = useState<{ source: string; externalId: string; deltaCents: number; emittedAt: number } | undefined>();
   const [status, setStatus] = useState("Idle");
   const [livecastActive, setLivecastActive] = useState(false);
   const [showPrepared, setShowPrepared] = useState(false);
@@ -845,6 +849,17 @@ function App() {
         // Server-side acknowledgements (e.g. nudge confirmation) — surface
         // briefly in the existing status string.
         setStatus(message.message);
+      }
+      if (message.type === "market-swing") {
+        setLastMarketSwing({
+          source: message.source,
+          externalId: message.externalId,
+          deltaCents: message.deltaCents,
+          emittedAt: Date.now()
+        });
+        setStatus(
+          `${message.outcome} ${message.direction === "warming" ? "▲" : "▼"} ${Math.abs(message.deltaCents)}¢ on ${message.source === "kalshi" ? "Kalshi" : "Polymarket"}`
+        );
       }
       if (message.type === "cue-ack") {
         // The host folded our cues into a turn. Surface the answer link
@@ -1632,6 +1647,7 @@ function App() {
         onSubmitCue={submitListenerCue}
         observation={lastObservation}
         modelLabel={providers.model}
+        marketSwing={lastMarketSwing}
         onArchiveClip={archiveClip}
         onGetClipSubtitles={getClipSubtitles}
         pregameNews={pregameNews}
@@ -1726,7 +1742,7 @@ function App() {
               </div>
             )}
             <ScoreBug game={game} mediaIndex={mediaIndex} />
-            <MarketsTicker game={game} />
+            <MarketsTicker game={game} swing={lastMarketSwing} />
             <FantasyMatchupFloat matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
           </div>
         </section>
@@ -2157,8 +2173,29 @@ function App() {
  * Renders nothing (silent) when there are no relevant markets so the
  * overlay doesn't clutter sports/leagues that aren't covered yet.
  */
-function MarketsTicker({ game }: { game?: SportsGameState }) {
+function MarketsTicker({
+  game,
+  swing
+}: {
+  game?: SportsGameState;
+  /** Most recent market-swing event from the live show. When present, the matching row flashes briefly. */
+  swing?: { source: string; externalId: string; deltaCents: number; emittedAt: number };
+}) {
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
+  // Flash state: which row id to highlight, cleared after the
+  // animation duration so a stale swing doesn't keep glowing.
+  const [flashKey, setFlashKey] = useState<string | undefined>();
+  useEffect(() => {
+    if (!swing) return;
+    const key = `${swing.source}:${swing.externalId}`;
+    setFlashKey(key);
+    const timer = window.setTimeout(() => {
+      setFlashKey((current) => (current === key ? undefined : current));
+    }, 4500);
+    return () => window.clearTimeout(timer);
+    // emittedAt changes on every new swing, even for the same market,
+    // so the flash retriggers cleanly when the same row moves twice.
+  }, [swing?.source, swing?.externalId, swing?.emittedAt]);
 
   useEffect(() => {
     if (!game?.sport) return;
@@ -2206,8 +2243,15 @@ function MarketsTicker({ game }: { game?: SportsGameState }) {
         {relevant.map((snapshot) => {
           const delta = snapshot.recentDeltaCents ?? 0;
           const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+          const key = `${snapshot.source}:${snapshot.externalId}`;
+          const isFlashing = flashKey === key;
           return (
-            <li key={`${snapshot.source}:${snapshot.externalId}`} data-source={snapshot.source} data-direction={direction}>
+            <li
+              key={key}
+              data-source={snapshot.source}
+              data-direction={direction}
+              className={isFlashing ? "is-flashing" : undefined}
+            >
               <span className="markets-ticker-source">{snapshot.source === "kalshi" ? "Kalshi" : "Polymarket"}</span>
               <span className="markets-ticker-title" title={snapshot.title}>{snapshot.outcomeLabel}</span>
               <span className="markets-ticker-price">
@@ -2371,6 +2415,7 @@ function HuddleExperience({
   onGetClipSubtitles,
   observation,
   modelLabel,
+  marketSwing,
   pregameNews,
   pregameOdds,
   friendMatchups
@@ -2437,6 +2482,7 @@ function HuddleExperience({
   onGetClipSubtitles?: (commentaryId: string) => Promise<{ vtt: string; text: string } | undefined>;
   observation?: LivecastCommentary["observation"];
   modelLabel?: string;
+  marketSwing?: { source: string; externalId: string; deltaCents: number; emittedAt: number };
   pregameNews: NewsItem[];
   pregameOdds?: GameOdds;
   friendMatchups: ReturnType<typeof buildFriendMatchups>;
@@ -2509,6 +2555,7 @@ function HuddleExperience({
             onStop={onStop}
             observation={observation}
             modelLabel={modelLabel}
+            marketSwing={marketSwing}
           />
         )}
         {!showHome && phase === "live-audio" && (
@@ -4321,7 +4368,8 @@ function HuddleLiveWithStream({
   onVideoError,
   onStop,
   observation,
-  modelLabel
+  modelLabel,
+  marketSwing
 }: {
   game?: SportsGameState;
   hostTurns: HuddleHostTurn[];
@@ -4335,6 +4383,7 @@ function HuddleLiveWithStream({
   onStop: () => void;
   observation?: LivecastCommentary["observation"];
   modelLabel?: string;
+  marketSwing?: { source: string; externalId: string; deltaCents: number; emittedAt: number };
 }) {
   return (
     <section className="live-layout">
@@ -4345,7 +4394,7 @@ function HuddleLiveWithStream({
           <video ref={videoRef} controls={hasVideoSource} autoPlay muted playsInline onError={onVideoError} />
         )}
         <ScoreBug game={game} mediaIndex={mediaIndex} />
-        <MarketsTicker game={game} />
+        <MarketsTicker game={game} swing={marketSwing} />
         <div className="live-callout">{fantasySpotlight.body}</div>
         <FantasyMatchupFloat matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
       </div>
