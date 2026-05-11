@@ -8,6 +8,9 @@ export type HuddleHost = {
   role: "Analyst" | "Fan" | "Wildcard";
   accent: "violet" | "orange" | "gold";
   description: string;
+  /** URL of the host headshot served from /public. Optional so the
+   *  initials-only fallback still works when art isn't available. */
+  avatar?: string;
 };
 
 export type HuddleHostTurn = {
@@ -111,21 +114,24 @@ export const HUDDLE_HOSTS: HuddleHost[] = [
     name: "Maya",
     role: "Analyst",
     accent: "violet",
-    description: "Anchored in the numbers. Gets ragged on for it."
+    description: "Anchored in the numbers. Gets ragged on for it.",
+    avatar: "/Headshots/Maya.png"
   },
   {
     id: "theo",
     name: "Theo",
     role: "Fan",
     accent: "orange",
-    description: "Anchor of the booth. Sets up the others, pushes back when it's earned."
+    description: "Anchor of the booth. Sets up the others, pushes back when it's earned.",
+    avatar: "/Headshots/Theo.png"
   },
   {
     id: "cam",
     name: "Cam",
     role: "Wildcard",
     accent: "gold",
-    description: "Confident, sharp, and occasionally wrong about it."
+    description: "Confident, sharp, and occasionally wrong about it.",
+    avatar: "/Headshots/Cam.png"
   }
 ];
 

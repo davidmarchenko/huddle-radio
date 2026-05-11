@@ -5051,7 +5051,9 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, on
     <footer className="huddle-player">
       <div className="player-show">
         <div className="mini-host-stack">
-          {HUDDLE_HOSTS.map((host) => <HostAvatar key={host.id} label={host.name} accent={host.accent} size="sm" />)}
+          {HUDDLE_HOSTS.map((host) => (
+            <HostAvatar key={host.id} label={host.name} accent={host.accent} size="sm" src={host.avatar} />
+          ))}
         </div>
         <div>
           <strong>Huddle Radio</strong>
@@ -5091,7 +5093,7 @@ function HostStudio({ hosts, turns }: { hosts: typeof HUDDLE_HOSTS; turns: Huddl
       <div className="host-cards">
         {hosts.map((host) => (
           <article className="host-card" data-accent={host.accent} key={host.id}>
-            <HostAvatar label={host.name} accent={host.accent} size="lg" />
+            <HostAvatar label={host.name} accent={host.accent} size="lg" src={host.avatar} />
             <strong>{host.name}</strong>
             <span>{host.role}</span>
             <p>{host.description}</p>
@@ -5118,7 +5120,7 @@ function HostTurns({ turns, compact = false }: { turns: HuddleHostTurn[]; compac
     >
       {turns.map((turn) => (
         <article className="host-turn" data-accent={turn.host.accent} key={turn.id}>
-          <HostAvatar label={turn.host.name} accent={turn.host.accent} />
+          <HostAvatar label={turn.host.name} accent={turn.host.accent} src={turn.host.avatar} />
           <div>
             <header>
               <strong>{turn.host.name}</strong>
@@ -5133,10 +5135,26 @@ function HostTurns({ turns, compact = false }: { turns: HuddleHostTurn[]; compac
   );
 }
 
-function HostAvatar({ label, accent, size = "md" }: { label: string; accent: "violet" | "orange" | "gold"; size?: "sm" | "md" | "lg" }) {
+function HostAvatar({
+  label,
+  accent,
+  size = "md",
+  src
+}: {
+  label: string;
+  accent: "violet" | "orange" | "gold";
+  size?: "sm" | "md" | "lg";
+  /** Headshot URL. When set, the avatar renders the photo; otherwise
+   *  falls back to the accent-tinted initials chip. */
+  src?: string;
+}) {
   return (
     <span className="host-avatar" data-accent={accent} data-size={size}>
-      {initialsForUi(label).slice(0, 2)}
+      {src ? (
+        <img src={src} alt="" className="host-avatar-img" />
+      ) : (
+        initialsForUi(label).slice(0, 2)
+      )}
     </span>
   );
 }
