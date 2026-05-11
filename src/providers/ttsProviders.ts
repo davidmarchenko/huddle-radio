@@ -120,13 +120,17 @@ export class ElevenLabsTTSProvider implements TTSProvider {
       notify?.();
     });
 
-    while (!done || queue.length > 0) {
+    while (true) {
+      // Failure check first — must run before the loop-exit guard so a
+      // socket error that arrives between yields surfaces to the
+      // caller instead of being swallowed by `done = true`.
       if (failure) throw failure;
       const item = queue.shift();
       if (item) {
         yield item;
         continue;
       }
+      if (done) return;
       await new Promise<void>((resolve) => {
         notify = resolve;
       });

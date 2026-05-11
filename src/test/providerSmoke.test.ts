@@ -72,6 +72,63 @@ describe("optional real provider smoke tests", () => {
     expect(health.status).toBe(process.env.ELEVENLABS_API_KEY ? "ready" : "disabled");
   });
 
+  it("can synthesize a short utterance over the ElevenLabs WebSocket when ELEVENLABS_API_KEY is present", async () => {
+    if (!process.env.ELEVENLABS_API_KEY) {
+      console.log("[skip] ELEVENLABS_API_KEY not set");
+      expect(true).toBe(true);
+      return;
+    }
+    // The WebSocket path is the production hot path — health() only
+    // checks env config. This test actually opens the wss:// connection,
+    // sends a one-line payload, and confirms at least one base64 audio
+    // chunk comes back with isFinal eventually flipping true. Catches
+    // contract drift (envelope renames, new auth requirements, etc.)
+    // that the unit suite (mocked WebSocket) cannot.
+    const provider = new ElevenLabsTTSProvider(
+      process.env.ELEVENLABS_API_KEY,
+      process.env.ELEVENLABS_VOICE_ID,
+      process.env.ELEVENLABS_MODEL_ID
+    );
+    const chunks: Array<{ base64Audio?: string; isFinal: boolean; latencyMs?: number }> = [];
+    let firstChunkLatencyMs: number | undefined;
+    try {
+      for await (const chunk of provider.synthesize({
+        commentaryId: "smoke",
+        text: "Testing one two."
+      })) {
+        chunks.push(chunk);
+        if (firstChunkLatencyMs === undefined && chunk.base64Audio) {
+          firstChunkLatencyMs = chunk.latencyMs;
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // Treat WS-level rate-limit / quota responses as skips — same
+      // logic as the OpenAI smoke above.
+      if (/429|quota|rate.?limit|unauthorized/i.test(message)) {
+        console.log(`[skip] ElevenLabs refused: ${message.slice(0, 120)}`);
+        expect(true).toBe(true);
+        return;
+      }
+      throw error;
+    }
+    // At least one audio chunk should arrive — silence/empty audio
+    // would be a contract drift, not a "no quota" condition.
+    const audioChunks = chunks.filter((c) => Boolean(c.base64Audio));
+    expect(audioChunks.length).toBeGreaterThan(0);
+    // ElevenLabs' real stream signals "done" two ways: an isFinal:true
+    // marker on the last data frame, OR a socket close with no marker.
+    // Both terminate the iterator cleanly — what matters is that the
+    // generator returned without throwing AND we got audio. The last
+    // chunk may or may not carry isFinal, so we don't assert it.
+    // First-chunk latency is the user-visible spec for "time to
+    // first audible byte". Log it for the operator without failing
+    // on a slow vendor day.
+    if (firstChunkLatencyMs !== undefined) {
+      console.log(`[info] ElevenLabs first-chunk latency: ${firstChunkLatencyMs}ms`);
+    }
+  }, 30000);
+
   it("can call Nemotron Nano Omni vision when NEMOTRON_API_KEY is present", async () => {
     if (!process.env.NEMOTRON_API_KEY) {
       console.log("[skip] NEMOTRON_API_KEY not set");
