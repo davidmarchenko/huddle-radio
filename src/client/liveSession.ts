@@ -21,6 +21,14 @@ export type LiveSessionHandlers = {
   onError?: (message: string) => void;
   /** Fires when the EventSource closes (server disconnect, max-duration cutoff, manual close). */
   onClose?: () => void;
+  /**
+   * Fires when a POST returns 410 (`code: WRONG_INSTANCE`) — the
+   * session lives on a different Function instance than the one that
+   * answered. Consumers should treat this as "session is irrecoverably
+   * orphaned" and restart the show via startLiveSession with the
+   * original request. Without a handler, the POST silently no-ops.
+   */
+  onSessionLost?: () => void;
 };
 
 export type LiveSessionHandle = {
@@ -118,6 +126,21 @@ export async function startLiveSession(
   // entry, so leakage is bounded by the live-show count.
   closeMap.set(sessionId, wrappedClose);
 
+  // Stash the session-lost handler so the POST helpers can route 410
+  // responses back to the consumer without each call site needing to
+  // pass the callback explicitly. One latch per session is enough —
+  // we want exactly one reconnect attempt, not one per failed POST.
+  if (handlers.onSessionLost) {
+    sessionLostMap.set(sessionId, () => {
+      // Latch: only fire the first time so a flurry of stale POSTs
+      // doesn't trigger a reconnect storm.
+      const callback = sessionLostMap.get(sessionId);
+      if (!callback) return;
+      sessionLostMap.delete(sessionId);
+      handlers.onSessionLost?.();
+    });
+  }
+
   return {
     sessionId,
     isOpen: () => opened && !closedManually
@@ -125,13 +148,29 @@ export async function startLiveSession(
 }
 
 const closeMap = new Map<string, () => void>();
+const sessionLostMap = new Map<string, () => void>();
+
+/** Detect the WRONG_INSTANCE 410 marker and fire the session-lost callback exactly once. */
+function maybeReportSessionLost(sessionId: string, response: Response): boolean {
+  if (response.status !== 410) return false;
+  const callback = sessionLostMap.get(sessionId);
+  callback?.();
+  return true;
+}
 
 export async function sendFrame(handle: LiveSessionHandle, frame: VideoFrameSnapshot): Promise<void> {
-  await fetch("/api/live/frame", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId: handle.sessionId, frame })
-  }).catch(() => undefined);
+  try {
+    const response = await fetch("/api/live/frame", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: handle.sessionId, frame })
+    });
+    maybeReportSessionLost(handle.sessionId, response);
+  } catch {
+    // Network failure: leave the engine to handle the next tick. We
+    // don't escalate to onSessionLost here because a transient network
+    // blip shouldn't trigger a full restart.
+  }
 }
 
 export async function sendCue(handle: LiveSessionHandle, cue: ListenerCue): Promise<boolean> {
@@ -141,6 +180,7 @@ export async function sendCue(handle: LiveSessionHandle, cue: ListenerCue): Prom
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ sessionId: handle.sessionId, cue })
     });
+    maybeReportSessionLost(handle.sessionId, response);
     return response.ok;
   } catch {
     return false;
@@ -148,17 +188,23 @@ export async function sendCue(handle: LiveSessionHandle, cue: ListenerCue): Prom
 }
 
 export async function sendNudge(handle: LiveSessionHandle, hostId: HostId): Promise<void> {
-  await fetch("/api/live/nudge", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sessionId: handle.sessionId, hostId })
-  }).catch(() => undefined);
+  try {
+    const response = await fetch("/api/live/nudge", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: handle.sessionId, hostId })
+    });
+    maybeReportSessionLost(handle.sessionId, response);
+  } catch {
+    // See sendFrame — transient network failures do not trigger reconnect.
+  }
 }
 
 export async function closeSession(handle: LiveSessionHandle): Promise<void> {
   const close = closeMap.get(handle.sessionId);
   close?.();
   closeMap.delete(handle.sessionId);
+  sessionLostMap.delete(handle.sessionId);
   // Best effort: tell the server to evict + stop the engine.
   // We don't await — a tab close shouldn't block on this round-trip.
   void fetch("/api/live/stop", {

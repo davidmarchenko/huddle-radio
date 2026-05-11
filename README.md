@@ -146,16 +146,28 @@ vercel deploy --prod   # production
 
 The clip-share flow needs Vercel Blob in production (filesystem-
 backed `FileClipStore` only works locally — Vercel Functions have
-read-only / ephemeral filesystems). Add the Blob store via the
-Marketplace:
+read-only / ephemeral filesystems). Vercel Blob is a first-party
+product enabled from the dashboard, not the marketplace `integration
+add` command:
 
-```bash
-vercel integration add vercel-blob   # auto-provisions BLOB_READ_WRITE_TOKEN
-vercel env pull .env.local --yes     # refresh local env
-```
+1. Open https://vercel.com/dashboard/stores → **Create Database** →
+   **Blob**.
+2. Connect the store to this project.
+3. `vercel env pull .env.local --yes` to grab the auto-provisioned
+   `BLOB_READ_WRITE_TOKEN`.
 
-When `BLOB_READ_WRITE_TOKEN` is set, `getDefaultClipStore()` swaps
-to `BlobClipStore` automatically — no code change.
+When `BLOB_READ_WRITE_TOKEN` is set, two paths activate
+automatically — no code change:
+
+- **`getDefaultClipStore()`** swaps from `FileClipStore` to
+  `BlobClipStore` (server-side upload, used by the legacy
+  `/api/clips` POST and any internal callers).
+- **`/api/clips/upload-token`** mints short-lived signed tokens so
+  the browser can upload directly to the Blob CDN via
+  `@vercel/blob/client`'s `upload()`. The client tries this path
+  first (bypasses the ~4.5 MB Function body cap on Vercel) and
+  falls back to the server POST when the token route returns 404
+  (e.g. local dev without the token set).
 
 ### Function configuration (`vercel.json`)
 

@@ -16,20 +16,57 @@ fix.
 ```bash
 npm run test                  # 360+ unit + integration tests
 npm run test:providers        # opt-in real-API smoke (needs keys in .env.local)
+npm run test:browser          # Playwright golden-path + video-stage specs
 npm run verify:nemotron       # one-shot Nemotron endpoint ping
 npm run build                 # production build green
-npm run dev                   # start Next.js + Fastify
+npm run dev                   # start Next.js + Fastify together
 ```
 
 Confirm:
 
-- [ ] All three test commands exit 0.
+- [ ] All four test commands exit 0.
 - [ ] `npm run dev` shows `Next.js Local: http://localhost:3000` and
       `Server listening at http://127.0.0.1:8787`.
-- [ ] `curl -s http://localhost:3000/api/markets?sport=nfl | jq '.count'`
+- [ ] `curl -s 'http://localhost:3000/api/markets?sport=nfl' | jq '.count'`
       returns a positive integer (real Kalshi + Polymarket data).
 - [ ] `curl -s -X POST http://localhost:3000/api/vision/observe -H "content-type: application/json" -d '{"frame":{"id":"x","capturedAt":"2026-05-10T20:00:00Z","source":"screen-share","width":1,"height":1,"dataUrl":"data:image/jpeg;base64,QUJD"}}' | jq '.observation.id'`
       returns a UUID.
+
+### Production-mode smoke (proves the Vercel-shaped bundle works)
+
+Vercel does **not** run our Fastify process — it only runs the
+Next.js Route Handlers. To verify the bundle works without Fastify
+backing it, run prod-mode locally:
+
+```bash
+npm run build && npm run start   # NODE_ENV=production, no Fastify
+```
+
+Confirm in a second terminal:
+
+- [ ] `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/`
+      returns `200`.
+- [ ] `curl -s -o /dev/null -w "%{http_code}\n" 'http://localhost:3000/api/markets?sport=nfl'`
+      returns `200`.
+- [ ] `curl -s -o /dev/null -w "%{http_code}\n" -X POST -H 'content-type: application/json' -d '{"profile":{"id":"u1","name":"Test","favoriteTeam":"DET","favoriteSport":"NFL","friends":[{"id":"f1","name":"Sam","favoriteTeam":"GB"}]},"gameId":"NFL:2024-W7-DET-vs-GB"}' http://localhost:3000/api/live/start`
+      returns `200` with a `sessionId` in the body.
+- [ ] `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/api/health`
+      returns `404` — legacy Fastify-only diagnostics intentionally
+      do not exist on Vercel, and `next start` is configured to skip
+      the dev rewrite that proxies to localhost:8787.
+- [ ] Archive + read a clip:
+      ```bash
+      B64=$(printf 'real-audio-bytes' | base64)
+      curl -s -X POST -H 'content-type: application/json' \
+        -d "{\"listenerId\":\"01234567-89ab-cdef-0123-456789abcdef\",\"mimeType\":\"audio/wav\",\"audioBase64\":\"$B64\"}" \
+        http://localhost:3000/api/clips
+      # → { id, url, mimeType, byteLength }
+      curl -s -o /tmp/clip.bin "http://localhost:3000$URL_FROM_ABOVE"
+      ```
+      `/tmp/clip.bin` matches the bytes you posted (file-store path).
+      On Vercel with `BLOB_READ_WRITE_TOKEN` set, the POST returns a
+      Blob CDN url instead and `/api/clips/[id]` 404s (clients use
+      `metadata.url` directly).
 
 ## Browser walkthrough
 
@@ -95,11 +132,32 @@ reliable).
 
 ### Teardown
 
-- [ ] Reload the page or click Stop. The SSE connection closes;
-      `localhost:8787` log shows `live.stream.cancelled` for the
-      session.
+- [ ] Reload the page or click Stop. The SSE EventSource closes;
+      the Next.js terminal shows `live.stream.cancelled` for the
+      session (the engine listens for the AbortController on the SSE
+      route).
 - [ ] Close the tab. No orphaned `Server listening` warnings, no
-      runaway ticks in either terminal.
+      runaway ticks in either terminal. The in-process session store
+      grace-times the engine after ~5s of detachment.
+
+## Vercel preview-deploy verification
+
+When pushing a branch deploys to a Vercel preview URL:
+
+- [ ] `curl -s -o /dev/null -w "%{http_code}\n" <preview-url>/`
+      returns `200`.
+- [ ] `curl -s '<preview-url>/api/markets?sport=nfl' | jq '.count'`
+      returns a positive integer.
+- [ ] `curl -s -o /dev/null -w "%{http_code}\n" -X POST -H 'content-type: application/json' -d '{}' <preview-url>/api/clips/upload-token`
+      returns `404` if `BLOB_READ_WRITE_TOKEN` is unset (intentional
+      — client falls back to legacy POST). `200` once Blob is
+      provisioned via the dashboard Storage tab.
+- [ ] Open `<preview-url>/`, click "Listen to a sample" — within ~5s
+      the live UI mounts and host turns scroll in. The SSE
+      handshake works through Vercel's edge.
+- [ ] Vercel Functions log (Dashboard → Functions tab) shows
+      `live.start.ok` then `live.stream.attached` events with the
+      same sessionId. No ECONNREFUSED. No `localhost:8787` references.
 
 ## Common failure modes to look for
 
@@ -107,7 +165,14 @@ reliable).
   in a new `useState` initializer that touches `window`.
 - **EventSource immediately closes with no events** → check
   `/api/live/start` returned a sessionId; if 400/404, request shape
-  doesn't match the LivecastRequestSchema.
+  doesn't match the LivecastRequestSchema. If 200 but the stream
+  hangs, the in-process session store evicted the engine — happens
+  when the client took >30s to call `/api/live/stream` after start.
+- **Routes 500 with ECONNREFUSED on `npm run start`** → the dev-only
+  rewrite to localhost:8787 is firing in production mode. Check that
+  `next.config.ts`'s `REWRITE_TO_FASTIFY` guard reads
+  `process.env.NODE_ENV !== "production"`. `next start` sets
+  NODE_ENV=production automatically.
 - **Mic prompt never appears** → either the browser blocked permissions
   globally, or `getUserMedia` threw silently. Check DevTools console.
 - **Markets ticker never appears** → either `/api/markets?sport=<x>`

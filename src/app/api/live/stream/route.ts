@@ -1,4 +1,9 @@
-import { getSession, markSessionConsumed, markSessionDetached } from "@/server/showSessionStore";
+import {
+  getSessionWithRoutingHint,
+  lookupErrorResponse,
+  markSessionConsumed,
+  markSessionDetached
+} from "@/server/showSessionStore";
 
 /**
  * SSE event stream for an active live-show session. Pair with
@@ -31,14 +36,17 @@ export async function GET(request: Request) {
       headers: { "content-type": "application/json" }
     });
   }
-  const engine = getSession(sessionId);
-  if (!engine) {
-    console.warn(JSON.stringify({ event: "live.stream.not-found", sessionId }));
+  const lookup = await getSessionWithRoutingHint(sessionId);
+  const errorResponse = lookupErrorResponse(lookup, { route: "live.stream", sessionId });
+  if (errorResponse) return errorResponse;
+  // The helper only returns undefined for the local case; narrow it.
+  if (lookup.kind !== "local") {
     return new Response(JSON.stringify({ error: "Session not found or expired." }), {
       status: 404,
       headers: { "content-type": "application/json" }
     });
   }
+  const engine = lookup.engine;
   markSessionConsumed(sessionId);
   console.log(JSON.stringify({ event: "live.stream.attached", sessionId, engineId: engine.id }));
 

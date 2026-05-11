@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/server/showSessionStore";
+import { getSessionWithRoutingHint, lookupErrorResponse } from "@/server/showSessionStore";
 import type { HostId } from "@/shared/contracts";
 
 /**
@@ -31,11 +31,11 @@ export async function POST(request: Request) {
     console.warn(JSON.stringify({ event: "live.nudge.bad-request", reason: "invalid-hostId", sessionId: body.sessionId }));
     return NextResponse.json({ error: "hostId must be one of maya | theo | cam." }, { status: 400 });
   }
-  const engine = getSession(body.sessionId);
-  if (!engine) {
-    console.warn(JSON.stringify({ event: "live.nudge.no-session", sessionId: body.sessionId }));
-    return NextResponse.json({ error: "Session not found or expired." }, { status: 404 });
-  }
+  const lookup = await getSessionWithRoutingHint(body.sessionId);
+  const errorResponse = lookupErrorResponse(lookup, { route: "live.nudge", sessionId: body.sessionId });
+  if (errorResponse) return errorResponse;
+  const engine = lookup.kind === "local" ? lookup.engine : undefined;
+  if (!engine) return NextResponse.json({ error: "Session not found or expired." }, { status: 404 });
   engine.pushNudge(body.hostId as HostId);
   console.log(JSON.stringify({
     event: "live.nudge.accepted",

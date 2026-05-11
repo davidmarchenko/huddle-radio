@@ -764,6 +764,20 @@ function App() {
           setAudioLevels(WAVEFORM_BARS);
           setStatus("Stopped");
         },
+        onSessionLost: () => {
+          // 410 from any POST means our session lives on a different
+          // Function instance than the one we just hit. Engines can't
+          // migrate, so the only recovery is a fresh start. Bypass
+          // pregame readiness so the user doesn't have to re-validate
+          // setup that already passed once.
+          if (livecastSessionRef.current !== sessionId) return;
+          setStatus("Reconnecting");
+          void startLivecast({
+            sportsGameId: effectiveGameId || undefined,
+            sportsDataMode: effectiveDataMode,
+            bypassReadiness: true
+          });
+        },
         onEvent: (message) => {
           if (livecastSessionRef.current !== sessionId) return;
           if (message.type === "snapshot") {
@@ -956,6 +970,47 @@ function App() {
   const archiveClip = useCallback(async (commentaryId: string): Promise<string | undefined> => {
     const payload = buildClipPayload(commentaryId);
     if (!payload) return undefined;
+    // Try the client-direct Blob upload first. Vercel Functions cap
+    // POST bodies at ~4.5MB on Hobby/Pro Node runtimes; our TTS clips
+    // can run 6–8MB base64 and would silently fail on the legacy
+    // server-side path in production. handleUpload via
+    // @vercel/blob/client uploads straight to the Blob CDN with a
+    // signed token minted by /api/clips/upload-token.
+    //
+    // When BLOB_READ_WRITE_TOKEN isn't set (local dev), the token
+    // route returns 404 and we fall back to the legacy POST against
+    // the FileClipStore-backed handler.
+    try {
+      const { upload } = await import("@vercel/blob/client");
+      const bytes = Uint8Array.from(atob(payload.audioBase64), (c) => c.charCodeAt(0));
+      const blob = new Blob([bytes], { type: payload.mimeType });
+      const extension = payload.mimeType.includes("mp3")
+        ? "mp3"
+        : payload.mimeType.includes("ogg")
+          ? "ogg"
+          : payload.mimeType.includes("wav")
+            ? "wav"
+            : payload.mimeType.includes("mp4") || payload.mimeType.includes("aac")
+              ? "m4a"
+              : "webm";
+      const result = await upload(`clips/${listenerId}/${commentaryId}.${extension}`, blob, {
+        access: "public",
+        handleUploadUrl: "/api/clips/upload-token",
+        contentType: payload.mimeType
+      });
+      return result.url;
+    } catch (error) {
+      // 404 from the token route = Blob isn't configured. Fall
+      // through to the server-side path. Other errors (auth, size
+      // cap, network) also fall through so a working FileClipStore
+      // can still archive the clip.
+      const message = error instanceof Error ? error.message : "";
+      if (message && !/404|not configured/i.test(message)) {
+        // Log non-404 failures for visibility but don't surface to
+        // user — share UI just falls back to text-only.
+        console.warn("[clip] direct Blob upload failed, falling back to server", message);
+      }
+    }
     try {
       const response = await fetch("/api/clips", {
         method: "POST",
@@ -1198,17 +1253,34 @@ function App() {
 
   const refreshHealth = async () => {
     setStatus((current) => (current === "Idle" ? "Refreshing health" : current));
-    const response = await fetch("/api/health");
-    const payload = (await response.json()) as { health: ProviderHealth[]; providers: ActiveProviderSummary };
-    setHealth(Array.isArray(payload.health) ? payload.health : []);
-    setProviders(payload.providers ?? providers);
-    setStatus((current) => (current === "Refreshing health" ? "Idle" : current));
+    try {
+      // /api/health is currently Fastify-only — on Vercel deploys the
+      // route 404s. Treat that as "diagnostics unavailable" rather
+      // than a fatal error so the rest of the UI keeps working.
+      const response = await fetch("/api/health");
+      if (!response.ok) {
+        setStatus((current) => (current === "Refreshing health" ? "Diagnostics unavailable on this deploy" : current));
+        return;
+      }
+      const payload = (await response.json()) as { health: ProviderHealth[]; providers: ActiveProviderSummary };
+      setHealth(Array.isArray(payload.health) ? payload.health : []);
+      setProviders(payload.providers ?? providers);
+      setStatus((current) => (current === "Refreshing health" ? "Idle" : current));
+    } catch {
+      setStatus((current) => (current === "Refreshing health" ? "Diagnostics unavailable on this deploy" : current));
+    }
   };
 
   const refreshDiagnostics = async (mode: "demo" | "espn" = sportsDataMode) => {
-    const response = await fetch(`/api/diagnostics?${new URLSearchParams({ sportsDataMode: mode }).toString()}`);
-    const payload = (await response.json()) as ProviderDiagnostics;
-    setDiagnostics(payload);
+    // Same Vercel caveat as refreshHealth — fail soft on 404.
+    try {
+      const response = await fetch(`/api/diagnostics?${new URLSearchParams({ sportsDataMode: mode }).toString()}`);
+      if (!response.ok) return;
+      const payload = (await response.json()) as ProviderDiagnostics;
+      setDiagnostics(payload);
+    } catch {
+      // Diagnostics view degrades silently on Vercel deploys.
+    }
   };
 
   const refreshSportsGames = async (mode: "demo" | "espn" = sportsDataMode) => {

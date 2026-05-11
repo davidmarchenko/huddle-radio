@@ -45,7 +45,7 @@ export async function POST(request: Request) {
   // Fire and forget — events will buffer in the queue. The SSE GET
   // drains them as soon as it attaches.
   void engine.start(parsed.request);
-  const sessionId = registerSession(engine);
+  const sessionId = await registerSession(engine);
   return NextResponse.json({ sessionId });
 }
 

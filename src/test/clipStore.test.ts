@@ -118,7 +118,7 @@ describe("BlobClipStore", () => {
     // network. We assert on the upload contract: namespaced path,
     // public access, content type honored, returned URL passed
     // straight back through metadata.url.
-    const put = vi.fn(async (pathname: string, _body: Buffer, _opts: unknown) => ({
+    const put = vi.fn(async (pathname: string, _body: Buffer | Blob, _opts: unknown) => ({
       url: `https://blob.example/${pathname}`,
       pathname
     }));

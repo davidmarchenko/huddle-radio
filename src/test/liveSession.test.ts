@@ -294,6 +294,71 @@ describe("sendFrame / sendCue / sendNudge", () => {
   });
 });
 
+describe("onSessionLost (cross-instance 410)", () => {
+  it("fires when a POST returns 410 — once, even across multiple failed POSTs", async () => {
+    // Mimic the real cross-instance flow: /api/live/start succeeds
+    // (creating the session on instance A), but the follow-up POSTs
+    // land on instance B and get 410 WRONG_INSTANCE responses back.
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(JSON.stringify({ sessionId: "session-410" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ code: "WRONG_INSTANCE", error: "Session lives elsewhere" }), {
+          status: 410,
+          headers: { "content-type": "application/json" }
+        });
+      })
+    );
+    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+    const onSessionLost = vi.fn();
+    const handle = await startLiveSession(baseRequest, {
+      onEvent: () => undefined,
+      onSessionLost
+    });
+    expect(handle).toBeDefined();
+    // Three POSTs in quick succession — all return 410. The callback
+    // is latched so only the FIRST fires the consumer's handler;
+    // subsequent ones are absorbed.
+    await sendCue(handle!, { id: "c1", text: "hi", capturedAt: new Date().toISOString() });
+    await sendNudge(handle!, "cam");
+    await sendFrame(handle!, {
+      id: "f1",
+      capturedAt: "2026-05-10T20:00:00Z",
+      source: "screen-share",
+      width: 1,
+      height: 1,
+      dataUrl: "data:image/jpeg;base64,QUJD"
+    });
+    expect(onSessionLost).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT fire on plain 4xx/5xx (only the 410 WRONG_INSTANCE marker)", async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(JSON.stringify({ sessionId: "session-not-410" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ error: "bad input" }), { status: 400 });
+      })
+    );
+    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+    const onSessionLost = vi.fn();
+    const handle = await startLiveSession(baseRequest, {
+      onEvent: () => undefined,
+      onSessionLost
+    });
+    await sendCue(handle!, { id: "c1", text: "hi", capturedAt: new Date().toISOString() });
+    expect(onSessionLost).not.toHaveBeenCalled();
+  });
+});
+
 describe("closeSession", () => {
   it("closes the EventSource + POSTs to /api/live/stop with the sessionId", async () => {
     const fetchSpy = stubStartOk("session-x");
