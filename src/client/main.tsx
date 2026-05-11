@@ -43,6 +43,7 @@ import { buildTranscriptExport } from "../shared/transcriptExport";
 import { createYouTubeEmbedUrl, isYouTubeUrl } from "../shared/videoLinks";
 import { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
 import { startMicRecording, type MicRecording } from "./audioCapture";
+import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -212,7 +213,7 @@ function App() {
   const [audioLevels, setAudioLevels] = useState(WAVEFORM_BARS);
   const [formError, setFormError] = useState("");
   const [screenStream, setScreenStream] = useState<MediaStream>();
-  const socketRef = useRef<WebSocket | null>(null);
+  const liveSessionRef = useRef<import("./liveSession").LiveSessionHandle | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -652,7 +653,7 @@ function App() {
     });
   }, [huddlePhase, commentary, game, group.listener?.name, listenerStakes, profile]);
 
-  const startLivecast = (overrides?: { sportsGameId?: string; sportsDataMode?: "demo" | "espn"; bypassReadiness?: boolean }) => {
+  const startLivecast = async (overrides?: { sportsGameId?: string; sportsDataMode?: "demo" | "espn"; bypassReadiness?: boolean }) => {
     const effectiveGameId = overrides?.sportsGameId ?? sportsGameId;
     const effectiveDataMode = overrides?.sportsDataMode ?? sportsDataMode;
     const validation = validateLivecastStart({ providerMode, sleeperLeagueId, espnLeagueId, videoMode, videoUrl });
@@ -681,16 +682,13 @@ function App() {
     setShowPrepared(true);
     const sessionId = livecastSessionRef.current;
     setFormError("");
-    const previousSocket = socketRef.current;
-    socketRef.current = null;
-    previousSocket?.close();
+    const previousSession = liveSessionRef.current;
+    liveSessionRef.current = null;
+    if (previousSession) void closeSession(previousSession);
     if (frameTimerRef.current) {
       window.clearInterval(frameTimerRef.current);
       frameTimerRef.current = undefined;
     }
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const socket = new WebSocket(`${protocol}://${window.location.host}/ws/livecast`);
-    socketRef.current = socket;
     setLivecastActive(true);
     setAudioPlaying(false);
     setAudioLevels(WAVEFORM_BARS);
@@ -701,51 +699,70 @@ function App() {
     setLastObservation(undefined);
     setFrameCaptureStatus("Connecting frame capture");
 
-    socket.addEventListener("open", async () => {
-      if (livecastSessionRef.current !== sessionId) return;
-      setStatus("Live");
+    const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
+    // Cross-show memory: brief callback the LLM can weave into the
+    // opener if it lands naturally. Most-recent same-sport same-listener
+    // first; otherwise the most-recent show overall.
+    const priorContext = buildPriorContext(pastShows, game?.sport, effectiveGroup.listener?.name);
+
+    // Frame pump — runs after we have a session handle.
+    const startFramePump = (handle: import("./liveSession").LiveSessionHandle) => {
       const sendLatestFrame = async () => {
         const frame = await captureCurrentFrame({ videoRef, videoMode, videoUrl, screenStream, youtubeEmbedUrl });
-        if (livecastSessionRef.current !== sessionId || socket.readyState !== WebSocket.OPEN) return;
-        setFrameCaptureStatus(frame.blockedReason ? frame.blockedReason : `Captured ${frame.width}x${frame.height} frame for validation.`);
-        socket.send(JSON.stringify({ type: "frame", frame }));
+        if (livecastSessionRef.current !== sessionId || !handle.isOpen()) return;
+        setFrameCaptureStatus(
+          frame.blockedReason
+            ? frame.blockedReason
+            : `Captured ${frame.width}x${frame.height} frame for validation.`
+        );
+        await sendFrame(handle, frame);
       };
-      await sendLatestFrame();
-      if (livecastSessionRef.current !== sessionId || socket.readyState !== WebSocket.OPEN) return;
-      const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
-      // Cross-show memory: brief callback the LLM can weave into the
-      // opener if it lands naturally. Most-recent same-sport same-listener
-      // first; otherwise the most-recent show overall.
-      const priorContext = buildPriorContext(pastShows, game?.sport, effectiveGroup.listener?.name);
-      socket.send(
-        JSON.stringify({
-          type: "start",
-          request: {
-            providerMode,
-            sportsDataMode: effectiveDataMode,
-            sportsGameId: effectiveGameId || undefined,
-            sleeperLeagueId: sleeperLeagueId || undefined,
-            espnLeagueId: espnLeagueId || undefined,
-            espnSeason,
-            week,
-            group: effectiveGroup,
-            customLeague: providerMode === "demo" ? customLeague : undefined,
-            video: { mode: videoMode, url: videoUrl || undefined },
-            ttsEnabled,
-            cadenceMs: cadenceSeconds * 1000,
-            priorContext
-          }
-        })
-      );
+      void sendLatestFrame();
       frameTimerRef.current = window.setInterval(() => {
-        if (livecastSessionRef.current === sessionId && socket.readyState === WebSocket.OPEN) void sendLatestFrame();
+        if (livecastSessionRef.current === sessionId && handle.isOpen()) void sendLatestFrame();
       }, Math.max(3000, cadenceSeconds * 1000));
-    });
+    };
 
-    socket.addEventListener("message", (event) => {
-      if (livecastSessionRef.current !== sessionId) return;
-      const message = JSON.parse(String(event.data)) as ClientServerEvent;
-      if (message.type === "snapshot") {
+    const handle = await startLiveSession(
+      {
+        providerMode,
+        sportsDataMode: effectiveDataMode,
+        sportsGameId: effectiveGameId || undefined,
+        sleeperLeagueId: sleeperLeagueId || undefined,
+        espnLeagueId: espnLeagueId || undefined,
+        espnSeason,
+        week,
+        group: effectiveGroup,
+        customLeague: providerMode === "demo" ? customLeague : undefined,
+        video: { mode: videoMode, url: videoUrl || undefined },
+        ttsEnabled,
+        cadenceMs: cadenceSeconds * 1000,
+        priorContext
+      },
+      {
+        onOpen: () => {
+          if (livecastSessionRef.current !== sessionId) return;
+          setStatus("Live");
+        },
+        onError: (msg) => {
+          if (livecastSessionRef.current !== sessionId) return;
+          setStatus(msg);
+        },
+        onClose: () => {
+          if (livecastSessionRef.current !== sessionId) return;
+          if (frameTimerRef.current) {
+            window.clearInterval(frameTimerRef.current);
+            frameTimerRef.current = undefined;
+          }
+          liveSessionRef.current = null;
+          setLivecastActive(false);
+          setAudioPlaying(false);
+          setAudioLevels(WAVEFORM_BARS);
+          setStatus("Stopped");
+        },
+        onEvent: (message) => {
+          if (livecastSessionRef.current !== sessionId) return;
+          if (message.type === "snapshot") {
         setFantasy(message.fantasy);
         setGame(message.game);
         setHealth(Array.isArray(message.health) ? message.health : []);
@@ -837,20 +854,16 @@ function App() {
       if (message.type === "error") {
         setStatus(message.message);
       }
-    });
-
-    socket.addEventListener("close", () => {
-      if (livecastSessionRef.current !== sessionId) return;
-      if (frameTimerRef.current) {
-        window.clearInterval(frameTimerRef.current);
-        frameTimerRef.current = undefined;
+        }
       }
-      socketRef.current = null;
+    );
+    if (!handle) {
+      // startLiveSession already called onError; just clean up.
       setLivecastActive(false);
-      setAudioPlaying(false);
-      setAudioLevels(WAVEFORM_BARS);
-      setStatus("Stopped");
-    });
+      return;
+    }
+    liveSessionRef.current = handle;
+    startFramePump(handle);
   };
 
   // Navigate back to discover. If a livecast is running, KEEP it running
@@ -874,9 +887,9 @@ function App() {
   // overrides selectHost for one tick. Caller decides feedback (toast,
   // button highlight) — this only sends the message.
   const nudgeHost = (hostId: HostId) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "nudge", hostId }));
+    const handle = liveSessionRef.current;
+    if (!handle || !handle.isOpen()) return;
+    void sendNudge(handle, hostId);
   };
 
   // W18: Cue host. The button captures a short mic clip, ships it to
@@ -884,11 +897,11 @@ function App() {
   // transcript to the live show as a cue the persona may answer on
   // the next tick. We hand the button the post-transcribe submitter
   // and let it own its own recording state — App just relays the
-  // websocket payload.
+  // SSE-session payload.
   const submitListenerCue = useCallback((cue: ListenerCue) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    socket.send(JSON.stringify({ type: "cue", cue }));
+    const handle = liveSessionRef.current;
+    if (!handle || !handle.isOpen()) return false;
+    void sendCue(handle, cue);
     return true;
   }, []);
 
@@ -975,13 +988,14 @@ function App() {
   );
 
   // Unmount cleanup. Without this, navigating away or closing the tab
-  // mid-show leaves the WebSocket open server-side and the ESPN/TTS
+  // mid-show leaves the live session open server-side and the ESPN/TTS
   // tick interval running. Using refs (no deps) so the effect runs
   // exactly once on mount/unmount.
   useEffect(() => {
     return () => {
-      socketRef.current?.close(1000, "Component unmounted");
-      socketRef.current = null;
+      const handle = liveSessionRef.current;
+      liveSessionRef.current = null;
+      if (handle) void closeSession(handle);
       if (frameTimerRef.current) {
         window.clearInterval(frameTimerRef.current);
         frameTimerRef.current = undefined;
@@ -997,9 +1011,9 @@ function App() {
 
   const stopLivecast = () => {
     livecastSessionRef.current += 1;
-    const socket = socketRef.current;
-    socketRef.current = null;
-    socket?.close(1000, "Stopped by user");
+    const handle = liveSessionRef.current;
+    liveSessionRef.current = null;
+    if (handle) void closeSession(handle);
     if (frameTimerRef.current) {
       window.clearInterval(frameTimerRef.current);
       frameTimerRef.current = undefined;
