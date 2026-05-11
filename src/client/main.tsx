@@ -4099,6 +4099,7 @@ function HuddlePregame({
         {profile && friendMatchups && friendMatchups.length > 0 && <FriendMatchupsCard matchups={friendMatchups} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         {odds && <OddsCard odds={odds} />}
+        <MarketsBoardCard game={game} />
         {news && news.length > 0 ? (
           <NewsStorylineCard
             news={news}
@@ -4915,6 +4916,90 @@ function OddsCard({ odds }: { odds: GameOdds }) {
         )}
       </ul>
       {odds.book && <p className="odds-card-book">via {odds.book}</p>}
+    </article>
+  );
+}
+
+/**
+ * Pregame markets board. Same data source as the live MarketsTicker
+ * (W19), but rendered as a vertical card for the pregame rail so the
+ * listener understands the betting context before the show starts.
+ *
+ * Refreshes once on mount, plus a slow 30s poll while the user lingers
+ * on the pregame screen. Hidden silently when no relevant markets
+ * exist for the game's sport so an uncovered league doesn't show a
+ * skeleton card.
+ */
+function MarketsBoardCard({ game }: { game?: SportsGameState }) {
+  const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
+
+  useEffect(() => {
+    if (!game?.sport) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = async () => {
+      try {
+        const response = await fetch(`/api/markets?sport=${encodeURIComponent(game.sport)}`, {
+          cache: "no-store"
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as { snapshots?: MarketSnapshot[] };
+        if (cancelled) return;
+        setSnapshots(Array.isArray(payload.snapshots) ? payload.snapshots : []);
+      } catch {
+        // Silent — pregame markets are atmosphere, not a blocker.
+      }
+    };
+    void tick();
+    timer = setInterval(tick, 30000);
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [game?.sport]);
+
+  const relevant = useMemo(() => {
+    if (!game?.sport || snapshots.length === 0) return [];
+    return pickRelevantMarketsForGame(
+      snapshots,
+      { sport: game.sport, teams: [game.awayTeam, game.homeTeam] },
+      4
+    );
+  }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam]);
+
+  if (!relevant.length) return null;
+
+  return (
+    <article className="huddle-card markets-board-card">
+      <span className="eyebrow">
+        <span className="icon icon-chart" aria-hidden="true" />
+        What the markets say
+      </span>
+      <ul className="markets-board-list">
+        {relevant.map((snapshot) => {
+          const delta = snapshot.recentDeltaCents ?? 0;
+          const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+          return (
+            <li key={`${snapshot.source}:${snapshot.externalId}`} data-source={snapshot.source}>
+              <div className="markets-board-row-meta">
+                <span className="markets-board-source">
+                  {snapshot.source === "kalshi" ? "Kalshi" : "Polymarket"}
+                </span>
+                <strong>{snapshot.outcomeLabel}</strong>
+                <span className="markets-board-title" title={snapshot.title}>{snapshot.title}</span>
+              </div>
+              <div className="markets-board-row-price">
+                <b>{snapshot.yesPriceCents}¢</b>
+                {delta !== 0 && (
+                  <em className={`markets-board-delta is-${direction}`}>
+                    {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
+                  </em>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
     </article>
   );
 }

@@ -16220,3 +16220,95 @@ body {
 .listener-highlight-captions.is-failed {
   color: #c2304a;
 }
+
+/* Pregame markets board — vertical card variant of the live ticker. */
+.markets-board-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hr-space-3);
+}
+
+.markets-board-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hr-space-2);
+}
+
+.markets-board-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--hr-space-3);
+  align-items: center;
+  padding: var(--hr-space-2) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--hr-line) 60%, transparent);
+}
+
+.markets-board-list li:last-child {
+  border-bottom: none;
+}
+
+.markets-board-row-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.markets-board-source {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.markets-board-list li[data-source="kalshi"] .markets-board-source {
+  color: #06624c;
+}
+
+.markets-board-list li[data-source="polymarket"] .markets-board-source {
+  color: #1c3a96;
+}
+
+.markets-board-row-meta strong {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.markets-board-title {
+  font-size: 0.72rem;
+  color: var(--hr-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markets-board-row-price {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.markets-board-row-price b {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.markets-board-delta {
+  font-style: normal;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.markets-board-delta.is-up {
+  color: #08925b;
+}
+
+.markets-board-delta.is-down {
+  color: #c2304a;
+}
