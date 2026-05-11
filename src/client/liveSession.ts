@@ -106,9 +106,13 @@ export async function startLiveSession(
   };
 
   // Wait for the first event — must be `session-ready` with the
-  // sessionId. Anything else (or a closed stream) is a fatal handshake
-  // failure.
+  // sessionId. The server emits the snapshot + opener commentary
+  // synchronously after the handshake, so any of those events may
+  // arrive in the SAME TCP chunk as session-ready. We extract the
+  // handshake but pass the rest along to the consumer once the
+  // drain loop is set up.
   let sessionId: string | undefined;
+  let pendingPostHandshake: Array<{ type?: string; [k: string]: unknown }> = [];
   while (!sessionId) {
     const { value, done } = await reader.read();
     if (done) {
@@ -116,27 +120,41 @@ export async function startLiveSession(
       return undefined;
     }
     const events = drainBlocks(decoder.decode(value, { stream: true }));
-    for (const evt of events) {
-      if (evt?.type === "session-ready" && typeof evt.sessionId === "string") {
-        sessionId = evt.sessionId;
-        break;
+    const handshakeIndex = events.findIndex(
+      (evt) => evt?.type === "session-ready" && typeof evt.sessionId === "string"
+    );
+    if (handshakeIndex < 0) {
+      // Defensive: per the protocol, session-ready is always first
+      // — but if this chunk had only preamble/comments, just keep
+      // reading. A non-session-ready event arriving before the
+      // handshake would land at handshakeIndex 0 (rejected here).
+      if (events.length > 0) {
+        handlers.onError?.("Server emitted an event before session handshake.");
+        try { await reader.cancel(); } catch { /* swallow */ }
+        return undefined;
       }
-      // Per the protocol, session-ready is always first. Anything else
-      // arriving before it indicates a server bug — surface and bail.
-      handlers.onError?.("Server emitted an event before session handshake.");
-      try { await reader.cancel(); } catch { /* swallow */ }
-      return undefined;
+      continue;
     }
+    sessionId = events[handshakeIndex].sessionId as string;
+    // Anything that arrived in the same chunk after session-ready
+    // (typically the snapshot + opener commentary) needs to reach
+    // the consumer. Stash for the drain loop to flush first.
+    pendingPostHandshake = events.slice(handshakeIndex + 1);
   }
 
   let opened = true;
   let closedManually = false;
   handlers.onOpen?.();
 
-  // Background drain loop. Keeps pumping events until the server
+  // Background drain loop. Flushes any same-chunk-as-handshake
+  // events first, then keeps pumping events until the server
   // closes the stream or the consumer aborts.
   const drainLoop = async () => {
     try {
+      for (const evt of pendingPostHandshake) {
+        if (evt?.type === "session-ready") continue;
+        handlers.onEvent(evt as ClientServerEvent);
+      }
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;

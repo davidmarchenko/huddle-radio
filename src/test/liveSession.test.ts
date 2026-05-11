@@ -139,6 +139,48 @@ describe("startLiveSession", () => {
     expect(handle!.isOpen()).toBe(true);
   });
 
+  it("forwards events that arrive in the SAME TCP chunk as the handshake", async () => {
+    // Regression: the server emits session-ready, snapshot, and the
+    // opener commentary back-to-back. If the handshake-wait loop
+    // dropped the events that came after session-ready in the same
+    // chunk, the snapshot + commentary (and the TTS audio attached
+    // to commentary turns) would silently never reach onEvent —
+    // exactly the symptom the user was seeing post-deploy.
+    let pushChunk: ((chunk: Uint8Array) => void) | null = null;
+    let closeStream: (() => void) | null = null;
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        pushChunk = (chunk) => controller.enqueue(chunk);
+        closeStream = () => controller.close();
+      }
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith("/api/live/stream")) {
+          return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }
+        return new Response("{}", { status: 200 });
+      })
+    );
+    const events: ClientServerEvent[] = [];
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: (e) => events.push(e) });
+    // One single chunk containing handshake + snapshot + commentary,
+    // exactly how the server emits them synchronously.
+    const handshake = `event: session-ready\ndata: ${JSON.stringify({ type: "session-ready", sessionId: "session-multi" })}\n\n`;
+    const snapshot = `event: snapshot\ndata: ${JSON.stringify({ type: "snapshot", fantasy: {}, game: {}, health: [], providers: {} })}\n\n`;
+    const commentary = `event: commentary\ndata: ${JSON.stringify({ type: "commentary", commentary: { id: "c1", text: "opener" } })}\n\n`;
+    pushChunk!(encoder.encode(handshake + snapshot + commentary));
+    const handle = await sessionPromise;
+    expect(handle).toBeDefined();
+    // Wait for the drain loop's microtask to flush the post-handshake events.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(events.map((e) => e.type)).toEqual(["snapshot", "commentary"]);
+    closeStream?.();
+  });
+
   it("dispatches typed SSE events through onEvent in JSON-parsed form", async () => {
     const fake = installFetchStream({ sessionId: "session-2" });
     const events: ClientServerEvent[] = [];
