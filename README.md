@@ -1,8 +1,47 @@
 # Huddle Radio
 
-Huddle Radio is a personalized sports audio show for a fantasy league or friend group. It listens to fantasy state, sports play-by-play, optional video/screen-share context, news context, and group preferences, then produces low-latency commentary with optional streaming text-to-speech.
+A personalized AI sports producer that turns any game into a live audio
+show made for you and your friends. It pulls fantasy state, official
+play-by-play, broadcast video/audio, and live prediction-market prices
+into a multi-host on-air conversation that knows your roster and reacts
+to the same signals you do.
 
-The current product is a local MVP for NFL fantasy football. It runs without credentials through demo data, but it already has provider seams for ESPN Fantasy, Sleeper, ESPN scoreboard data, OpenAI commentary/vision, ElevenLabs streaming TTS, and future licensed data/model providers.
+## The pitch
+
+Three multimodal AI surfaces, one model:
+
+- **Nemotron Nano Omni — vision** watches the broadcast frame-by-frame
+  via NVIDIA's hosted catalog (or a self-hosted NIM container) and
+  surfaces what it sees in a "Nemotron sees" panel
+  (`docs/nim-on-prem.md`).
+- **Nemotron Nano Omni — ASR** transcribes broadcast audio and the
+  listener's push-to-talk "Cue host" button (W18). The same word-level
+  timestamps power karaoke-style WebVTT subtitles for shareable clips.
+- **Nemotron Nano Omni — subtitles** generates a `.vtt` track for any
+  archived TTS clip via `POST /api/clip/subtitles` so a moment can
+  ship to a group chat with synced captions.
+
+Live market signals from Kalshi (`KXNFL`, `KXNBA`, `KXMLBGAME`, …) and
+Polymarket land in two places:
+
+- A **score-bug-adjacent ticker** that surfaces 2-3 relevant markets
+  for the active game and refreshes every 8 seconds.
+- The **commentary engine itself** — a swing detector triggers a
+  "warming/cooling" lead when a market moves >5¢, and the persona
+  prompts cite Kalshi/Polymarket prices on-air.
+
+Listener feedback closes the loop: hold the **Cue host** button, ASR
+transcribes your question, the show queues it, and the next host turn
+addresses it directly.
+
+## Current Reality
+
+Huddle Radio runs as a Next.js 16 app (App Router + Turbopack) with a
+Fastify shim hosting the long-running websocket show until the
+SSE-based migration completes. Provider seams exist for ESPN Fantasy,
+Sleeper, ESPN scoreboard data, OpenAI commentary/vision, ElevenLabs
+streaming TTS, Kalshi, Polymarket, and Nemotron Nano Omni
+(vision/ASR/subtitles).
 
 ## What It Is
 
@@ -18,29 +57,41 @@ Huddle should feel like a live sports media product, not a fantasy admin dashboa
 
 Works now:
 
-- Demo fantasy league and scripted NFL plays.
-- Custom demo league JSON for experimenting with roster/player mappings.
-- Sleeper fantasy scaffold/read path.
-- ESPN Fantasy adapter for public leagues and private leagues with cookies.
-- ESPN public NFL scoreboard adapter.
-- YouTube URL detection and embed support.
-- Screen-share flow for ESPN, YouTube TV, cable apps, and other authenticated/DRM surfaces.
-- OpenAI commentary provider when `OPENAI_API_KEY` is configured.
-- OpenAI vision-based frame validation when `MODEL_PROVIDER=openai-vision`.
-- ElevenLabs WebSocket TTS when `ELEVENLABS_API_KEY` is configured.
-- Mock/local model and TTS fallbacks when keys are absent.
-- Media cache for team logos, player headshots, generated placeholders, and Huddle host art.
-- Unit/integration-style tests for providers, engine, media, server endpoints, WebSocket flow, and Huddle view-model helpers.
+- Multi-host live show with three personas (Maya, Theo, Cam), each
+  with separate voices and persona prompts.
+- Demo fantasy league and scripted NFL plays; ESPN Fantasy adapter
+  for public + cookie-auth private leagues; Sleeper read path.
+- ESPN scoreboard adapter for NFL/NBA/MLB/NHL/WNBA/NCAA.
+- YouTube embed for legal live URLs; screen-share flow for ESPN,
+  YouTube TV, cable apps, and other authenticated/DRM surfaces.
+- OpenAI / Anthropic / Gemini commentary provider chain with local
+  fallback; per-provider timeout + budget cap.
+- Nemotron Nano Omni for vision (`POST /api/vision/observe`), ASR
+  (`POST /api/asr/transcribe`), and clip subtitles
+  (`POST /api/clip/subtitles`).
+- "Nemotron sees" panel surfaces what the vision model is observing.
+- Push-to-talk **Cue host** button: ASR-transcribed listener cues
+  ride into the next host turn via the WebSocket.
+- Live Kalshi + Polymarket markets ticker next to the score bug,
+  refreshed every 8s. Swing detector fires "warming/cooling" leads
+  when a market moves >5¢.
+- Sportradar / SportsDataIO adapters as paid live-data backups.
+- ElevenLabs WebSocket TTS with per-host voice routing.
+- Mock/local model + TTS fallbacks; media cache for team/player art.
+- Clip archiving to Vercel Blob with parallel WebVTT subtitle
+  generation, downloadable from the share card.
+- Yahoo OAuth scaffold; show history persisted to Upstash Redis.
+- 340+ unit/integration tests covering providers, engine, route
+  handlers, WebSocket protocol, and view-model helpers.
 
 Not production-ready yet:
 
-- Licensed real-time sports data beyond public ESPN scoreboard context.
+- WebSocket transport for the live show — fine for local dev and
+  any host that supports long-lived connections (Render, Fly,
+  Railway), but Vercel deploys need the in-progress SSE migration.
 - Production auth/accounts.
-- Yahoo OAuth.
-- Sportradar/SportsDataIO adapters.
-- Real Nemotron endpoint integration.
-- Multi-host backend orchestration with separate generated voices/personas.
-- Broadcast redistribution or any DRM bypass. The app only accepts user-provided/permitted sources.
+- Broadcast redistribution or any DRM bypass. The app only accepts
+  user-provided / permitted sources.
 
 ## Quick Start
 
@@ -49,7 +100,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:3000`.
 
 For the cleanest no-key demo:
 
@@ -60,8 +111,20 @@ For the cleanest no-key demo:
 
 The dev command starts both:
 
-- Fastify backend on `PORT` from `.env.example` (`8787` by default).
-- Vite frontend on `http://localhost:5173`.
+- Next.js on `http://localhost:3000` (App Router + Turbopack).
+- Fastify on `http://localhost:8787` for the long-running show
+  WebSocket and any unmigrated `/api/*` routes. The Next.js config
+  rewrites `/api/*` and `/ws/*` to Fastify during the migration; as
+  each route ports to a Route Handler (see `src/app/api/*`), its
+  rewrite entry comes out of `next.config.ts`.
+
+Verify the Nemotron endpoint (hosted catalog or local NIM) with:
+
+```bash
+npm run verify:nemotron
+```
+
+See `docs/nim-on-prem.md` for the on-prem NIM cutover.
 
 ## Environment Setup
 
