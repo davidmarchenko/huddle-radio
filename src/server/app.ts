@@ -35,6 +35,9 @@ import { isVideoFrameSnapshot, normalizeValidationPlay } from "./visionRequest";
 import type { MultimodalModelProvider } from "../shared/contracts";
 import { createCommentaryProvider, describeCommentaryStack } from "./createCommentaryProvider";
 import { createOddsProvider } from "./createOddsProvider";
+import { fetchMarketSnapshots, pickRelevantMarketsForGame } from "./marketsProvider";
+import { detectMarketSwings } from "../providers/commentaryPrompts";
+import type { MarketSnapshot } from "../shared/contracts";
 import { getMetrics, incrementCounter, registerCommentaryChain, registerNewsChain, registerVisionChain, ShowUsageBudget } from "./metrics";
 import { getDefaultShowHistoryStore, isValidListenerId } from "./showHistoryStore";
 import { getDefaultYahooTokenStore } from "./yahooTokenStore";
@@ -397,6 +400,10 @@ export async function buildApp() {
     // commentary tick. Drained on each draft and acked to the client
     // so the UI can mark them as "answered."
     let pendingCues: ListenerCue[] = [];
+    // W14/W19: the markets snapshot we last cited on-air. The next
+    // tick compares against this to detect swings worth surfacing as
+    // marketSwing in the persona prompt.
+    let lastMarketsForSwing: MarketSnapshot[] = [];
     // Per-show usage budget. When exceeded, callers below swap commentary
     // → local templates and TTS → mock so the show can finish without
     // burning vendor budget on a runaway tick loop.
@@ -634,6 +641,30 @@ export async function buildApp() {
             // them from the "queued" list.
             const cuesForTurn = pendingCues;
             pendingCues = [];
+
+            // W19/W14 wiring: snapshot the relevant markets for this
+            // game on every tick, compare to the last batch we sent
+            // on-air, and surface a swing when one moved >5¢. Failures
+            // fall through silently — markets are commentary color,
+            // never a tick blocker.
+            let marketsForTurn: MarketSnapshot[] = [];
+            let swingForTurn: ReturnType<typeof detectMarketSwings> = undefined;
+            try {
+              const allMarkets = await fetchMarketSnapshots({ sports: [gameState.sport] });
+              marketsForTurn = pickRelevantMarketsForGame(allMarkets, {
+                sport: gameState.sport,
+                teams: [gameState.awayTeam, gameState.homeTeam],
+                players: play.playerIds
+              }, 6);
+              swingForTurn = detectMarketSwings(marketsForTurn, lastMarketsForSwing);
+              lastMarketsForSwing = marketsForTurn;
+            } catch (error) {
+              app.log.warn(
+                { err: error instanceof Error ? error.message : String(error) },
+                "Markets fetch failed for tick — proceeding without market color"
+              );
+            }
+
             const commentary = createLivecastCommentary({
               league: fantasy,
               play,
@@ -659,6 +690,8 @@ export async function buildApp() {
               odds,
               analytics,
               listenerCues: cuesForTurn,
+              markets: marketsForTurn.length > 0 ? marketsForTurn : undefined,
+              marketSwing: swingForTurn,
               fallbackText: commentary.text
             });
             commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
