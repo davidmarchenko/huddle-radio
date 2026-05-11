@@ -160,10 +160,6 @@ export async function startLiveSession(
     try {
       for (const evt of pendingPostHandshake) {
         if (evt?.type === "session-ready") continue;
-        // Diagnostic: surface every parsed event type at the transport
-        // boundary so we can tell "event never arrived" apart from
-        // "event arrived but dispatcher swallowed it."
-        console.log("[huddle.sse]", evt?.type, "(post-handshake)");
         handlers.onEvent(evt as ClientServerEvent);
       }
       while (true) {
@@ -174,7 +170,6 @@ export async function startLiveSession(
           // Ignore the handshake event if the server ever re-emits it
           // (defensive — current protocol fires it exactly once).
           if (evt?.type === "session-ready") continue;
-          console.log("[huddle.sse]", evt?.type);
           handlers.onEvent(evt as ClientServerEvent);
         }
       }

@@ -86,11 +86,14 @@ async function* streamDialogueAudio(
   lines: DialogueLine[],
   commentaryId: string,
   synthesize: (input: { commentaryId: string; text: string; hostId?: HostId }) => AsyncIterable<TTSAudioChunk>,
-  isStopped: () => boolean
+  isStopped: () => boolean,
+  logger: ShowEngineLogger
 ): AsyncGenerator<TTSAudioChunk> {
   const lineState = lines.map(() => ({
     chunks: [] as TTSAudioChunk[],
-    done: false
+    done: false,
+    error: undefined as Error | undefined,
+    yieldedChunks: false
   }));
   let notify: (() => void) | undefined;
   const ping = () => {
@@ -99,8 +102,10 @@ async function* streamDialogueAudio(
     cb?.();
   };
 
-  // Start every line synth concurrently. Failures are swallowed per
-  // line so a mid-turn WS error on line 3 still lets lines 1-2 play.
+  // Start every line synth concurrently. Per-line errors are
+  // captured so the drainer can surface them — naive swallow leaves
+  // the listener with silent audio AND no diagnostic, which is the
+  // worst possible failure mode.
   const launches = lines.map(async (line, lineIndex) => {
     try {
       for await (const chunk of synthesize({ commentaryId, text: line.text, hostId: line.hostId })) {
@@ -108,10 +113,18 @@ async function* streamDialogueAudio(
         lineState[lineIndex].chunks.push(chunk);
         ping();
       }
-    } catch {
-      // Swallow: the lost line is silent but the rest of the turn
-      // continues. Logging happens at the engine level via the
-      // surrounding try/catch when the queue is consumed.
+    } catch (error) {
+      lineState[lineIndex].error = error instanceof Error ? error : new Error(String(error));
+      logger.warn(
+        {
+          commentaryId,
+          lineIndex,
+          hostId: line.hostId,
+          textPreview: line.text.slice(0, 80),
+          err: lineState[lineIndex].error?.message
+        },
+        "Per-line TTS synthesis failed"
+      );
     } finally {
       lineState[lineIndex].done = true;
       ping();
@@ -119,10 +132,14 @@ async function* streamDialogueAudio(
   });
 
   let currentLine = 0;
+  let totalYielded = 0;
   while (currentLine < lineState.length) {
     if (isStopped()) break;
     while (lineState[currentLine].chunks.length > 0) {
-      yield lineState[currentLine].chunks.shift()!;
+      const chunk = lineState[currentLine].chunks.shift()!;
+      lineState[currentLine].yieldedChunks = true;
+      totalYielded += 1;
+      yield chunk;
     }
     if (lineState[currentLine].done) {
       currentLine += 1;
@@ -133,6 +150,18 @@ async function* streamDialogueAudio(
 
   // Drain remaining promises so we don't leak unhandled rejections.
   await Promise.allSettled(launches);
+
+  // If NO line yielded any audio, propagate the first error so the
+  // engine's outer catch fires and emits an SSE `error` event the
+  // listener can see. Without this, total-failure looks identical
+  // to "audio playing fine" from the SSE side.
+  if (totalYielded === 0) {
+    const firstError = lineState.find((s) => s.error)?.error;
+    if (firstError) throw firstError;
+    // No errors but no audio either — happens when the provider
+    // is a mock that yields metadata-only chunks. Treat as a
+    // soft no-op (legitimate state for dev / test paths).
+  }
 }
 
 const NOOP_LOGGER: ShowEngineLogger = {
@@ -158,12 +187,12 @@ export class ShowEngine {
   private lastMarketsForSwing: MarketSnapshot[] = [];
   private recentCommentary: string[] = [];
   private recentHostIds: HostId[] = [];
-  /** Wall-clock ms of the last commentary turn we delivered. Used to skip "minor" plays that arrive while a topic is still mid-thread. */
+  /** Wall-clock ms of the last commentary turn we delivered. Used by listener-cue routing today; available to future "no recent action" detection. */
   private lastCommentaryAtMs = 0;
-  /** Consecutive minor plays we've skipped. Capped so the show can't go silent on a long stretch of nothing-plays. */
-  private consecutiveSkipped = 0;
   /** Most recently observed play id. When the next tick returns the same id (pre-game placeholder, scoreboard hiccup), there's literally nothing new to commentate on. */
   private lastSeenPlayId?: string;
+  /** Consecutive ticks where the play id was unchanged. Capped — past the cap we force a turn so a pre-game game doesn't go silent forever. */
+  private duplicatePlayCount = 0;
 
   constructor(options: { id?: string; logger?: ShowEngineLogger } = {}) {
     this.id = options.id ?? `show-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -418,7 +447,8 @@ export class ShowEngine {
             openerLines,
             opener.id,
             (input) => ttsProvider.synthesize(input),
-            () => this.stopped
+            () => this.stopped,
+            this.logger
           )) {
             if (this.stopped) break;
             opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
@@ -520,39 +550,50 @@ export class ShowEngine {
           // the play array stores them. Skip without counting
           // toward the routine cap — duplicates are not "minor
           // plays we're holding back," they're a missing data
-          // signal we should silently ignore. Listener cues / market
-          // swings still escape the skip because they carry NEW
-          // information the listener wants to hear about.
+          // signal. Listener cues / market swings always escape
+          // the skip because they carry NEW information the
+          // listener wants to hear about.
+          //
+          // Capped so a long pre-game stretch doesn't go silent
+          // forever: past MAX_DUPLICATE_SKIPS we force a turn so
+          // the hosts riff on whatever non-play context is fresh
+          // (odds, markets, news, lineup outlook). Repetitive is
+          // better than mute.
+          const MAX_DUPLICATE_SKIPS = 4;
           const hasUserSignal = cuesForTurn.length > 0 || !!swingForTurn;
-          if (play.id === this.lastSeenPlayId && !hasUserSignal) {
+          const isDuplicate = play.id === this.lastSeenPlayId;
+          if (isDuplicate && !hasUserSignal && this.duplicatePlayCount < MAX_DUPLICATE_SKIPS) {
+            this.duplicatePlayCount += 1;
             this.logger.info(
-              { playId: play.id, type: play.type },
+              { playId: play.id, type: play.type, duplicates: this.duplicatePlayCount },
               "Skipping duplicate play (no new game state since last tick)"
             );
             return;
           }
-          this.lastSeenPlayId = play.id;
-
-          // Topic threading: if this play landed as "routine" (no
-          // fantasy impact, no big game moment) and our last
-          // commentary turn is still recent, skip this tick entirely.
-          // The hosts stay on the previous topic instead of pivoting
-          // to a play nobody cares about. Cap consecutive skips so
-          // the show can't go silent during a long stretch of
-          // nothing-plays.
-          const TOPIC_HOLD_MS = 18_000;
-          const MAX_SKIPS_IN_A_ROW = 2;
-          const isRoutine = commentary.moment.priority === "routine";
-          const recentTopic = Date.now() - this.lastCommentaryAtMs < TOPIC_HOLD_MS;
-          if (isRoutine && recentTopic && !hasUserSignal && this.consecutiveSkipped < MAX_SKIPS_IN_A_ROW) {
-            this.consecutiveSkipped += 1;
+          if (!isDuplicate) {
+            this.lastSeenPlayId = play.id;
+            this.duplicatePlayCount = 0;
+          } else {
+            // Forced through after the cap — keep counting so the
+            // next true play change still resets cleanly, but log
+            // that we punched through.
             this.logger.info(
-              { playId: play.id, type: play.type, consecutiveSkipped: this.consecutiveSkipped },
-              "Skipping routine play to keep the previous topic threaded"
+              { playId: play.id, duplicates: this.duplicatePlayCount },
+              "Forcing turn after duplicate-play cap to avoid extended silence"
             );
-            return;
+            this.duplicatePlayCount = 0;
           }
-          this.consecutiveSkipped = 0;
+
+          // Routine-play skipping is intentionally NOT done. A
+          // sports show is fundamentally different from a NotebookLM
+          // overview: every play is a new piece of game state the
+          // listener wants someone to react to, even if its
+          // "priority" score is low. Staying on the previous topic
+          // for 2-3 ticks felt podcast-like in theory but in
+          // practice produced long stretches of silence. The
+          // duplicate-play guard above is the right floor — the
+          // engine only stays quiet when there's literally no new
+          // game state to react to.
 
           const textStart = performance.now();
           const dialogueLines = await commentaryProvider.draft({
@@ -622,7 +663,8 @@ export class ShowEngine {
               commentary.lines,
               commentary.id,
               (input) => ttsProvider.synthesize(input),
-              () => this.stopped
+              () => this.stopped,
+              this.logger
             )) {
               if (this.stopped) break;
               commentary.latency.ttsFirstAudioMs ??= audio.latencyMs;

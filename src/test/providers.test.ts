@@ -73,7 +73,7 @@ describe("demo providers", () => {
 });
 
 describe("commentary and TTS providers", () => {
-  it("local commentary returns fallback text wrapped as a single dialogue line", async () => {
+  it("local commentary produces multi-speaker dialogue rotating peers off the lead", async () => {
     const lines = await new LocalCommentaryProvider().draft({
       play: demoPlays[0],
       observation: { id: "obs", source: "stream-url", summary: "summary", confidence: 0.8, observedAt: new Date().toISOString(), latencyMs: 1 },
@@ -81,10 +81,18 @@ describe("commentary and TTS providers", () => {
       group: { listener: { name: "Alex", rosterId: "roster-alex" }, tone: "pg", homeTeamBias: "balanced", friends: [{ id: "a", name: "Alex", favoriteTeam: "KC" }] },
       news: [],
       recentCommentary: [],
+      hostId: "theo",
       fallbackText: "fallback"
     });
-    expect(lines).toHaveLength(1);
-    expect(lines[0].text).toBe("fallback");
+    // At minimum the lead's call, then a peer reactor — never one
+    // host monologuing. (Color line may be empty when no odds/markets
+    // are present, hence >= 2 instead of exactly 3.)
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines[0].hostId).toBe("theo");
+    // Subsequent line must route to one of the OTHER hosts; the whole
+    // point of the rewrite is to stop sounding like one person.
+    const peerHosts = lines.slice(1).map((l) => l.hostId);
+    expect(peerHosts.every((h) => h !== "theo")).toBe(true);
   });
 
   it("OpenAI commentary falls back to a single line when no API key is configured", async () => {

@@ -147,7 +147,12 @@ function App() {
   const [videoNotice, setVideoNotice] = useState(() => initialVideoNotice(persisted.videoUrl));
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [setupPane, setSetupPane] = useState<SetupPane>("league");
-  const [ttsEnabled, setTtsEnabled] = useState(persisted.ttsEnabled ?? true);
+  // Always start with TTS on. A previous "demo rehearsal" path
+  // wrote `ttsEnabled: false` into localStorage for many users, which
+  // silently disabled audio across subsequent sessions. Force-default
+  // to true so the audio path always engages; users can still toggle
+  // off via the checkbox during the session if needed.
+  const [ttsEnabled, setTtsEnabled] = useState(true);
   const [speechRate, setSpeechRate] = useState(persisted.speechRate ?? 1);
   const [group, setGroup] = useState<GroupSettings>(normalizeGroupSettings(persisted.group));
   const [profile, setProfile] = useState<UserProfile | undefined>(persisted.profile);
@@ -829,17 +834,6 @@ function App() {
       if (message.type === "tts") {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
-        // Diagnostic: surface every TTS dispatch in the console so we
-        // can see whether events arrive AND whether the audio chunk
-        // has the bytes we expect to play. Stripped once the audio
-        // path is debugged.
-        console.log("[huddle.tts]", {
-          provider: message.audio.provider,
-          mimeType: message.audio.mimeType,
-          base64Bytes: message.audio.base64Audio?.length ?? 0,
-          isFinal: message.audio.isFinal,
-          audioContextState: audioContextRef.current?.state ?? "none"
-        });
         if (message.audio.base64Audio) {
           // W9: stash chunks for later clip archival. Mock TTS never
           // provides bytes, so this only fills for the real ElevenLabs
@@ -865,11 +859,7 @@ function App() {
             if (oldestKey) clipChunksRef.current.delete(oldestKey);
           }
           audioQueueRef.current = audioQueueRef.current.then(() => {
-            if (livecastSessionRef.current !== sessionId) {
-              console.log("[huddle.tts] dropped — session no longer current");
-              return;
-            }
-            console.log("[huddle.tts] playing chunk", message.audio.commentaryId);
+            if (livecastSessionRef.current !== sessionId) return;
             return playBase64Audio(message.audio.base64Audio!, message.audio.mimeType, {
               audioContext: audioContextRef.current ?? undefined,
               isCancelled: () => livecastSessionRef.current !== sessionId,
@@ -1159,7 +1149,6 @@ function App() {
     setSportsGameId("");
     setVideoMode("stream-url");
     setVideoUrl("");
-    setTtsEnabled(false);
     setShowPrepared(true);
     setDemoMode(true);
     setFantasy(customLeague ?? demoLeagueState);

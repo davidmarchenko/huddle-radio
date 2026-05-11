@@ -97,8 +97,9 @@ describe("CommentaryProviderChain", () => {
     ]);
 
     const result = await chain.draft(baseInput);
-    expect(result).toHaveLength(1);
-    expect(result[0].text).toBe(baseInput.fallbackText);
+    // Local fallback now emits multi-speaker dialogue (≥1 line, lead first).
+    expect(result.length).toBeGreaterThanOrEqual(1);
+    expect(result[0].hostId).toBe(baseInput.hostId ?? "theo");
     expect(chain.getFallbackStats()).toMatchObject({ primary: 1, backup: 1 });
   });
 

@@ -101,6 +101,16 @@ export class CommentaryProviderChain implements CommentaryProvider {
 
   private recordFallback(providerId: string, error: unknown): void {
     this.fallbackHits.set(providerId, (this.fallbackHits.get(providerId) ?? 0) + 1);
+    // Surface the underlying error at warn so operators can spot
+    // 401s/429s/5xx without needing to instrument again. One short
+    // line per failure — no stack trace, that's `vercel logs` territory.
+    console.warn(JSON.stringify({
+      event: "commentary.chain.fallback",
+      providerId,
+      error: error instanceof Error ? error.message : String(error),
+      status: (error as { status?: number })?.status,
+      code: (error as { code?: string })?.code
+    }));
     this.options.onFallback?.(providerId, error);
   }
 }

@@ -85,6 +85,8 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     let done = false;
     let failure: Error | undefined;
     let notify: (() => void) | undefined;
+    let messageCount = 0;
+    let audioMessageCount = 0;
 
     socket.on("open", () => {
       socket.send(
@@ -98,9 +100,20 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     });
 
     socket.on("message", (data) => {
+      messageCount += 1;
       try {
-        const payload = JSON.parse(String(data)) as { audio?: string; isFinal?: boolean };
+        const payload = JSON.parse(String(data)) as { audio?: string; isFinal?: boolean; error?: string; message?: string; code?: number };
+        if (payload.error || payload.message) {
+          console.warn(JSON.stringify({
+            event: "tts.ws.server-error-msg",
+            commentaryId: input.commentaryId,
+            error: payload.error,
+            message: payload.message,
+            code: payload.code
+          }));
+        }
         if (payload.audio) {
+          audioMessageCount += 1;
           queue.push({
             id: crypto.randomUUID(),
             commentaryId: input.commentaryId,
@@ -121,12 +134,18 @@ export class ElevenLabsTTSProvider implements TTSProvider {
 
     socket.on("error", (error) => {
       const detail = error instanceof Error ? error.message : String(error);
+      console.warn(JSON.stringify({
+        event: "tts.ws.error",
+        commentaryId: input.commentaryId,
+        detail
+      }));
       failure = new Error(`ElevenLabs WebSocket error: ${detail}`);
       done = true;
       notify?.();
     });
 
     socket.on("close", (code, reason) => {
+      const reasonText = reason?.length ? reason.toString() : "";
       // ElevenLabs closes with a non-1000 code + a reason body when
       // the model rejects the request (wrong model for WS, bad voice
       // id, quota). Surface those details so the show emits a useful
@@ -136,8 +155,17 @@ export class ElevenLabsTTSProvider implements TTSProvider {
       // entirely if `code` arrives as undefined (mock sockets in
       // tests close without a code).
       if (!done && !failure && typeof code === "number" && code !== 1000) {
-        const reasonText = reason?.length ? reason.toString() : `code ${code}`;
-        failure = new Error(`ElevenLabs WebSocket closed: ${reasonText}`);
+        failure = new Error(`ElevenLabs WebSocket closed: ${reasonText || `code ${code}`}`);
+      } else if (!failure && typeof code === "number" && audioMessageCount === 0) {
+        // Silent failure mode: socket closed cleanly but we never received
+        // any audio. Without this, streamDialogueAudio sees zero chunks +
+        // zero errors and exits silently, leaving the listener with no
+        // audio AND no diagnostic. Surface as an explicit failure so the
+        // outer warn-logger fires. Skip when `code` is undefined — that's
+        // the test-mock signature, not a real ElevenLabs close.
+        failure = new Error(
+          `ElevenLabs WebSocket closed without audio (code=${code}, ${messageCount} non-audio messages received)`
+        );
       }
       done = true;
       notify?.();
