@@ -18,3 +18,5 @@ test-results/
 playwright-report/
 playwright/.cache/
 .vercel
+# TypeScript incremental cache — regenerated on every tsc invocation
+tsconfig.tsbuildinfo
