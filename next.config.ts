@@ -26,13 +26,20 @@ const nextConfig: NextConfig = {
     }
   },
   async rewrites() {
-    if (!REWRITE_TO_FASTIFY) return [];
+    // /favicon.ico → /icon.svg. Next.js' icon.svg convention only
+    // injects `<link rel="icon">`; some browsers auto-probe the
+    // root /favicon.ico path on first load anyway and log a 404
+    // when nothing's there. Cheaper than a real .ico binary.
+    const faviconRewrite = { source: "/favicon.ico", destination: "/icon.svg" };
+    if (!REWRITE_TO_FASTIFY) return [faviconRewrite];
     return [
+      faviconRewrite,
       // /api/:path* runs Next.js Route Handlers FIRST (when one
       // exists at that path), then falls through to this rewrite if
-      // no handler matched. So /api/clips, /api/live/*, /api/markets,
-      // /api/vision/*, /api/asr/*, /api/clip/* go to Next; only the
-      // unported routes hit Fastify.
+      // no handler matched. So the ported routes (clips, live/*,
+      // markets, vision/*, asr/*, clip/*, diagnostics, model-stack,
+      // sports/games, bootstrap, news/storylines, odds, media-cache)
+      // go to Next; only Fastify-only routes hit the rewrite.
       { source: "/api/:path*", destination: `${FASTIFY_TARGET}/api/:path*` },
       { source: "/ws/:path*", destination: `${FASTIFY_TARGET}/ws/:path*` }
     ];
