@@ -22,7 +22,7 @@ export type ModelStackProfile = {
     role: string;
   };
   tts: {
-    provider: "elevenlabs" | "fish" | "mock";
+    provider: "elevenlabs" | "fish" | "inworld" | "mock";
     model: string;
     status: "ready" | "needs-key" | "local";
     role: string;

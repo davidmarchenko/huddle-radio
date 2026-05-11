@@ -32,11 +32,12 @@ const EnvSchema = z.object({
   // catalog mirror.
   NEMOTRON_ENDPOINT: z.string().default("https://integrate.api.nvidia.com/v1"),
   NEMOTRON_API_KEY: z.string().optional(),
-  // Fish added as an experimental alternative — lower TTFB and native
-  // multi-speaker streaming. ElevenLabs stays the default. Set
-  // TTS_PROVIDER=fish explicitly to try it; auto-resolution does not
-  // pick Fish until ElevenLabs is unset.
-  TTS_PROVIDER: z.enum(["auto", "mock", "elevenlabs", "fish"]).default("auto"),
+  // ElevenLabs is the proven path. Fish + Inworld are experimental
+  // alternatives — Fish for native multi-speaker streaming, Inworld
+  // for natural disfluencies + cheap per-char pricing. Set
+  // TTS_PROVIDER explicitly to switch; auto only picks an experimental
+  // one when ElevenLabs is unset AND that provider's key is present.
+  TTS_PROVIDER: z.enum(["auto", "mock", "elevenlabs", "fish", "inworld"]).default("auto"),
   ELEVENLABS_API_KEY: z.string().optional(),
   ELEVENLABS_VOICE_ID: z.string().default("Xb7hH8MSUJpSbSDYk0k2"),
   // Per-host voice overrides. When set, Maya / Theo / Cam route to
@@ -55,6 +56,15 @@ const EnvSchema = z.object({
   FISH_VOICE_ID_THEO: z.string().optional(),
   FISH_VOICE_ID_CAM: z.string().optional(),
   FISH_MODEL: z.string().default("s2-pro"),
+  // Inworld TTS-2 — single-voice expressive TTS with natural
+  // disfluencies and cheap per-char pricing. Voice IDs are Inworld
+  // voice library handles (e.g., "Dennis") OR custom-cloned ones.
+  INWORLD_API_KEY: z.string().optional(),
+  INWORLD_VOICE_ID: z.string().default(""),
+  INWORLD_VOICE_ID_MAYA: z.string().optional(),
+  INWORLD_VOICE_ID_THEO: z.string().optional(),
+  INWORLD_VOICE_ID_CAM: z.string().optional(),
+  INWORLD_MODEL: z.string().default("inworld-tts-2"),
   ESPN_SWID: z.string().optional(),
   ESPN_S2: z.string().optional(),
   // Yahoo Fantasy OAuth. Yahoo requires HTTPS callback URLs even for
@@ -89,15 +99,18 @@ export const config = {
     isTest
       ? "mock"
       : parsed.TTS_PROVIDER === "auto"
-        ? // auto: prefer ElevenLabs (proven), fall back to Fish if only
-          // its key is set, then mock. MODEL_PRESET=local forces mock.
+        ? // auto: prefer ElevenLabs (proven), then Fish (multi-speaker
+          // streaming), then Inworld (single-voice + disfluencies),
+          // then mock. MODEL_PRESET=local forces mock.
           parsed.MODEL_PRESET === "local"
           ? "mock"
           : parsed.ELEVENLABS_API_KEY
             ? "elevenlabs"
             : parsed.FISH_API_KEY
               ? "fish"
-              : "mock"
+              : parsed.INWORLD_API_KEY
+                ? "inworld"
+                : "mock"
         : parsed.TTS_PROVIDER,
   // sota → expressive (eleven_v3 quality), fast/local → low-latency
   // (eleven_flash_v2_5). Earlier this ternary picked the same model

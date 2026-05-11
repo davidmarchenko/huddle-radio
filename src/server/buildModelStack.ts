@@ -52,13 +52,17 @@ export function buildModelStack(): ModelStackProfile {
           ? config.RESOLVED_ELEVENLABS_MODEL_ID
           : ttsProvider === "fish"
             ? config.FISH_MODEL
-            : "browser-speechSynthesis",
+            : ttsProvider === "inworld"
+              ? config.INWORLD_MODEL
+              : "browser-speechSynthesis",
       status:
         ttsProvider === "elevenlabs"
           ? (config.ELEVENLABS_API_KEY ? "ready" : "needs-key")
           : ttsProvider === "fish"
             ? (config.FISH_API_KEY ? "ready" : "needs-key")
-            : "local",
+            : ttsProvider === "inworld"
+              ? (config.INWORLD_API_KEY ? "ready" : "needs-key")
+              : "local",
       role: "Streams low-latency spoken commentary audio."
     }
   };

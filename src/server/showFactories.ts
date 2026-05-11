@@ -17,6 +17,7 @@ import { SportradarSportsDataProvider } from "../providers/sportradarSportsDataP
 import { SportsDataIoProvider } from "../providers/sportsDataIoProvider";
 import { ElevenLabsTTSProvider, MockTTSProvider, type HostVoiceMap } from "../providers/ttsProviders";
 import { FishAudioTTSProvider, buildFishHostVoiceMap } from "../providers/fishAudioProvider";
+import { InworldTtsProvider, buildInworldHostVoiceMap } from "../providers/inworldTtsProvider";
 import type { TTSProvider } from "../shared/contracts";
 import { UserVideoProvider } from "../providers/userVideoProvider";
 
@@ -132,6 +133,13 @@ export function createTTSProvider(): TTSProvider {
         config.FISH_MODEL,
         buildFishHostVoiceMap()
       );
+    case "inworld":
+      return new InworldTtsProvider(
+        config.INWORLD_API_KEY,
+        config.INWORLD_VOICE_ID,
+        config.INWORLD_MODEL,
+        buildInworldHostVoiceMap()
+      );
     case "mock":
     default:
       return new MockTTSProvider();
@@ -162,7 +170,9 @@ export function getActiveProviders(
         ? `ElevenLabs ${config.RESOLVED_ELEVENLABS_MODEL_ID}`
         : config.RESOLVED_TTS_PROVIDER === "fish"
           ? `Fish Audio ${config.FISH_MODEL}`
-          : "Mock/Browser TTS"
+          : config.RESOLVED_TTS_PROVIDER === "inworld"
+            ? `Inworld ${config.INWORLD_MODEL}`
+            : "Mock/Browser TTS"
   };
 }
 
