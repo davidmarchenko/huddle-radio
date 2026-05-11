@@ -175,12 +175,29 @@ export class ShowEngine {
           )
         : new MockTTSProvider();
     const mockTtsProvider = new MockTTSProvider();
+    // Serialize TTS requests per-engine: ElevenLabs subscriptions cap
+    // concurrent requests (the demo plan is 3). With v3 HTTP TTS
+    // taking 1-3s and the engine ticking every 5s, back-to-back
+    // commentary turns overlap. The lock makes turn N+1 wait for
+    // turn N's audio to finish before kicking off the next API
+    // call, keeping us at concurrency 1 from this engine and
+    // leaving the rest of the quota for other sessions.
+    let ttsLock: Promise<void> = Promise.resolve();
     const ttsProvider = {
-      synthesize: (input: Parameters<typeof realTtsProvider.synthesize>[0]) => {
+      async *synthesize(input: Parameters<typeof realTtsProvider.synthesize>[0]) {
         incrementCounter("ttsRequests");
-        return budget.isTtsDegraded()
-          ? mockTtsProvider.synthesize(input)
-          : realTtsProvider.synthesize(input);
+        const previous = ttsLock;
+        let release!: () => void;
+        ttsLock = new Promise<void>((resolve) => { release = resolve; });
+        try {
+          await previous;
+          const provider = budget.isTtsDegraded() ? mockTtsProvider : realTtsProvider;
+          for await (const chunk of provider.synthesize(input)) {
+            yield chunk;
+          }
+        } finally {
+          release();
+        }
       }
     };
 

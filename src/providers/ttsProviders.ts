@@ -171,28 +171,57 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     const start = performance.now();
     const voiceId = this.resolveVoiceId(input.hostId);
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "xi-api-key": this.apiKey!,
-        "content-type": "application/json",
-        "accept": "audio/mpeg"
-      },
-      body: JSON.stringify({
-        text: input.text,
-        model_id: this.modelId,
-        voice_settings: { stability: 0.45, similarity_boost: 0.75 }
-      })
+    const body = JSON.stringify({
+      text: input.text,
+      model_id: this.modelId,
+      voice_settings: { stability: 0.45, similarity_boost: 0.75 }
     });
-    if (!response.ok) {
-      let detail = `HTTP ${response.status}`;
-      try {
-        const body = await response.text();
-        if (body) detail = `${detail}: ${body.slice(0, 200)}`;
-      } catch {
-        // body unreadable — keep status-only detail
+
+    // ElevenLabs' lower subscription tiers cap concurrent requests
+    // (3 on Creator). When the engine ticks faster than v3 HTTP TTS
+    // generates audio, back-to-back turns can race past the lock and
+    // hit 429. Retry the rate-limit case with exponential backoff so
+    // the show stays narrated even when the quota is tight. Other
+    // failures fall through immediately — no point retrying 401s.
+    const MAX_ATTEMPTS = 4;
+    let response: Response | undefined;
+    let lastDetail = "";
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "xi-api-key": this.apiKey!,
+          "content-type": "application/json",
+          "accept": "audio/mpeg"
+        },
+        body
+      });
+      if (response.ok) break;
+      if (response.status !== 429) {
+        let detail = `HTTP ${response.status}`;
+        try {
+          const text = await response.text();
+          if (text) detail = `${detail}: ${text.slice(0, 200)}`;
+        } catch {
+          // body unreadable — keep status-only detail
+        }
+        throw new Error(`ElevenLabs HTTP TTS failed: ${detail}`);
       }
-      throw new Error(`ElevenLabs HTTP TTS failed: ${detail}`);
+      // 429: drain the body so the connection releases cleanly, then
+      // back off. ElevenLabs sometimes returns a `Retry-After` header
+      // in seconds — honor it when present; otherwise exponential
+      // backoff (250ms * 2^attempt) with a small jitter so parallel
+      // engines don't all retry at the same instant.
+      try { lastDetail = (await response.text()).slice(0, 200); } catch { /* body unreadable */ }
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterMs = retryAfterHeader && /^\d+(\.\d+)?$/.test(retryAfterHeader)
+        ? Math.min(Number(retryAfterHeader) * 1000, 8000)
+        : Math.min(250 * 2 ** attempt + Math.random() * 150, 4000);
+      if (attempt === MAX_ATTEMPTS - 1) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, retryAfterMs));
+    }
+    if (!response || !response.ok) {
+      throw new Error(`ElevenLabs HTTP TTS failed: HTTP ${response?.status ?? "unknown"}${lastDetail ? `: ${lastDetail}` : ""}`);
     }
     const arrayBuffer = await response.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString("base64");
