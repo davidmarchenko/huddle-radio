@@ -9,73 +9,17 @@ import {
 import type { ClientServerEvent, ListenerCue, LivecastRequest, VideoFrameSnapshot } from "../shared/contracts";
 
 /**
- * Tests for the client-side SSE transport (liveSession.ts).
+ * Tests for the client-side fetch-streaming transport (liveSession.ts).
  *
- * The module uses two browser-only globals: `fetch` (available in
- * Node 18+) and `EventSource` (NOT available in Node). We stub both
- * with controllable fakes so the test runs in the default Node
- * environment — no jsdom dependency, no real network.
+ * We stub `fetch` with a controllable fake. The stream-streaming
+ * variant returns a Response whose body is a custom ReadableStream
+ * the test can push SSE-formatted chunks into; the companion POSTs
+ * (cue/frame/nudge/stop) just return ad-hoc JSON responses. AbortController
+ * is supported natively in Node so we don't stub it.
  *
- * The fake EventSource lets each test inject events on demand and
- * inspect what the consumer received via the LiveSessionHandlers
- * callbacks. The fake fetch records every call so we can assert on
- * the request bodies that map to companion POST routes.
+ * The server's first SSE event must be `session-ready` with the
+ * sessionId — startLiveSession resolves only after this handshake.
  */
-
-type EventSourceListener = (event: { data: string }) => void;
-
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  readonly url: string;
-  // Per-event-type listener registry. EventSource fires the named
-  // listener (`addEventListener("commentary", …)`) when the server
-  // wrote `event: commentary` — we mirror that exact behavior.
-  private listeners = new Map<string, EventSourceListener[]>();
-  closed = false;
-
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-
-  addEventListener(type: string, listener: EventSourceListener): void {
-    const list = this.listeners.get(type) ?? [];
-    list.push(listener);
-    this.listeners.set(type, list);
-  }
-
-  close(): void {
-    this.closed = true;
-  }
-
-  /** Test-only: simulate the EventSource emitting an `open` event. */
-  fireOpen(): void {
-    for (const listener of this.listeners.get("open") ?? []) listener({ data: "" });
-  }
-
-  /** Test-only: simulate the EventSource emitting an `error` event. */
-  fireError(): void {
-    for (const listener of this.listeners.get("error") ?? []) listener({ data: "" });
-  }
-
-  /** Test-only: simulate a server-side `event: <type>\ndata: <json>` block. */
-  fireEvent(type: string, payload: unknown): void {
-    for (const listener of this.listeners.get(type) ?? []) {
-      listener({ data: JSON.stringify(payload) });
-    }
-  }
-
-  /** Test-only: dispatch only the most-recently constructed instance. */
-  static latest(): FakeEventSource {
-    const last = FakeEventSource.instances[FakeEventSource.instances.length - 1];
-    if (!last) throw new Error("No FakeEventSource constructed yet.");
-    return last;
-  }
-
-  static reset(): void {
-    FakeEventSource.instances.length = 0;
-  }
-}
 
 const baseRequest: LivecastRequest = {
   providerMode: "demo",
@@ -94,71 +38,118 @@ const baseRequest: LivecastRequest = {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  FakeEventSource.reset();
 });
 
-function stubStartOk(sessionId: string) {
-  // Mirror the real fetch signature (input, init?) so call[1] reads
-  // as the init arg in TypeScript without an undefined cast.
-  const fetchSpy = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
+/**
+ * Builds a fake stream-handler. Returns:
+ *  - `fetchSpy`: the vi.fn that gets installed as global.fetch
+ *  - `controller`: lets the test push events / close the stream / reject reads
+ *
+ * The `/api/live/stream` POST returns a streaming Response; every
+ * other URL returns `{ok: true}` 200 by default (override with `companionStatus`).
+ */
+function installFetchStream(options: {
+  sessionId: string;
+  /** Override the response status of the streaming endpoint. Defaults to 200. */
+  streamStatus?: number;
+  /** Override the body returned with a non-200 stream response. */
+  streamErrorBody?: unknown;
+  /** Override the response status companion POSTs return. Defaults to 200. */
+  companionStatus?: number;
+  /** Override the body companion POSTs return. */
+  companionBody?: unknown;
+}) {
+  let pushChunk: ((chunk: Uint8Array) => void) | null = null;
+  let closeStream: (() => void) | null = null;
+  let cancelled = false;
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      pushChunk = (chunk) => controller.enqueue(chunk);
+      closeStream = () => controller.close();
+    },
+    cancel() {
+      cancelled = true;
+    }
+  });
+
+  const fetchSpy = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-    if (url.endsWith("/api/live/start")) {
-      return new Response(JSON.stringify({ sessionId }), {
+    if (url.endsWith("/api/live/stream") && (init?.method ?? "GET").toUpperCase() === "POST") {
+      if ((options.streamStatus ?? 200) !== 200) {
+        return new Response(JSON.stringify(options.streamErrorBody ?? { error: "bad" }), {
+          status: options.streamStatus,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      return new Response(stream, {
         status: 200,
-        headers: { "content-type": "application/json" }
+        headers: { "content-type": "text/event-stream" }
       });
     }
-    return new Response(JSON.stringify({ ok: true }), {
-      status: 200,
+    return new Response(JSON.stringify(options.companionBody ?? { ok: true }), {
+      status: options.companionStatus ?? 200,
       headers: { "content-type": "application/json" }
     });
   });
   vi.stubGlobal("fetch", fetchSpy);
-  vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
-  return fetchSpy;
+
+  const writeSseEvent = (type: string, data: unknown) => {
+    pushChunk?.(encoder.encode(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`));
+  };
+
+  const writeHandshake = () => {
+    writeSseEvent("session-ready", { type: "session-ready", sessionId: options.sessionId });
+  };
+
+  return {
+    fetchSpy,
+    writeSseEvent,
+    writeHandshake,
+    closeStream: () => closeStream?.(),
+    isCancelled: () => cancelled
+  };
 }
 
 describe("startLiveSession", () => {
-  it("POSTs the LivecastRequest to /api/live/start and returns a handle with the sessionId", async () => {
-    const fetchSpy = stubStartOk("session-abc");
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined });
+  it("POSTs the LivecastRequest to /api/live/stream and resolves the handle once session-ready arrives", async () => {
+    const fake = installFetchStream({ sessionId: "session-abc" });
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined });
+    // Server hasn't emitted handshake yet — promise is still pending.
+    fake.writeHandshake();
+    const handle = await sessionPromise;
     expect(handle).toBeDefined();
     expect(handle!.sessionId).toBe("session-abc");
-    // First fetch call should be the start POST with the request body.
-    const startCall = fetchSpy.mock.calls.find((c) => String(c[0]).endsWith("/api/live/start"));
-    expect(startCall).toBeDefined();
-    const init = startCall![1] as RequestInit | undefined;
+    // The POST included the request body with the providerMode field.
+    const streamCall = fake.fetchSpy.mock.calls.find((c) => String(c[0]).endsWith("/api/live/stream"));
+    expect(streamCall).toBeDefined();
+    const init = streamCall![1] as RequestInit | undefined;
     expect(init?.method).toBe("POST");
     expect(JSON.parse(String(init?.body))).toMatchObject({ providerMode: "demo" });
   });
 
-  it("opens an EventSource pointed at /api/live/stream?sessionId=…", async () => {
-    stubStartOk("session-xyz");
-    await startLiveSession(baseRequest, { onEvent: () => undefined });
-    const source = FakeEventSource.latest();
-    expect(source.url).toBe("/api/live/stream?sessionId=session-xyz");
-  });
-
-  it("fires onOpen once the EventSource opens", async () => {
-    stubStartOk("session-1");
+  it("fires onOpen once the handshake lands", async () => {
+    const fake = installFetchStream({ sessionId: "session-1" });
     const onOpen = vi.fn();
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined, onOpen });
-    FakeEventSource.latest().fireOpen();
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined, onOpen });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
     expect(onOpen).toHaveBeenCalledTimes(1);
     expect(handle!.isOpen()).toBe(true);
   });
 
   it("dispatches typed SSE events through onEvent in JSON-parsed form", async () => {
-    stubStartOk("session-2");
+    const fake = installFetchStream({ sessionId: "session-2" });
     const events: ClientServerEvent[] = [];
-    await startLiveSession(baseRequest, { onEvent: (e) => events.push(e) });
-    const source = FakeEventSource.latest();
-    source.fireOpen();
-    source.fireEvent("commentary", {
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: (e) => events.push(e) });
+    fake.writeHandshake();
+    await sessionPromise;
+    fake.writeSseEvent("commentary", {
       type: "commentary",
       commentary: { id: "c1", text: "hello" }
     });
-    source.fireEvent("market-swing", {
+    fake.writeSseEvent("market-swing", {
       type: "market-swing",
       source: "kalshi",
       externalId: "k1",
@@ -169,22 +160,19 @@ describe("startLiveSession", () => {
       deltaCents: 10,
       direction: "warming"
     });
+    // The drain loop is async; wait a tick for the events to land in onEvent.
+    await new Promise((r) => setTimeout(r, 20));
     expect(events).toHaveLength(2);
     expect(events[0]?.type).toBe("commentary");
     expect(events[1]?.type).toBe("market-swing");
   });
 
-  it("calls onError when /api/live/start returns a non-2xx with a JSON error body", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ error: "bad request" }), {
-          status: 400,
-          headers: { "content-type": "application/json" }
-        })
-      )
-    );
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+  it("calls onError when /api/live/stream returns a non-2xx with a JSON error body", async () => {
+    installFetchStream({
+      sessionId: "n/a",
+      streamStatus: 400,
+      streamErrorBody: { error: "bad request" }
+    });
     const onError = vi.fn();
     const handle = await startLiveSession(baseRequest, { onEvent: () => undefined, onError });
     expect(handle).toBeUndefined();
@@ -193,7 +181,6 @@ describe("startLiveSession", () => {
 
   it("calls onError when fetch itself rejects (network failure before the server responds)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("network down"); }));
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
     const onError = vi.fn();
     const handle = await startLiveSession(baseRequest, { onEvent: () => undefined, onError });
     expect(handle).toBeUndefined();
@@ -201,38 +188,31 @@ describe("startLiveSession", () => {
     expect(onError.mock.calls[0]?.[0]).toMatch(/network down/);
   });
 
-  it("treats EventSource error AFTER open as a transient blip (not an onError)", async () => {
-    // EventSource auto-reconnects on transient blips; we should NOT
-    // tear down on every blip. onError only fires when the connection
-    // never opened in the first place.
-    stubStartOk("session-blip");
+  it("calls onError when the stream closes before the handshake event arrives", async () => {
+    const fake = installFetchStream({ sessionId: "n/a" });
     const onError = vi.fn();
-    await startLiveSession(baseRequest, { onEvent: () => undefined, onError });
-    const source = FakeEventSource.latest();
-    source.fireOpen();
-    source.fireError();
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it("tears down + reports onError when EventSource fires error BEFORE open (server returned 4xx/5xx)", async () => {
-    stubStartOk("session-fail");
-    const onError = vi.fn();
-    const onClose = vi.fn();
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined, onError, onClose });
-    const source = FakeEventSource.latest();
-    source.fireError(); // Never opened — treat as fatal
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined, onError });
+    // Close the stream without writing the handshake first.
+    fake.closeStream();
+    const handle = await sessionPromise;
+    expect(handle).toBeUndefined();
     expect(onError).toHaveBeenCalled();
-    expect(onClose).toHaveBeenCalled();
-    expect(source.closed).toBe(true);
-    expect(handle!.isOpen()).toBe(false);
+    expect(onError.mock.calls[0]?.[0]).toMatch(/session handshake/i);
   });
 });
 
 describe("sendFrame / sendCue / sendNudge", () => {
+  async function openSession(sessionId: string) {
+    const fake = installFetchStream({ sessionId });
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
+    return { fake, handle: handle! };
+  }
+
   it("sendFrame POSTs to /api/live/frame with sessionId + frame", async () => {
-    const fetchSpy = stubStartOk("session-f");
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined });
-    fetchSpy.mockClear();
+    const { fake, handle } = await openSession("session-f");
+    fake.fetchSpy.mockClear();
     const frame: VideoFrameSnapshot = {
       id: "f1",
       capturedAt: "2026-05-10T20:00:00Z",
@@ -241,37 +221,31 @@ describe("sendFrame / sendCue / sendNudge", () => {
       height: 360,
       dataUrl: "data:image/jpeg;base64,QUJD"
     };
-    await sendFrame(handle!, frame);
-    const call = fetchSpy.mock.calls[0];
+    await sendFrame(handle, frame);
+    const call = fake.fetchSpy.mock.calls[0];
     expect(String(call[0])).toBe("/api/live/frame");
     const body = JSON.parse(String((call[1] as RequestInit).body));
     expect(body).toMatchObject({ sessionId: "session-f", frame: { id: "f1" } });
   });
 
   it("sendCue POSTs to /api/live/cue and returns true on 2xx", async () => {
-    const fetchSpy = stubStartOk("session-c");
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined });
-    fetchSpy.mockClear();
+    const { fake, handle } = await openSession("session-c");
+    fake.fetchSpy.mockClear();
     const cue: ListenerCue = { id: "cue-1", text: "hi", capturedAt: new Date().toISOString() };
-    const ok = await sendCue(handle!, cue);
+    const ok = await sendCue(handle, cue);
     expect(ok).toBe(true);
-    expect(String(fetchSpy.mock.calls[0][0])).toBe("/api/live/cue");
+    expect(String(fake.fetchSpy.mock.calls[0][0])).toBe("/api/live/cue");
   });
 
   it("sendCue returns false when the server rejects (4xx/5xx)", async () => {
-    let calls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        calls += 1;
-        if (calls === 1) {
-          return new Response(JSON.stringify({ sessionId: "session-c2" }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ error: "no" }), { status: 404 });
-      })
-    );
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined });
+    const fake = installFetchStream({
+      sessionId: "session-c2",
+      companionStatus: 404,
+      companionBody: { error: "no" }
+    });
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
     const ok = await sendCue(handle!, {
       id: "cue-1",
       text: "hi",
@@ -281,11 +255,10 @@ describe("sendFrame / sendCue / sendNudge", () => {
   });
 
   it("sendNudge POSTs to /api/live/nudge with the hostId", async () => {
-    const fetchSpy = stubStartOk("session-n");
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined });
-    fetchSpy.mockClear();
-    await sendNudge(handle!, "cam");
-    const call = fetchSpy.mock.calls[0];
+    const { fake, handle } = await openSession("session-n");
+    fake.fetchSpy.mockClear();
+    await sendNudge(handle, "cam");
+    const call = fake.fetchSpy.mock.calls[0];
     expect(String(call[0])).toBe("/api/live/nudge");
     expect(JSON.parse(String((call[1] as RequestInit).body))).toMatchObject({
       sessionId: "session-n",
@@ -296,29 +269,18 @@ describe("sendFrame / sendCue / sendNudge", () => {
 
 describe("onSessionLost (cross-instance 410)", () => {
   it("fires when a POST returns 410 — once, even across multiple failed POSTs", async () => {
-    // Mimic the real cross-instance flow: /api/live/start succeeds
-    // (creating the session on instance A), but the follow-up POSTs
-    // land on instance B and get 410 WRONG_INSTANCE responses back.
-    let calls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        calls += 1;
-        if (calls === 1) {
-          return new Response(JSON.stringify({ sessionId: "session-410" }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ code: "WRONG_INSTANCE", error: "Session lives elsewhere" }), {
-          status: 410,
-          headers: { "content-type": "application/json" }
-        });
-      })
-    );
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+    const fake = installFetchStream({
+      sessionId: "session-410",
+      companionStatus: 410,
+      companionBody: { code: "WRONG_INSTANCE", error: "Session lives elsewhere" }
+    });
     const onSessionLost = vi.fn();
-    const handle = await startLiveSession(baseRequest, {
+    const sessionPromise = startLiveSession(baseRequest, {
       onEvent: () => undefined,
       onSessionLost
     });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
     expect(handle).toBeDefined();
     // Three POSTs in quick succession — all return 410. The callback
     // is latched so only the FIRST fires the consumer's handler;
@@ -337,50 +299,49 @@ describe("onSessionLost (cross-instance 410)", () => {
   });
 
   it("does NOT fire on plain 4xx/5xx (only the 410 WRONG_INSTANCE marker)", async () => {
-    let calls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        calls += 1;
-        if (calls === 1) {
-          return new Response(JSON.stringify({ sessionId: "session-not-410" }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ error: "bad input" }), { status: 400 });
-      })
-    );
-    vi.stubGlobal("EventSource", FakeEventSource as unknown as typeof EventSource);
+    const fake = installFetchStream({
+      sessionId: "session-not-410",
+      companionStatus: 400,
+      companionBody: { error: "bad input" }
+    });
     const onSessionLost = vi.fn();
-    const handle = await startLiveSession(baseRequest, {
+    const sessionPromise = startLiveSession(baseRequest, {
       onEvent: () => undefined,
       onSessionLost
     });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
     await sendCue(handle!, { id: "c1", text: "hi", capturedAt: new Date().toISOString() });
     expect(onSessionLost).not.toHaveBeenCalled();
   });
 });
 
 describe("closeSession", () => {
-  it("closes the EventSource + POSTs to /api/live/stop with the sessionId", async () => {
-    const fetchSpy = stubStartOk("session-x");
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined });
-    const source = FakeEventSource.latest();
-    fetchSpy.mockClear();
+  it("aborts the streaming fetch + POSTs to /api/live/stop with the sessionId", async () => {
+    const fake = installFetchStream({ sessionId: "session-x" });
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
+    fake.fetchSpy.mockClear();
     await closeSession(handle!);
-    expect(source.closed).toBe(true);
-    // closeSession calls fetch /api/live/stop fire-and-forget, so we
-    // wait a tick to let the microtask flush.
+    // The drain loop's reader.read() throws AbortError after the
+    // controller aborts. Wait a tick for that microtask to complete
+    // and the stop POST to land.
     await new Promise((r) => setTimeout(r, 10));
-    const stopCall = fetchSpy.mock.calls.find((c) => String(c[0]).endsWith("/api/live/stop"));
+    const stopCall = fake.fetchSpy.mock.calls.find((c) => String(c[0]).endsWith("/api/live/stop"));
     expect(stopCall).toBeDefined();
     expect(handle!.isOpen()).toBe(false);
   });
 
   it("invokes onClose when the session closes manually", async () => {
-    stubStartOk("session-oc");
+    const fake = installFetchStream({ sessionId: "session-oc" });
     const onClose = vi.fn();
-    const handle = await startLiveSession(baseRequest, { onEvent: () => undefined, onClose });
-    FakeEventSource.latest().fireOpen();
+    const sessionPromise = startLiveSession(baseRequest, { onEvent: () => undefined, onClose });
+    fake.writeHandshake();
+    const handle = await sessionPromise;
     await closeSession(handle!);
+    // Wait for the drain loop's finally block to run after abort.
+    await new Promise((r) => setTimeout(r, 10));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

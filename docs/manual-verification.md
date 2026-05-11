@@ -48,8 +48,8 @@ Confirm in a second terminal:
       returns `200`.
 - [ ] `curl -s -o /dev/null -w "%{http_code}\n" 'http://localhost:3000/api/markets?sport=nfl'`
       returns `200`.
-- [ ] `curl -s -o /dev/null -w "%{http_code}\n" -X POST -H 'content-type: application/json' -d '{"profile":{"id":"u1","name":"Test","favoriteTeam":"DET","favoriteSport":"NFL","friends":[{"id":"f1","name":"Sam","favoriteTeam":"GB"}]},"gameId":"NFL:2024-W7-DET-vs-GB"}' http://localhost:3000/api/live/start`
-      returns `200` with a `sessionId` in the body.
+- [ ] `curl -s -N -X POST -H 'content-type: application/json' -d '{"providerMode":"demo","sportsDataMode":"demo","sportsGameId":"demo-kc-det","group":{"listener":{"name":"Alex","rosterId":"r"},"tone":"pg","homeTeamBias":"fantasy-first","friends":[{"id":"f1","name":"Sam","favoriteTeam":"DET"}]},"video":{"mode":"stream-url","url":""},"ttsEnabled":false,"cadenceMs":3000}' http://localhost:3000/api/live/stream | head -c 400`
+      streams SSE; the first non-preamble event is `event: session-ready` carrying a `sessionId`.
 - [ ] `curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/api/health`
       returns `404` — legacy Fastify-only diagnostics intentionally
       do not exist on Vercel, and `next start` is configured to skip
@@ -178,11 +178,12 @@ For deeper manual checks (markets count, clip round-trip, etc.):
 
 - **Console errors about `window is not defined`** → SSR bug, likely
   in a new `useState` initializer that touches `window`.
-- **EventSource immediately closes with no events** → check
-  `/api/live/start` returned a sessionId; if 400/404, request shape
-  doesn't match the LivecastRequestSchema. If 200 but the stream
-  hangs, the in-process session store evicted the engine — happens
-  when the client took >30s to call `/api/live/stream` after start.
+- **`POST /api/live/stream` returns 4xx** → request shape doesn't match
+  the LivecastRequestSchema. The 400 body's `error` field tells you
+  which field failed. The stream itself can't fail mid-handshake on
+  the client side anymore — the engine is created on the same
+  instance that answers the POST, so cross-instance routing is
+  impossible by construction.
 - **Routes 500 with ECONNREFUSED on `npm run start`** → the dev-only
   rewrite to localhost:8787 is firing in production mode. Check that
   `next.config.ts`'s `REWRITE_TO_FASTIFY` guard reads

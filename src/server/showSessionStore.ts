@@ -9,10 +9,10 @@ import {
  * In-process session store for the SSE-based live show.
  *
  * The companion POST routes (`/api/live/{frame,cue,nudge,stop}`) need
- * to find the same ShowEngine instance the SSE GET (`/api/live/stream`)
- * is attached to. Engines hold timers, AbortControllers, and an
- * AsyncEventQueue — none serializable — so they live on whichever
- * Function instance ran `/api/live/start`.
+ * to find the same ShowEngine instance the SSE response (POST
+ * /api/live/stream) is streaming from. Engines hold timers,
+ * AbortControllers, and an AsyncEventQueue — none serializable — so
+ * they live on whichever Function instance answered the stream POST.
  *
  * Multi-instance correctness is provided by the SessionRegistry: every
  * registerSession also publishes the session id + the current
@@ -20,12 +20,8 @@ import {
  * instance and misses the local Map, the route consults the registry
  * to distinguish "session never existed" (404) from "session lives
  * elsewhere — please reconnect" (410). The client handles 410 by
- * restarting the session; the new start handshake lands on whichever
- * instance answered, restoring affinity.
- *
- * Sessions self-expire if the SSE GET never attaches: once started,
- * the engine has GRACE_MS to attract a consumer; otherwise it's
- * stopped + evicted to keep idle resources from leaking.
+ * restarting the session via startLiveSession; the new POST lands on
+ * whichever instance answers and a fresh engine is created there.
  */
 
 type Entry = {
@@ -178,8 +174,8 @@ export function resetSessionStoreForTests(): void {
  * Status mapping:
  *   - local  → return undefined; caller proceeds with engine.
  *   - remote → 410 Gone with `{ code: "WRONG_INSTANCE" }`. The client
- *     reads this, restarts via /api/live/start, and the new session
- *     lands on whichever instance answers — restoring affinity.
+ *     reads this, restarts via startLiveSession (POST /api/live/stream),
+ *     and a fresh engine is created on whichever instance answers.
  *   - missing → 404 with `{ code: "NOT_FOUND" }`.
  */
 export function lookupErrorResponse(

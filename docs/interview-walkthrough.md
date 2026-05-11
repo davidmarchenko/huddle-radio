@@ -45,13 +45,12 @@ The video stage transitions from audio-only to live-with-iframe. The same SSE st
 - **Self-hostable via NIM**: gives a credible production story for a prediction-market shop or fantasy platform that wants to keep audio off third-party clouds.
 
 ### "How does the live show actually run on Vercel?"
-- POST `/api/live/start` creates a transport-agnostic `ShowEngine` and returns a `sessionId`.
-- Browser opens an `EventSource` on `/api/live/stream?sessionId=...` — SSE response stays open up to 300s (Hobby cap; 800s on Pro).
-- Push-style state (frames from the screen, ASR cues, host nudges) flows back via `POST /api/live/{frame,cue,nudge}` against the same sessionId.
-- A `SessionRegistry` (in-process default; Upstash Redis when configured) lets follow-up POSTs that land on a different Function instance return `410 WRONG_INSTANCE` instead of silently dropping. The client handles 410 by restarting via `/api/live/start`.
+- Browser POSTs the `LivecastRequest` to `/api/live/stream` and consumes the SSE response via `fetch` + `ReadableStream`. The same Function instance that answers this POST creates the `ShowEngine` locally — engine and SSE consumer are guaranteed colocated, no cross-instance race. The first event the server emits is `{type:"session-ready", sessionId}` so the client knows what to send to the companion POSTs.
+- Push-style state (frames from the screen, ASR cues, host nudges) flows back via `POST /api/live/{frame,cue,nudge}` against that sessionId. SSE response stays open up to 300s (Hobby cap; 800s on Pro).
+- A `SessionRegistry` (in-process default; Upstash Redis when configured) lets follow-up POSTs that land on a different Function instance return `410 WRONG_INSTANCE` instead of silently dropping. The client handles 410 by restarting `startLiveSession` against the same `LivecastRequest`.
 
 ### "How big is the test surface?"
-- 437 vitest tests (route handlers, providers, engine logic, prompt assembly)
+- 433 vitest tests (route handlers, providers, engine logic, prompt assembly)
 - 5 Playwright specs (golden-path + video-stage)
 - 7 opt-in real-API smoke tests (Nemotron / OpenAI / ElevenLabs / Kalshi / Polymarket) that run against live vendors when keys are present
 - GitHub Actions runs typecheck + tests + build + Playwright on every PR

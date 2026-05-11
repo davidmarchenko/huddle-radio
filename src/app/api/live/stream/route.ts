@@ -1,56 +1,72 @@
 import {
-  getSessionWithRoutingHint,
-  lookupErrorResponse,
   markSessionConsumed,
-  markSessionDetached
+  markSessionDetached,
+  registerSession
 } from "@/server/showSessionStore";
+import { ShowEngine } from "@/server/showEngine";
+import { parseLivecastRequest } from "@/server/app";
 
 /**
- * SSE event stream for an active live-show session. Pair with
- * `POST /api/live/start` (creates the session) and the companion
- * POST routes (`/api/live/{frame,cue,nudge,stop}`) that push state
- * back into the engine.
+ * Live-show SSE endpoint. POSTs the LivecastRequest as the body; the
+ * engine is created on whichever Function instance answers this request
+ * and streams its events back over the same connection. The pair-style
+ * `POST /api/live/start` + `GET /api/live/stream?sessionId=...` was
+ * removed: under Vercel autoscale, the start instance and the stream
+ * instance could diverge, leaving the SSE GET with nothing to attach to
+ * (in-memory session map). Colocating engine + stream eliminates the
+ * cross-instance failure entirely — no shared store needed for the
+ * happy path; companion POSTs (cue/frame/nudge/stop) still use the
+ * registry for cross-instance hint detection (returns 410, client
+ * reconnects via startLiveSession).
  *
- * Single-consumer per session — when this stream's underlying
- * iterator returns (client navigated away or hit /api/live/stop),
- * the session is marked detached and the engine stops a few seconds
- * later if no reattach happens.
+ * Handshake:
+ *   - First event over the stream is `{type:"session-ready", sessionId}`.
+ *     The client uses that sessionId for the companion POSTs.
  *
  * Lives on Fluid Compute / Node runtime so it can hold the response
- * open for up to ~800s. Past that, the client reconnects (browsers
- * auto-reconnect EventSource on close) and a fresh session is
- * created via /api/live/start.
+ * open for up to ~800s. Past that, the client reconnects via
+ * startLiveSession (a fresh POST + new engine on whichever instance
+ * answers).
  */
 
 export const runtime = "nodejs";
 // Hobby plan caps Function maxDuration at 300s; Pro/Enterprise can
-// extend to 800s. Browsers auto-reconnect EventSource on close, so a
-// session that runs past the cap reconnects via /api/live/start with
-// a fresh sessionId — degraded but functional.
+// extend to 800s. The client reconnects by POSTing again with a fresh
+// engine — degraded but functional.
 export const maxDuration = 300;
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   const startedAt = Date.now();
-  const url = new URL(request.url);
-  const sessionId = url.searchParams.get("sessionId");
-  if (!sessionId) {
-    console.warn(JSON.stringify({ event: "live.stream.bad-request", reason: "missing-sessionId" }));
-    return new Response(JSON.stringify({ error: "sessionId is required." }), {
+  let raw: string;
+  try {
+    raw = JSON.stringify(await request.json());
+  } catch {
+    return new Response(JSON.stringify({ error: "Body must be JSON." }), {
       status: 400,
       headers: { "content-type": "application/json" }
     });
   }
-  const lookup = await getSessionWithRoutingHint(sessionId);
-  const errorResponse = lookupErrorResponse(lookup, { route: "live.stream", sessionId });
-  if (errorResponse) return errorResponse;
-  // The helper only returns undefined for the local case; narrow it.
-  if (lookup.kind !== "local") {
-    return new Response(JSON.stringify({ error: "Session not found or expired." }), {
-      status: 404,
+  const parsed = parseLivecastRequest(raw);
+  if (!parsed.ok) {
+    return new Response(JSON.stringify({ error: parsed.message }), {
+      status: 400,
       headers: { "content-type": "application/json" }
     });
   }
-  const engine = lookup.engine;
+
+  const engine = new ShowEngine({
+    logger: {
+      info: (obj, msg) => console.log(JSON.stringify({ event: "live.engine.info", ...flatten(obj), msg })),
+      warn: (obj, msg) => console.warn(JSON.stringify({ event: "live.engine.warn", ...flatten(obj), msg })),
+      error: (obj, msg) => console.error(JSON.stringify({ event: "live.engine.error", ...flatten(obj), msg }))
+    }
+  });
+  // Fire and forget — events buffer in the engine's AsyncEventQueue
+  // and drain into the SSE stream below.
+  void engine.start(parsed.request);
+  const sessionId = await registerSession(engine);
+  // The SSE consumer is attached by definition — we're streaming into it
+  // on the same request. Skip the ATTACH_GRACE_MS reaper.
   markSessionConsumed(sessionId);
   console.log(JSON.stringify({ event: "live.stream.attached", sessionId, engineId: engine.id }));
 
@@ -64,14 +80,16 @@ export async function GET(request: Request) {
       // SSE preamble: most browsers + intermediaries are happier with
       // an immediate retry hint + a comment to flush headers.
       controller.enqueue(encoder.encode(`retry: 2000\n\n`));
+      // Handshake event: tells the client which sessionId to use for
+      // companion POSTs (cue/frame/nudge/stop).
+      const handshake = { type: "session-ready", sessionId };
+      controller.enqueue(
+        encoder.encode(`event: session-ready\ndata: ${JSON.stringify(handshake)}\n\n`)
+      );
       try {
         while (true) {
           const { value, done } = await iterator.next();
           if (done) break;
-          // Each event becomes one SSE message. The `event:` line
-          // lets EventSource consumers route by type via
-          // addEventListener(type, …); we also keep `data:` so a
-          // generic `onmessage` consumer still works.
           const eventType = (value as { type?: string }).type ?? "message";
           const lines = [
             `event: ${eventType}`,
@@ -112,8 +130,8 @@ export async function GET(request: Request) {
       }
     },
     cancel(reason) {
-      // Consumer hung up (browser tab closed, navigated, etc.). Clean
-      // up the iterator so the engine queue doesn't keep producers
+      // Consumer hung up (browser tab closed, navigated, abort signal).
+      // Stop the iterator so the engine queue doesn't keep producers
       // blocked on a phantom consumer.
       void iterator.return?.();
       markSessionDetached(sessionId);
@@ -139,4 +157,12 @@ export async function GET(request: Request) {
       "X-Accel-Buffering": "no"
     }
   });
+}
+
+// Pino expects a single object as the first arg; our routes accept
+// either an object or a primitive. Flatten so the JSON line stays
+// loggable either way.
+function flatten(obj: unknown): Record<string, unknown> {
+  if (!obj || typeof obj !== "object") return { detail: obj };
+  return obj as Record<string, unknown>;
 }

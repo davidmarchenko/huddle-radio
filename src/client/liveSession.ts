@@ -2,69 +2,67 @@ import type { ClientServerEvent, HostId, ListenerCue, LivecastRequest, VideoFram
 
 /**
  * Vercel-deployable replacement for the legacy WebSocket transport.
- * Uses POST /api/live/start to spin up a session, EventSource on
- * /api/live/stream to consume the show, and POSTs to
- * /api/live/{frame,cue,nudge,stop} to push state in.
  *
- * The handle returned by startLiveSession is the only object callers
- * need to keep around — closeSession cleans up the EventSource +
- * notifies the server. Callers receive ClientServerEvent values
- * exactly like the WS path did, so the upstream message handler in
- * main.tsx stays identical.
+ * POSTs the LivecastRequest to /api/live/stream and consumes the SSE
+ * response via fetch + ReadableStream. The server creates the engine
+ * on the same Function instance that answers this request, then emits
+ * a `session-ready` event with the sessionId. This colocation
+ * guarantees the SSE consumer always finds its engine — no
+ * cross-instance race like the previous start/stream split had.
+ *
+ * Companion POSTs (cue/frame/nudge/stop) still target their own
+ * routes; they use the registry to detect cross-instance hits and
+ * return 410 (`code: WRONG_INSTANCE`). The client surfaces 410 via
+ * onSessionLost, which restarts the show with a fresh engine.
+ *
+ * Callers receive ClientServerEvent values exactly like the WS path
+ * did, so the upstream message handler in main.tsx stays identical.
  */
 
 export type LiveSessionHandlers = {
   onEvent: (event: ClientServerEvent) => void;
-  /** Fires once the EventSource opens, after the server has the session and is streaming. */
+  /** Fires once the server has acknowledged the session (first SSE event arrived). */
   onOpen?: () => void;
-  /** Fires when the server sends a 4xx/5xx start error or the EventSource fails irrecoverably. */
+  /** Fires when the server returns a 4xx/5xx, the fetch fails, or the stream errors irrecoverably. */
   onError?: (message: string) => void;
-  /** Fires when the EventSource closes (server disconnect, max-duration cutoff, manual close). */
+  /** Fires when the stream closes (server disconnect, max-duration cutoff, manual close). */
   onClose?: () => void;
   /**
-   * Fires when a POST returns 410 (`code: WRONG_INSTANCE`) — the
-   * session lives on a different Function instance than the one that
-   * answered. Consumers should treat this as "session is irrecoverably
-   * orphaned" and restart the show via startLiveSession with the
-   * original request. Without a handler, the POST silently no-ops.
+   * Fires when a companion POST returns 410 (`code: WRONG_INSTANCE`) —
+   * the session lives on a different Function instance than the one
+   * that answered. Consumers should treat this as "session is
+   * irrecoverably orphaned" and restart the show via startLiveSession
+   * with the original request. Without a handler, the POST silently
+   * no-ops.
    */
   onSessionLost?: () => void;
 };
 
 export type LiveSessionHandle = {
   sessionId: string;
-  /** True once the EventSource opened at least once. False before that or after explicit close. */
+  /** True once the session-ready handshake landed. False before that or after explicit close. */
   isOpen: () => boolean;
 };
-
-const KNOWN_EVENT_TYPES = [
-  "snapshot",
-  "play",
-  "commentary",
-  "observation",
-  "tts",
-  "health",
-  "status",
-  "cue-ack",
-  "market-swing",
-  "error"
-];
 
 export async function startLiveSession(
   request: LivecastRequest,
   handlers: LiveSessionHandlers
 ): Promise<LiveSessionHandle | undefined> {
+  const abortController = new AbortController();
+
   let response: Response;
   try {
-    response = await fetch("/api/live/start", {
+    response = await fetch("/api/live/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(request)
+      body: JSON.stringify(request),
+      signal: abortController.signal
     });
   } catch (error) {
     handlers.onError?.(error instanceof Error ? error.message : "Failed to start show.");
     return undefined;
   }
+
   if (!response.ok) {
     let message = `Show start failed (${response.status}).`;
     try {
@@ -76,55 +74,109 @@ export async function startLiveSession(
     handlers.onError?.(message);
     return undefined;
   }
-  const { sessionId } = (await response.json()) as { sessionId: string };
-  if (!sessionId) {
-    handlers.onError?.("Show start returned no sessionId.");
+
+  if (!response.body) {
+    handlers.onError?.("Stream response has no body.");
     return undefined;
   }
 
-  const source = new EventSource(`/api/live/stream?sessionId=${encodeURIComponent(sessionId)}`);
-  let opened = false;
-  let closedManually = false;
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
 
-  source.addEventListener("open", () => {
-    opened = true;
-    handlers.onOpen?.();
-  });
-
-  // EventSource fires a generic `message` event when the server omits
-  // the `event:` line. Our SSE writer always sets `event:` so we route
-  // by type explicitly — but keep the generic listener as a safety net.
-  source.addEventListener("message", (e: MessageEvent) => {
-    safeDispatch(e.data, handlers);
-  });
-  for (const type of KNOWN_EVENT_TYPES) {
-    source.addEventListener(type, (e: MessageEvent) => {
-      safeDispatch(e.data, handlers);
-    });
-  }
-
-  source.addEventListener("error", () => {
-    // EventSource auto-reconnects on a network blip; only treat this
-    // as a hard error if we never opened (server returned 4xx/5xx).
-    if (!opened && !closedManually) {
-      handlers.onError?.("Stream connection failed.");
-      source.close();
-      handlers.onClose?.();
+  // Drain buffered SSE blocks. Each block becomes 0 or 1 events
+  // (skipping comments and the `retry:` preamble). Returns the parsed
+  // objects in arrival order.
+  const drainBlocks = (chunk: string): Array<{ type?: string; [k: string]: unknown }> => {
+    buffer += chunk;
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() ?? "";
+    const out: Array<{ type?: string; [k: string]: unknown }> = [];
+    for (const block of parts) {
+      if (!block.trim()) continue;
+      const dataLine = block.split("\n").find((l) => l.startsWith("data:"));
+      if (!dataLine) continue;
+      try {
+        out.push(JSON.parse(dataLine.slice("data:".length).trim()));
+      } catch {
+        // Drop unparseable blocks (server keepalive comments, malformed lines).
+      }
     }
-  });
-
-  // Patch close() so the cleanup helper below can flag the manual
-  // teardown and skip the reconnect-vs-error logic.
-  const wrappedClose = () => {
-    closedManually = true;
-    source.close();
-    handlers.onClose?.();
+    return out;
   };
 
-  // Stash the wrapped close so closeSession can find it. Map is fine
-  // here — sessions are short-lived and closeSession deletes its
-  // entry, so leakage is bounded by the live-show count.
-  closeMap.set(sessionId, wrappedClose);
+  // Wait for the first event — must be `session-ready` with the
+  // sessionId. Anything else (or a closed stream) is a fatal handshake
+  // failure.
+  let sessionId: string | undefined;
+  while (!sessionId) {
+    const { value, done } = await reader.read();
+    if (done) {
+      handlers.onError?.("Stream closed before session handshake.");
+      return undefined;
+    }
+    const events = drainBlocks(decoder.decode(value, { stream: true }));
+    for (const evt of events) {
+      if (evt?.type === "session-ready" && typeof evt.sessionId === "string") {
+        sessionId = evt.sessionId;
+        break;
+      }
+      // Per the protocol, session-ready is always first. Anything else
+      // arriving before it indicates a server bug — surface and bail.
+      handlers.onError?.("Server emitted an event before session handshake.");
+      try { await reader.cancel(); } catch { /* swallow */ }
+      return undefined;
+    }
+  }
+
+  let opened = true;
+  let closedManually = false;
+  handlers.onOpen?.();
+
+  // Background drain loop. Keeps pumping events until the server
+  // closes the stream or the consumer aborts.
+  const drainLoop = async () => {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const events = drainBlocks(decoder.decode(value, { stream: true }));
+        for (const evt of events) {
+          // Ignore the handshake event if the server ever re-emits it
+          // (defensive — current protocol fires it exactly once).
+          if (evt?.type === "session-ready") continue;
+          handlers.onEvent(evt as ClientServerEvent);
+        }
+      }
+    } catch (error) {
+      // AbortError from manual close is expected; surface anything else.
+      if (!closedManually) {
+        const message = error instanceof Error ? error.message : "Stream interrupted.";
+        // Only treat as a hard error — not a routine close — when the
+        // disconnect was unexpected.
+        handlers.onError?.(message);
+      }
+    } finally {
+      opened = false;
+      handlers.onClose?.();
+    }
+  };
+  void drainLoop();
+
+  // Stash the abort fn so closeSession can find it. Map is fine here
+  // — sessions are short-lived and closeSession deletes its entry, so
+  // leakage is bounded by the live-show count.
+  //
+  // We both abort the fetch (closes the connection at the network
+  // layer) AND cancel the reader (forces any in-flight read() to
+  // resolve `done: true`, exiting the drain loop). Cancel-without-
+  // abort would leak the connection; abort-without-cancel sometimes
+  // doesn't propagate to the reader synchronously in some runtimes.
+  closeMap.set(sessionId, () => {
+    closedManually = true;
+    abortController.abort();
+    void reader.cancel().catch(() => undefined);
+  });
 
   // Stash the session-lost handler so the POST helpers can route 410
   // responses back to the consumer without each call site needing to
@@ -132,8 +184,6 @@ export async function startLiveSession(
   // we want exactly one reconnect attempt, not one per failed POST.
   if (handlers.onSessionLost) {
     sessionLostMap.set(sessionId, () => {
-      // Latch: only fire the first time so a flurry of stale POSTs
-      // doesn't trigger a reconnect storm.
       const callback = sessionLostMap.get(sessionId);
       if (!callback) return;
       sessionLostMap.delete(sessionId);
@@ -213,15 +263,4 @@ export async function closeSession(handle: LiveSessionHandle): Promise<void> {
     body: JSON.stringify({ sessionId: handle.sessionId }),
     keepalive: true
   }).catch(() => undefined);
-}
-
-function safeDispatch(raw: unknown, handlers: LiveSessionHandlers): void {
-  if (typeof raw !== "string") return;
-  try {
-    const parsed = JSON.parse(raw) as ClientServerEvent;
-    handlers.onEvent(parsed);
-  } catch {
-    // Malformed event from the server; drop it silently — the
-    // structured logs on the server will already record the original.
-  }
 }
