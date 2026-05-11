@@ -13,3 +13,7 @@ data/show-history/
 data/yahoo-tokens/
 data/clips/
 public/clips/
+# Playwright artifacts
+test-results/
+playwright-report/
+playwright/.cache/

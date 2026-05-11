@@ -14,7 +14,8 @@
     "build-player-ids": "tsx scripts/buildPlayerIdMap.ts",
     "verify:nemotron": "tsx scripts/verifyNemotron.ts",
     "test": "vitest run",
-    "test:providers": "vitest run --config vitest.providers.config.ts"
+    "test:providers": "vitest run --config vitest.providers.config.ts",
+    "test:browser": "playwright test"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
@@ -34,6 +35,7 @@
     "zod": "^4.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^24.10.2",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
