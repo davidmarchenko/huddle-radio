@@ -44,6 +44,7 @@ import { createYouTubeEmbedUrl, isYouTubeUrl } from "../shared/videoLinks";
 import { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
 import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
+import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -230,9 +231,29 @@ function App() {
   const livecastSessionRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
+  // Stable per-page-load tab id for cross-tab leader election. Sticks
+  // for the lifetime of this document; reloads mint a new one (which
+  // is correct — the post-reload session must displace the pre-reload
+  // one since the engine for it is also stranded).
+  const tabIdRef = useRef<string>(newTabId());
 
   const closeDrawer = useCallback(() => setShowAdvanced(false), []);
   useDialogA11y(showAdvanced, drawerRef, closeDrawer);
+
+  // Cross-tab leader election: if another tab in this browser starts
+  // a show after this one, that tab broadcasts a takeover and we
+  // close our session so two engines don't race + double-bill TTS.
+  useEffect(() => {
+    return watchForLeadershipChange(tabIdRef.current, () => {
+      const handle = liveSessionRef.current;
+      if (!handle) return;
+      console.log("[huddle.leader] usurped by another tab — closing this session");
+      void closeSession(handle);
+      liveSessionRef.current = null;
+      setLivecastActive(false);
+      setStatus("Show moved to another tab");
+    });
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams({
@@ -889,6 +910,9 @@ function App() {
       return;
     }
     liveSessionRef.current = handle;
+    // Announce leadership so any sibling tab in this browser closes
+    // its show — single-engine-per-browser keeps credit burn predictable.
+    claimShowLeadership(handle.sessionId, tabIdRef.current);
     startFramePump(handle);
   };
 
