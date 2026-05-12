@@ -106,7 +106,10 @@ export async function fetchEntry(listenerId: string, gameId: string, signal?: Ab
       { signal }
     );
     if (!response.ok) return undefined;
-    return (await response.json()) as PickEntry;
+    // Route returns `null` (200) when no entry exists yet — that's
+    // the routine pre-submit state, not an error. Coerce to undefined.
+    const data = (await response.json()) as PickEntry | null;
+    return data ?? undefined;
   } catch {
     return undefined;
   }
