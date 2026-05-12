@@ -2809,7 +2809,7 @@ function HuddleExperience({
     : `${fantasy?.leagueName ?? "Your league"} · ${group.friends.length} friend${group.friends.length === 1 ? "" : "s"} · ${ttsEnabled ? "voice on" : "voice off"}`;
   return (
     <>
-      <HuddleSidebar fantasy={fantasy} allLeagues={allLeagues} group={group} phase={showHome ? "empty" : phase} profile={profile} pastShows={pastShows} matchupTotals={matchupTotals} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} onOpenFriends={onOpenFriends} onGoHome={onGoHome} onOpenProfile={onOpenProfile} />
+      <HuddleSidebar fantasy={fantasy} allLeagues={allLeagues} group={group} phase={showHome ? "empty" : phase} profile={profile} pastShows={pastShows} matchupTotals={matchupTotals} listenerStakes={listenerStakes} friendMatchups={friendMatchups} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} onOpenFriends={onOpenFriends} onGoHome={onGoHome} onOpenProfile={onOpenProfile} />
       <section className="huddle-main" aria-label="Huddle Radio">
         {!showHome && <HuddleTopBar phase={phase} status={status} roomLabel={roomLabel} gameLabel={gameLabel} onOpenSettings={onOpenSettings} demoMode={demoMode} onGoHome={onGoHome} profile={profile} claimedTeamName={claimedTeamName} providerMode={providerMode} />}
         {showHome && (
@@ -2952,6 +2952,8 @@ function HuddleSidebar({
   profile,
   pastShows,
   matchupTotals,
+  listenerStakes,
+  friendMatchups,
   mediaIndex,
   onOpenSettings,
   onOpenFriends,
@@ -2965,6 +2967,8 @@ function HuddleSidebar({
   profile?: UserProfile;
   pastShows: ShowHistoryEntry[];
   matchupTotals: Array<{ id: string; ownerName: string; teamName: string; team?: string; points: number }>;
+  listenerStakes?: ReturnType<typeof buildListenerStakes>;
+  friendMatchups?: ReturnType<typeof buildFriendMatchups>;
   mediaIndex: MediaLookupIndex;
   onOpenSettings: () => void;
   onOpenFriends: () => void;
@@ -3021,6 +3025,9 @@ function HuddleSidebar({
       {profile && matchupTotals.length >= 2 && (
         <section className="sidebar-live-matchup" aria-label="Your fantasy matchup">
           <span className="eyebrow"><span className="icon icon-pie-chart" aria-hidden="true" />Live matchup</span>
+          {profile && listenerStakes?.status === "ready" && listenerStakes.stakesLine && (
+            <p className="sidebar-stakes-line">{listenerStakes.stakesLine}</p>
+          )}
           <div className="sidebar-roster-list">
             {matchupTotals.slice(0, 2).map((roster) => (
               <div key={roster.id} className="sidebar-roster-row">
@@ -3037,6 +3044,22 @@ function HuddleSidebar({
               </div>
             ))}
           </div>
+        </section>
+      )}
+      {profile && friendMatchups && friendMatchups.length > 0 && (
+        <section className="sidebar-friend-matchups" aria-label="Friends' matchups">
+          <span className="eyebrow"><span className="icon icon-league" aria-hidden="true" />Friends</span>
+          <ul className="sidebar-friend-list">
+            {friendMatchups.slice(0, 3).map((matchup) => {
+              const tone = matchup.margin > 0.05 ? "lead" : matchup.margin < -0.05 ? "trail" : "even";
+              return (
+                <li key={matchup.friendId} className="sidebar-friend-row" data-tone={tone}>
+                  <strong>{matchup.friendName}</strong>
+                  <span>{matchup.stakeLine}</span>
+                </li>
+              );
+            })}
+          </ul>
         </section>
       )}
       {pastShows.length > 0 && (
@@ -4487,60 +4510,68 @@ function HuddlePregame({
       : (demoMode ? "Demo rehearsal — tap Start when ready" : "Tap Start when you're ready to go live"));
   return (
     <section className="pregame-layout">
-      <div className="pregame-hero">
-        <span className="eyebrow"><span className="icon icon-clock" aria-hidden="true" />{heroEyebrow}</span>
-        <h1>{heroHeadline}</h1>
-        <p>{heroSub}</p>
-        <HostStudio hosts={hosts} turns={hostTurns} />
-        {!readiness.canStart && unmet.length > 0 && (
-          <div className="pregame-checklist" role="status" aria-live="polite">
-            <span className="eyebrow"><span className="icon icon-check" aria-hidden="true" />Before you go live</span>
-            <ul>
-              {readiness.requirements.map((req) => (
-                <li key={req.id} data-met={req.met ? "true" : "false"}>
-                  <span className="check" aria-hidden="true" />
-                  <span>{req.label}</span>
-                </li>
-              ))}
-            </ul>
-            <button className="secondary compact" onClick={onOpenSettings}>
-              <span className="icon icon-settings" aria-hidden="true" />Open setup
+      {/* Left column: hero + CTA on top, the user's anchor cards
+          (game matchup + picks slate) directly below. Keeps the
+          action close to the eye and de-stacks the rail. */}
+      <div className="pregame-main">
+        <div className="pregame-hero">
+          <span className="eyebrow"><span className="icon icon-clock" aria-hidden="true" />{heroEyebrow}</span>
+          <h1>{heroHeadline}</h1>
+          <p>{heroSub}</p>
+          <HostStudio hosts={hosts} turns={hostTurns} />
+          {!readiness.canStart && unmet.length > 0 && (
+            <div className="pregame-checklist" role="status" aria-live="polite">
+              <span className="eyebrow"><span className="icon icon-check" aria-hidden="true" />Before you go live</span>
+              <ul>
+                {readiness.requirements.map((req) => (
+                  <li key={req.id} data-met={req.met ? "true" : "false"}>
+                    <span className="check" aria-hidden="true" />
+                    <span>{req.label}</span>
+                  </li>
+                ))}
+              </ul>
+              <button className="secondary compact" onClick={onOpenSettings}>
+                <span className="icon icon-settings" aria-hidden="true" />Open setup
+              </button>
+            </div>
+          )}
+          <div className="button-row">
+            <button
+              className="primary"
+              onClick={onStart}
+              disabled={!readiness.canStart}
+              aria-disabled={!readiness.canStart}
+              title={readiness.canStart ? undefined : `Connect: ${unmet.map((req) => req.label).join(", ")}`}
+            >
+              <span className="icon icon-broadcast" aria-hidden="true" />{startLabel}
             </button>
+            <button className="secondary" onClick={onOpenStream}><span className="icon icon-plus" aria-hidden="true" />Add stream</button>
+            {onBackToDiscover && (
+              // Back to discover keeps preview-mode browsing fluid: tap a
+              // game → see its preview → swap to a different game without
+              // any cast having opened.
+              <button className="secondary compact" onClick={onBackToDiscover}>
+                <span className="icon icon-arrow-left" aria-hidden="true" />Pick a different game
+              </button>
+            )}
           </div>
-        )}
-        <div className="button-row">
-          <button
-            className="primary"
-            onClick={onStart}
-            disabled={!readiness.canStart}
-            aria-disabled={!readiness.canStart}
-            title={readiness.canStart ? undefined : `Connect: ${unmet.map((req) => req.label).join(", ")}`}
-          >
-            <span className="icon icon-broadcast" aria-hidden="true" />{startLabel}
-          </button>
-          <button className="secondary" onClick={onOpenStream}><span className="icon icon-plus" aria-hidden="true" />Add stream</button>
-          {onBackToDiscover && (
-            // Back to discover keeps preview-mode browsing fluid: tap a
-            // game → see its preview → swap to a different game without
-            // any cast having opened.
-            <button className="secondary compact" onClick={onBackToDiscover}>
-              <span className="icon icon-arrow-left" aria-hidden="true" />Pick a different game
-            </button>
+        </div>
+        <div className="pregame-stack">
+          <MatchupCard game={game} mediaIndex={mediaIndex} />
+          {game && (
+            <PicksCard
+              gameId={game.gameId}
+              listenerId={picksListenerId}
+              entry={pickEntry}
+              onEntrySubmitted={onPickEntrySubmitted}
+            />
           )}
         </div>
       </div>
+      {/* Right rail: secondary context. Listener-personal cards
+          (your stakes, friend matchups, live matchup) moved to the
+          sidebar so the rail is purely game-specific. */}
       <aside className="pregame-rail">
-        {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
-        {profile && friendMatchups && friendMatchups.length > 0 && <FriendMatchupsCard matchups={friendMatchups} />}
-        <MatchupCard game={game} mediaIndex={mediaIndex} />
-        {game && (
-          <PicksCard
-            gameId={game.gameId}
-            listenerId={picksListenerId}
-            entry={pickEntry}
-            onEntrySubmitted={onPickEntrySubmitted}
-          />
-        )}
         {odds && <OddsCard odds={odds} />}
         <MarketsBoardCard game={game} />
         {news && news.length > 0 ? (

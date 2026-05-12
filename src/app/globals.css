@@ -6160,6 +6160,85 @@ body:has(.huddle-app.phase-empty)::after,
   font-weight: 700;
 }
 
+/* Stakes line — single italic call-out under the eyebrow ("You
+   trail by 12.5"). Sits between the eyebrow and the roster rows. */
+.sidebar-stakes-line {
+  margin: 0;
+  font-size: var(--hr-text-xs);
+  line-height: 1.35;
+  color: var(--hr-text-soft);
+  font-style: italic;
+}
+
+/* Friend matchups — compact list. Top 3 friends shown; each row is
+   name + lead/trail summary, tinted by tone. */
+.sidebar-friend-matchups {
+  display: grid;
+  gap: var(--hr-space-3);
+  padding: var(--hr-space-3) var(--hr-space-4);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--hr-radius-lg);
+}
+
+.sidebar-friend-matchups .eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.sidebar-friend-matchups .eyebrow .icon {
+  width: 12px;
+  height: 12px;
+  background-color: var(--hr-text-muted);
+}
+
+.sidebar-friend-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.sidebar-friend-row {
+  display: grid;
+  gap: 1px;
+  padding: 6px 10px;
+  border-radius: var(--hr-radius-row);
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid transparent;
+}
+
+.sidebar-friend-row[data-tone="lead"] {
+  border-left-color: var(--hr-success);
+}
+.sidebar-friend-row[data-tone="trail"] {
+  border-left-color: var(--hr-danger);
+}
+.sidebar-friend-row[data-tone="even"] {
+  border-left-color: rgba(255, 255, 255, 0.18);
+}
+
+.sidebar-friend-row strong {
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text);
+  font-weight: 600;
+}
+
+.sidebar-friend-row span {
+  font-family: var(--hr-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
 .phase-empty .huddle-main {
   align-items: start;
   padding-top: 1.75rem;
@@ -7184,6 +7263,23 @@ body:has(.huddle-app) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   gap: 1.1rem;
+}
+
+/* Left column now stacks the hero on top of the user's anchor cards
+   (game matchup + picks). Hero stays the visual lead; the anchors
+   keep the action close to the eye instead of sending it to the
+   rail. */
+.pregame-main {
+  display: grid;
+  align-content: start;
+  gap: 1.1rem;
+  min-width: 0;
+}
+
+.pregame-stack {
+  display: grid;
+  gap: 0.9rem;
+  min-width: 0;
 }
 
 .pregame-hero,
