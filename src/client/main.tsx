@@ -47,6 +47,7 @@ import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
 import { DebugPanel } from "./DebugPanel";
+import { RichHover } from "./RichHover";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
@@ -2383,6 +2384,84 @@ function App() {
 }
 
 /**
+ * Build the upstream market URL for a snapshot. We only know reliable
+ * URL shapes for Kalshi (event page from ticker prefix) and the
+ * Polymarket condition_id slug; if we can't construct one, return
+ * undefined and the hovercard skips the link affordance.
+ */
+function marketSourceUrl(snapshot: MarketSnapshot): string | undefined {
+  if (snapshot.source === "kalshi") {
+    return `https://kalshi.com/markets/${snapshot.externalId.toLowerCase()}`;
+  }
+  if (snapshot.source === "polymarket") {
+    return `https://polymarket.com/event/${snapshot.externalId}`;
+  }
+  return undefined;
+}
+
+/**
+ * Rich hovercard content for a market snapshot. Surfaces the data the
+ * compact ticker / board can't fit: full market title, both YES/NO
+ * implied prices, recent price move with direction, 24h volume when
+ * available, and a deep link to the source. Keyed off MarketSnapshot
+ * so it stays in sync with whatever the live feed serves.
+ */
+function MarketHoverCard({ snapshot }: { snapshot: MarketSnapshot }) {
+  const noPrice = 100 - snapshot.yesPriceCents;
+  const delta = snapshot.recentDeltaCents ?? 0;
+  const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const url = marketSourceUrl(snapshot);
+  const observedRel = formatRelativeTime(snapshot.observedAt);
+  const sourceLabel = snapshot.source === "kalshi" ? "Kalshi" : "Polymarket";
+  const kindLabel = snapshot.marketKind.replace("-", " ");
+  return (
+    <div className="market-hover">
+      <div className="rich-hover-card-header">
+        <MarketSourceBadge source={snapshot.source} variant="board" />
+        <span className="market-hover-kind">{kindLabel}</span>
+      </div>
+      <p className="rich-hover-card-title">{snapshot.title}</p>
+      <p className="market-hover-outcome">{snapshot.outcomeLabel}</p>
+      <div className="market-hover-prices">
+        <div className="market-hover-price-cell" data-side="yes">
+          <small>YES</small>
+          <strong>{snapshot.yesPriceCents}¢</strong>
+        </div>
+        <div className="market-hover-price-cell" data-side="no">
+          <small>NO</small>
+          <strong>{noPrice}¢</strong>
+        </div>
+        {delta !== 0 && (
+          <div className="market-hover-delta-cell" data-direction={direction}>
+            <small>5m move</small>
+            <strong>{delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢</strong>
+          </div>
+        )}
+      </div>
+      <div className="rich-hover-card-meta">
+        <span>{sourceLabel}</span>
+        {snapshot.volume24hUsd != null && (
+          <span title="24-hour volume in USD">${formatCompactNumber(snapshot.volume24hUsd)} 24h vol</span>
+        )}
+        <span title={new Date(snapshot.observedAt).toLocaleString()}>updated {observedRel}</span>
+      </div>
+      {url && (
+        <a className="rich-hover-card-link" href={url} target="_blank" rel="noopener noreferrer">
+          View on {sourceLabel}
+          <span className="icon icon-share-link" aria-hidden="true" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+function formatCompactNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toFixed(0);
+}
+
+/**
  * Brand badge for the two prediction-market sources we surface
  * (Kalshi, Polymarket). Renders the wordmark logo plus a visually-
  * hidden text label so screen readers still announce "Kalshi" /
@@ -2499,16 +2578,23 @@ function MarketsTicker({
               data-direction={direction}
               className={isFlashing ? "is-flashing" : undefined}
             >
-              <MarketSourceBadge source={snapshot.source} variant="ticker" />
-              <span className="markets-ticker-title" title={snapshot.title}>{snapshot.outcomeLabel}</span>
-              <span className="markets-ticker-price">
-                {snapshot.yesPriceCents}¢
-                {delta !== 0 && (
-                  <em className={`markets-ticker-delta is-${direction}`}>
-                    {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
-                  </em>
-                )}
-              </span>
+              <RichHover
+                content={<MarketHoverCard snapshot={snapshot} />}
+                cardClassName="market-hover-card"
+                placement="top-start"
+                className="markets-ticker-trigger"
+              >
+                <MarketSourceBadge source={snapshot.source} variant="ticker" />
+                <span className="markets-ticker-title" title={snapshot.title}>{snapshot.outcomeLabel}</span>
+                <span className="markets-ticker-price">
+                  {snapshot.yesPriceCents}¢
+                  {delta !== 0 && (
+                    <em className={`markets-ticker-delta is-${direction}`}>
+                      {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
+                    </em>
+                  )}
+                </span>
+              </RichHover>
             </li>
           );
         })}
@@ -5309,19 +5395,27 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
           const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
           return (
             <li key={`${snapshot.source}:${snapshot.externalId}`} data-source={snapshot.source}>
-              <div className="markets-board-row-meta">
-                <MarketSourceBadge source={snapshot.source} variant="board" />
-                <strong>{snapshot.outcomeLabel}</strong>
-                <span className="markets-board-title" title={snapshot.title}>{snapshot.title}</span>
-              </div>
-              <div className="markets-board-row-price">
-                <b>{snapshot.yesPriceCents}¢</b>
-                {delta !== 0 && (
-                  <em className={`markets-board-delta is-${direction}`}>
-                    {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
-                  </em>
-                )}
-              </div>
+              <RichHover
+                as="div"
+                className="markets-board-row-trigger"
+                cardClassName="market-hover-card"
+                placement="bottom-start"
+                content={<MarketHoverCard snapshot={snapshot} />}
+              >
+                <div className="markets-board-row-meta">
+                  <MarketSourceBadge source={snapshot.source} variant="board" />
+                  <strong>{snapshot.outcomeLabel}</strong>
+                  <span className="markets-board-title" title={snapshot.title}>{snapshot.title}</span>
+                </div>
+                <div className="markets-board-row-price">
+                  <b>{snapshot.yesPriceCents}¢</b>
+                  {delta !== 0 && (
+                    <em className={`markets-board-delta is-${direction}`}>
+                      {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
+                    </em>
+                  )}
+                </div>
+              </RichHover>
             </li>
           );
         })}
@@ -5399,17 +5493,43 @@ function StorylineRow({ item }: { item: NewsItem }) {
   ) : (
     <strong title={item.title}>{item.title}</strong>
   );
+  const hoverCard = (
+    <div className="storyline-hover">
+      <p className="rich-hover-card-title">{item.title}</p>
+      <div className="rich-hover-card-meta">
+        <span className="storyline-news-source-chip">{item.source}</span>
+        {item.team && <span title="Team">{item.team}</span>}
+        {item.publishedAt && (
+          <span title={absoluteTime}>published {relativeTime}</span>
+        )}
+      </div>
+      {hasLink && (
+        <a className="rich-hover-card-link" href={item.url} target="_blank" rel="noopener noreferrer">
+          Read on source
+          <span className="icon icon-share-link" aria-hidden="true" />
+        </a>
+      )}
+    </div>
+  );
   return (
     <li className="storyline-news-item">
-      {headline}
-      <span className="storyline-news-meta">
-        <span className="storyline-news-source-chip" title={item.source}>{item.source}</span>
-        {relativeTime && (
-          <time className="storyline-news-time" dateTime={item.publishedAt} title={absoluteTime}>
-            {relativeTime}
-          </time>
-        )}
-      </span>
+      <RichHover
+        as="div"
+        className="storyline-news-item-trigger"
+        cardClassName="storyline-hover-card"
+        placement="top-start"
+        content={hoverCard}
+      >
+        {headline}
+        <span className="storyline-news-meta">
+          <span className="storyline-news-source-chip" title={item.source}>{item.source}</span>
+          {relativeTime && (
+            <time className="storyline-news-time" dateTime={item.publishedAt} title={absoluteTime}>
+              {relativeTime}
+            </time>
+          )}
+        </span>
+      </RichHover>
     </li>
   );
 }
