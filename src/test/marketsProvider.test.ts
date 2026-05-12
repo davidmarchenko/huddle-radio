@@ -125,4 +125,97 @@ describe("pickRelevantMarketsForGame", () => {
     );
     expect(picks.map((p) => p.externalId)).toEqual(["city"]);
   });
+
+  it("collapses Polymarket Yes/No inverse pairs into the favored side only", () => {
+    // Bug this prevents: Polymarket emits Yes + No as two snapshots
+    // for the same binary market (conditionId:0 + conditionId:1).
+    // Both have the same title; their yesPrices sum to ~100¢. The
+    // listener saw both as separate rows — confusing duplicates.
+    const snapshots = [
+      market({
+        externalId: "cond123:0",
+        source: "polymarket",
+        title: "Will the Phillies win the 2026 World Series?",
+        outcomeLabel: "Yes",
+        yesPriceCents: 3,
+        sport: "mlb"
+      }),
+      market({
+        externalId: "cond123:1",
+        source: "polymarket",
+        title: "Will the Phillies win the 2026 World Series?",
+        outcomeLabel: "No",
+        yesPriceCents: 97,
+        sport: "mlb"
+      })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["Phillies"] }
+    );
+    // Only one row, and it's the favored side (No, at 97¢).
+    expect(picks).toHaveLength(1);
+    expect(picks[0].outcomeLabel).toBe("No");
+  });
+
+  it("collapses Kalshi team-vs-team pairs the same way", () => {
+    // Kalshi emits two separate tickers for "Team A vs Team B Winner?"
+    // events — same title, different externalIds. Same dedup applies.
+    const snapshots = [
+      market({
+        externalId: "PHI_VS_BOS_PHI",
+        source: "kalshi",
+        title: "Philadelphia vs Boston Winner?",
+        outcomeLabel: "Philadelphia",
+        yesPriceCents: 52,
+        sport: "mlb"
+      }),
+      market({
+        externalId: "PHI_VS_BOS_BOS",
+        source: "kalshi",
+        title: "Philadelphia vs Boston Winner?",
+        outcomeLabel: "Boston",
+        yesPriceCents: 47,
+        sport: "mlb"
+      })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["Philadelphia"] }
+    );
+    expect(picks).toHaveLength(1);
+    // Favored side wins — Philadelphia at 52¢.
+    expect(picks[0].outcomeLabel).toBe("Philadelphia");
+  });
+
+  it("does NOT collapse pairs whose prices don't sum to ~100¢", () => {
+    // Two distinct markets that happen to share a generic title —
+    // not a binary pair. Keep both.
+    const snapshots = [
+      market({ externalId: "a", title: "Will it rain today?", outcomeLabel: "Yes", yesPriceCents: 30, sport: "mlb" }),
+      market({ externalId: "b", title: "Will it rain today?", outcomeLabel: "Yes", yesPriceCents: 35, sport: "mlb" })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["Yankees"] }
+    );
+    // Both surface as general-bucket fallback (no team match).
+    expect(picks).toHaveLength(2);
+  });
+
+  it("does NOT collapse multi-outcome markets (3+ outcomes per title)", () => {
+    // Genuinely multi-outcome (e.g., NBA MVP futures with N candidates).
+    const snapshots = [
+      market({ externalId: "a", title: "NBA MVP 2026", outcomeLabel: "Jokic", yesPriceCents: 35, sport: "nba" }),
+      market({ externalId: "b", title: "NBA MVP 2026", outcomeLabel: "SGA", yesPriceCents: 30, sport: "nba" }),
+      market({ externalId: "c", title: "NBA MVP 2026", outcomeLabel: "Tatum", yesPriceCents: 20, sport: "nba" })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "nba", teams: ["Jokic"] }
+    );
+    // Three outcomes preserved (matched bucket has Jokic; generals
+    // are SGA + Tatum, but matched-wins-when-present rule applies).
+    expect(picks.map((p) => p.outcomeLabel)).toEqual(["Jokic"]);
+  });
 });

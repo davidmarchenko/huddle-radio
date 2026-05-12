@@ -37,7 +37,9 @@ export function pickRelevantMarketsForGame(
   },
   limit = 3
 ): MarketSnapshot[] {
-  const sportMatches = snapshots.filter((snapshot) => snapshot.sport === game.sport);
+  const sportMatches = collapseBinaryDuplicates(
+    snapshots.filter((snapshot) => snapshot.sport === game.sport)
+  );
 
   const teamMatchers = buildMatchers(game.teams);
   const playerMatchers = buildMatchers(game.players ?? []);
@@ -101,6 +103,52 @@ function buildMatchers(identifiers: string[]): Array<{ test: (haystack: string) 
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Collapse Yes/No (or Team-A/Team-B) inverse-pair snapshots into a
+ * single representative. Both Polymarket and Kalshi emit binary
+ * markets as TWO snapshots:
+ *
+ *   - Polymarket: same conditionId, outcomes "Yes" + "No", externalIds
+ *     differ by a `:0` / `:1` suffix
+ *   - Kalshi: separate tickers (PHI_VS_BOS_PHI, PHI_VS_BOS_BOS), same
+ *     event title, outcomeLabels are the team / outcome names
+ *
+ * Both shapes share the SAME title, and the two snapshots' YES prices
+ * sum to ~100¢ (with a small spread for vig). When we detect that
+ * pattern we keep only the favored side — higher yesPriceCents — so
+ * the listener sees one row per market instead of mirrored duplicates.
+ *
+ * Genuinely multi-outcome markets (futures with 30 different team
+ * questions, each its own title) aren't affected: each title is its
+ * own group of one.
+ */
+export function collapseBinaryDuplicates(snapshots: MarketSnapshot[]): MarketSnapshot[] {
+  const byTitle = new Map<string, MarketSnapshot[]>();
+  for (const snapshot of snapshots) {
+    const key = `${snapshot.source}:${snapshot.title.trim().toLowerCase()}`;
+    const bucket = byTitle.get(key);
+    if (bucket) bucket.push(snapshot);
+    else byTitle.set(key, [snapshot]);
+  }
+  const out: MarketSnapshot[] = [];
+  for (const bucket of byTitle.values()) {
+    if (bucket.length === 2) {
+      const [a, b] = bucket;
+      const sum = a.yesPriceCents + b.yesPriceCents;
+      // Allow a generous 10¢ window for the vig — real binary pairs
+      // typically sum to 95-105¢ depending on the platform's fee.
+      if (sum >= 90 && sum <= 110) {
+        out.push(a.yesPriceCents >= b.yesPriceCents ? a : b);
+        continue;
+      }
+    }
+    // Multi-outcome OR title collision OR pair that doesn't add up
+    // to ~100¢ — keep all so we don't accidentally drop information.
+    out.push(...bucket);
+  }
+  return out;
 }
 
 /**
