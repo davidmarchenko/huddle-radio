@@ -323,7 +323,7 @@ body,
 .link-preview-card-favicon {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: var(--hr-radius-pill);
   display: block;
   flex-shrink: 0;
   /* Some sites serve favicons with bg color baked in; subtle border
@@ -474,8 +474,8 @@ body,
   transform: translateX(-50%);
   background: rgba(12, 14, 18, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  padding: 4px 8px;
+  border-radius: var(--hr-radius-pill);
+  padding: 4px 12px;
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-3xs);
   letter-spacing: 0.04em;
@@ -519,7 +519,8 @@ body,
   display: grid;
   gap: 2px;
   padding: 10px 12px;
-  border-radius: var(--hr-radius-sm);
+  /* Inside .hover-popover-card (24px); per the design rule, inner > outer. */
+  border-radius: var(--hr-radius-lg);
   border: 1px solid color-mix(in srgb, var(--hr-text) 8%, transparent);
 }
 
@@ -17353,8 +17354,8 @@ body {
 .picks-synth-tag {
   background: rgba(255, 255, 255, 0.08);
   color: var(--hr-text-muted);
-  padding: 1px 5px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: var(--hr-radius-pill);
   font-size: 8px;
   letter-spacing: 0.1em;
 }
@@ -17528,8 +17529,8 @@ body {
 
 .picks-error {
   margin: 0;
-  padding: 8px 10px;
-  border-radius: var(--hr-radius-xs);
+  padding: 8px 14px;
+  border-radius: var(--hr-radius-row);
   background: color-mix(in srgb, var(--hr-danger) 18%, transparent);
   color: var(--hr-text);
   font-size: var(--hr-text-xs);
@@ -17716,7 +17717,7 @@ body {
 .picks-progress-bar {
   position: relative;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--hr-radius-pill);
   background: rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
@@ -17804,8 +17805,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
-  border-radius: var(--hr-radius-xs);
+  padding: 8px 14px;
+  border-radius: var(--hr-radius-row);
   background: rgba(255, 255, 255, 0.04);
   font-size: var(--hr-text-xs);
   color: var(--hr-text-soft);
