@@ -266,10 +266,9 @@ export type PlayerMedia = {
  * upcoming games:
  *
  *   1) Summary's `rosters` block (works for some games)
- *   2) Per-team `/teams/{teamId}/roster` endpoint — much more
+ *   2) Per-team `/teams/{abbreviation}/roster` endpoint — much more
  *      reliable, returns full athlete records with headshot URLs.
- *      Team IDs are extracted from the team logo URL pattern
- *      (`a.espncdn.com/i/teamlogos/{sport}/500/{teamId}.png`).
+ *      ESPN accepts the lowercase abbreviation as the path param.
  *
  * Keys are stored under multiple variants (full name, last name,
  * shortName) so a market title like "Mahomes" still resolves the
@@ -278,12 +277,19 @@ export type PlayerMedia = {
 export async function fetchPlayerMediaMap(
   gameId: string,
   sport: SportLeague,
-  options: { homeLogoUrl?: string; awayLogoUrl?: string; fetcher?: Fetcher } = {}
+  options: {
+    /** Team abbreviations playing in this game (KC, DET — case-insensitive). */
+    teamAbbreviations?: string[];
+    /** Optional logo URLs by lowercase abbreviation, used as fallback team logo when the roster API doesn't include one. */
+    teamLogos?: Record<string, string | undefined>;
+    fetcher?: Fetcher;
+  } = {}
 ): Promise<Map<string, PlayerMedia>> {
   const fetcher = options.fetcher ?? fetch;
   const map = new Map<string, PlayerMedia>();
+  const sportPath = ESPN_SPORTS.find((entry) => entry.sport === sport)?.path;
 
-  // Source 1 — summary rosters (sometimes empty).
+  // Source 1 — summary rosters (best when populated).
   const summary = await fetchSummary(gameId, sport, fetcher);
   for (const teamRoster of summary?.rosters ?? []) {
     addRosterToMap(map, teamRoster.roster ?? [], {
@@ -293,53 +299,77 @@ export async function fetchPlayerMediaMap(
     });
   }
 
-  // Source 2 — team roster endpoint (much more reliable). Fan out
-  // home + away in parallel; if Source 1 already covered them we
-  // skip silently when the same name is re-added.
-  const teamIds: Array<{ id: string; logoUrl: string }> = [];
-  if (options.homeLogoUrl) {
-    const id = extractTeamIdFromLogoUrl(options.homeLogoUrl);
-    if (id) teamIds.push({ id, logoUrl: options.homeLogoUrl });
-  }
-  if (options.awayLogoUrl) {
-    const id = extractTeamIdFromLogoUrl(options.awayLogoUrl);
-    if (id) teamIds.push({ id, logoUrl: options.awayLogoUrl });
-  }
-  if (teamIds.length > 0) {
-    const sportPath = ESPN_SPORTS.find((entry) => entry.sport === sport)?.path;
-    if (sportPath) {
-      await Promise.all(
-        teamIds.map(async ({ id, logoUrl }) => {
-          try {
-            const teamRoster = await fetchTeamRoster(sportPath, id, fetcher);
-            if (!teamRoster) return;
-            addRosterToMap(map, teamRoster.athletes ?? [], {
-              teamAbbr: teamRoster.team?.abbreviation,
+  // Source 2 — fan out per-team roster endpoint. ESPN accepts the
+  // lowercase team abbreviation in the path param so we can skip the
+  // ID lookup entirely.
+  if (sportPath && options.teamAbbreviations?.length) {
+    await Promise.all(
+      options.teamAbbreviations.map(async (abbr) => {
+        const lower = abbr.toLowerCase();
+        try {
+          const teamRoster = await fetchTeamRoster(sportPath, lower, fetcher);
+          if (!teamRoster) return;
+          const flat = flattenRosterAthletes(teamRoster.athletes);
+          addRosterToMap(
+            map,
+            flat.map((athlete) => ({ athlete })),
+            {
+              teamAbbr: teamRoster.team?.abbreviation ?? abbr.toUpperCase(),
               teamColor: teamRoster.team?.color,
-              teamLogo: logoUrl
-            });
-          } catch {
-            // Best-effort — one team's failure doesn't poison the slate.
-          }
-        })
-      );
-    }
+              teamLogo: options.teamLogos?.[lower]
+            }
+          );
+        } catch {
+          // Best-effort — one team's failure doesn't poison the slate.
+        }
+      })
+    );
   }
+
+  console.log(JSON.stringify({
+    event: "picks.media.built",
+    gameId,
+    sport,
+    sources: { summaryRosters: summary?.rosters?.length ?? 0, teams: options.teamAbbreviations?.length ?? 0 },
+    keys: map.size,
+    headshots: Array.from(map.values()).filter((m) => m.headshot).length
+  }));
 
   return map;
 }
 
+type EspnTeamAthlete = {
+  id?: string | number;
+  displayName?: string;
+  fullName?: string;
+  shortName?: string;
+  headshot?: { href?: string };
+  position?: { abbreviation?: string };
+};
+
 type EspnTeamRoster = {
   team?: { abbreviation?: string; color?: string };
-  athletes?: Array<{
-    id?: string | number;
-    displayName?: string;
-    fullName?: string;
-    shortName?: string;
-    headshot?: { href?: string };
-    position?: { abbreviation?: string };
-  }>;
+  /**
+   * Either a flat athlete list (NBA) OR a grouped list where each
+   * entry has a `position` string + `items[]` of athletes (NFL/MLB/NHL).
+   */
+  athletes?: Array<EspnTeamAthlete | { position?: string; items?: EspnTeamAthlete[] }>;
 };
+
+function flattenRosterAthletes(
+  athletes: EspnTeamRoster["athletes"]
+): EspnTeamAthlete[] {
+  if (!athletes) return [];
+  const out: EspnTeamAthlete[] = [];
+  for (const entry of athletes) {
+    if (entry && typeof entry === "object" && "items" in entry && Array.isArray(entry.items)) {
+      for (const item of entry.items) out.push(item);
+    } else {
+      out.push(entry as EspnTeamAthlete);
+    }
+  }
+  return out;
+}
 
 const TEAM_ROSTER_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 const teamRosterCache = new Map<string, { value: EspnTeamRoster; expiresAt: number }>();
@@ -371,19 +401,6 @@ async function fetchTeamRoster(
   })();
   teamRosterInflight.set(cacheKey, job);
   return job;
-}
-
-/**
- * ESPN team logos live at:
- *   https://a.espncdn.com/i/teamlogos/{sport}/500/{teamId}.png
- * The teamId is the basename minus the extension (e.g. "12.png" → 12).
- * We parse it out here so callers can hand us the existing team meta
- * without an extra ID lookup.
- */
-function extractTeamIdFromLogoUrl(url: string): string | undefined {
-  if (!url) return undefined;
-  const match = /\/teamlogos\/[^/]+\/(?:500|scoreboard|primary_logo)\/([^/.]+)\.(?:png|svg|jpg)/i.exec(url);
-  return match?.[1];
 }
 
 type AthleteEntry = {
