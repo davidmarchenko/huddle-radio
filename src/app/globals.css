@@ -75,13 +75,13 @@
   --hr-radius-card: var(--hr-radius-lg);
   --hr-radius-hero: var(--hr-radius-xl);
   /**
-   * Concentric-rectangles helpers: an inner rectangle's corner radius
-   * should equal the outer's radius minus the gap between them. Cards
-   * are 36px with 1rem (16px) padding, so a row sitting inside a card
-   * wants 36 − 16 = 20px to share its center of curvature.
+   * Picks nesting: per the design system, an inner element should
+   * read with a LARGER radius than its container, not smaller.
+   * Cards are 36px; rows nested in a card go bigger; buttons nested
+   * in a row go pill so the affordance is unmistakably tappable.
    */
-  --hr-radius-row: 20px;        /* row inside huddle-card */
-  --hr-radius-row-inner: 10px;  /* button/chip inside a row */
+  --hr-radius-row: 44px;                     /* row inside huddle-card */
+  --hr-radius-row-inner: var(--hr-radius-pill); /* button/chip inside a row */
 
   --hr-shadow-sm: 0 4px 14px rgba(2, 4, 12, 0.35);
   --hr-shadow-md: 0 14px 40px rgba(2, 4, 12, 0.45);
