@@ -267,23 +267,27 @@ function PlayerAvatar({ prop, size = "md" }: { prop: PickProp; size?: "sm" | "md
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
   const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
+  // Wrap exists so the team-logo badge can overlap the avatar
+  // without being clipped by the avatar's own overflow:hidden (which
+  // is required to round the headshot inside the circle).
   return (
-    <span
-      className="picks-avatar"
-      data-size={size}
-      style={accent ? { background: `linear-gradient(135deg, ${accent}, color-mix(in srgb, ${accent} 55%, #000))` } : undefined}
-      title={prop.playerName}
-    >
-      {prop.playerHeadshot && !failed ? (
-        <img
-          src={prop.playerHeadshot}
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span className="picks-avatar-initials">{initials}</span>
-      )}
+    <span className="picks-avatar-wrap" data-size={size} title={prop.playerName}>
+      <span
+        className="picks-avatar"
+        data-size={size}
+        style={accent ? { background: `linear-gradient(135deg, ${accent}, color-mix(in srgb, ${accent} 55%, #000))` } : undefined}
+      >
+        {prop.playerHeadshot && !failed ? (
+          <img
+            src={prop.playerHeadshot}
+            alt=""
+            loading="lazy"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          <span className="picks-avatar-initials">{initials}</span>
+        )}
+      </span>
       {prop.playerTeamLogo && (
         <span className="picks-avatar-badge">
           <img src={prop.playerTeamLogo} alt="" loading="lazy" />
