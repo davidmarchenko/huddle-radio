@@ -202,6 +202,122 @@ body,
   cursor: pointer;
 }
 
+/* iMessage-style link preview card. Lives in a portal so it escapes
+   parent overflow/scroll clipping. The visibility: hidden initial
+   state prevents any flash of mis-positioned content — the card
+   appears in its final landed position only. */
+.link-preview-trigger {
+  display: inline;
+}
+
+.link-preview-card {
+  z-index: 100;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  background: var(--hr-surface-strong);
+  border: 1px solid var(--hr-line);
+  border-radius: var(--hr-radius-md);
+  overflow: hidden;
+  box-shadow: 0 18px 48px #02040cb3, 0 2px 8px #00000080;
+  transform-origin: top left;
+  animation: link-preview-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.link-preview-card[data-placement="top"] {
+  transform-origin: bottom left;
+}
+
+@keyframes link-preview-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.link-preview-card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: background var(--hr-motion-fast) var(--hr-ease-soft);
+}
+
+.link-preview-card-link:hover {
+  background: color-mix(in srgb, var(--hr-text) 4%, transparent);
+}
+
+.link-preview-card-hero {
+  position: relative;
+  width: 100%;
+  /* 16:9 hero — matches iMessage proportions and clips ESPN article
+     thumbnails cleanly. */
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--hr-bg-1), var(--hr-bg-2));
+}
+
+.link-preview-card-hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.link-preview-card-body {
+  padding: 12px 14px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.link-preview-card-title {
+  font-size: var(--hr-text-sm);
+  font-weight: var(--hr-weight-bold);
+  line-height: 1.35;
+  color: var(--hr-text);
+  /* Two-line clamp matching iMessage card style. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.link-preview-card-description {
+  margin: 0;
+  font-size: var(--hr-text-xs);
+  line-height: 1.4;
+  color: var(--hr-text-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.link-preview-card-footer {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.link-preview-card-favicon {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  display: block;
+  flex-shrink: 0;
+  /* Some sites serve favicons with bg color baked in; subtle border
+     keeps a transparent favicon legible against the dark card. */
+  border: 1px solid color-mix(in srgb, var(--hr-text) 8%, transparent);
+}
+
 .markets-board-list li:hover {
   background: color-mix(in srgb, var(--hr-text) 4%, transparent);
 }

@@ -47,6 +47,7 @@ import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
 import { DebugPanel } from "./DebugPanel";
+import { LinkPreview } from "./LinkPreview";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
@@ -5428,7 +5429,7 @@ function StorylineRow({ item }: { item: NewsItem }) {
   const hasLink = Boolean(item.url);
   const relativeTime = item.publishedAt ? formatRelativeTime(item.publishedAt) : "";
   const absoluteTime = item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "";
-  const headline = hasLink ? (
+  const linkBody = (
     <a
       className="storyline-news-link"
       href={item.url}
@@ -5441,6 +5442,15 @@ function StorylineRow({ item }: { item: NewsItem }) {
         <span className="icon icon-share-link" />
       </span>
     </a>
+  );
+  const headline = hasLink ? (
+    <LinkPreview
+      href={item.url!}
+      fallbackTitle={item.title}
+      fallbackDescription={item.source}
+    >
+      {linkBody}
+    </LinkPreview>
   ) : (
     <strong title={item.title}>{item.title}</strong>
   );
