@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import type { MarketHistoryPoint, MarketSnapshot } from "../shared/contracts";
 import { HoverPopover } from "./HoverPopover";
-import { MarketSparkline } from "./MarketSparkline";
+import { MarketChart } from "./MarketChart";
 
 /**
  * Market hovercard. Same shape as iMessage link previews but built
@@ -51,7 +51,7 @@ export function MarketPreview({ snapshot, children, className }: MarketPreviewPr
       <p className="market-preview-title">{snapshot.title}</p>
       <p className="market-preview-outcome">{snapshot.outcomeLabel}</p>
       {history && history.length >= 2 && (
-        <MarketSparkline history={history} />
+        <MarketChart history={history} />
       )}
       <div className="market-preview-prices">
         <div className="market-preview-price-cell" data-side="yes">

@@ -388,87 +388,115 @@ body,
   color: var(--hr-text-muted);
 }
 
-/* Inline 24h price sparkline. Trend-tinted: the line + area fill
-   pick up success/danger/muted hue based on whether the close moved
-   up, down, or stayed flat over the window. Renders nothing when
-   there are <2 history points (handled by MarketSparkline itself). */
-.market-sparkline {
-  display: grid;
-  gap: 4px;
-  margin: 2px 0 4px;
+/* Two-line interactive chart. YES (success-tinted, on top) and NO
+   (danger-tinted, mirror of YES) share one fetch — the NO line is
+   derived as 100 - YES on the client. Hovering snaps a vertical
+   crosshair to the nearest data point and surfaces a tooltip with
+   timestamp + both prices. Renders nothing for <2 history points. */
+.market-chart {
+  position: relative;
+  margin: 4px 0 6px;
 }
 
-.market-sparkline svg {
+.market-chart svg {
   width: 100%;
   height: auto;
   display: block;
+  cursor: crosshair;
+  overflow: visible;
 }
 
-.market-sparkline-line {
+.market-chart-grid {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.market-chart-line {
   fill: none;
-  stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-.market-sparkline-area {
-  stroke: none;
-  opacity: 0.18;
-}
-
-.market-sparkline-dot {
-  stroke: none;
-}
-
-.market-sparkline-up .market-sparkline-line,
-.market-sparkline-up .market-sparkline-dot {
-  fill: var(--hr-success);
+.market-chart-line-yes {
   stroke: var(--hr-success);
+  stroke-width: 1.75;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--hr-success) 35%, transparent));
 }
-.market-sparkline-up .market-sparkline-area {
+
+.market-chart-line-no {
+  stroke: var(--hr-danger);
+  stroke-width: 1.25;
+  opacity: 0.55;
+}
+
+.market-chart-crosshair {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  pointer-events: none;
+}
+
+.market-chart-dot {
+  stroke: rgba(0, 0, 0, 0.6);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.market-chart-dot-yes {
   fill: var(--hr-success);
 }
 
-.market-sparkline-down .market-sparkline-line,
-.market-sparkline-down .market-sparkline-dot {
-  fill: var(--hr-danger);
-  stroke: var(--hr-danger);
-}
-.market-sparkline-down .market-sparkline-area {
+.market-chart-dot-no {
   fill: var(--hr-danger);
 }
 
-.market-sparkline-flat .market-sparkline-line,
-.market-sparkline-flat .market-sparkline-dot {
+.market-chart-time-label {
   fill: var(--hr-text-muted);
-  stroke: var(--hr-text-muted);
-}
-.market-sparkline-flat .market-sparkline-area {
-  fill: var(--hr-text-muted);
-}
-
-.market-sparkline-labels {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   font-family: var(--hr-font-mono);
-  font-size: var(--hr-text-3xs);
+  font-size: 9px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+  pointer-events: none;
+}
+
+.market-chart-tooltip {
+  position: absolute;
+  top: -2px;
+  transform: translateX(-50%);
+  background: rgba(12, 14, 18, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hr-text);
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  z-index: 1;
+}
+
+.market-chart-tooltip-time {
   color: var(--hr-text-muted);
+  margin-bottom: 2px;
+  font-size: 9px;
 }
 
-.market-sparkline-spread {
-  opacity: 0.6;
+.market-chart-tooltip-prices {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
-.market-sparkline-last {
-  font-family: var(--hr-font-mono);
-  font-size: var(--hr-text-3xs);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--hr-text-soft);
-  text-align: right;
+.market-chart-tooltip-prices [data-side="yes"] {
+  color: var(--hr-success);
+}
+
+.market-chart-tooltip-prices [data-side="no"] {
+  color: var(--hr-danger);
 }
 
 /* YES/NO grid — color-tinted side cells make the price the dominant
