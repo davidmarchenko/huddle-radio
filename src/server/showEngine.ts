@@ -23,6 +23,7 @@ import { MockTTSProvider, ElevenLabsTTSProvider } from "../providers/ttsProvider
 import { FishAudioTTSProvider } from "../providers/fishAudioProvider";
 import { recordTurn, type TurnSummary } from "./turnSummaries";
 import { UserVideoProvider } from "../providers/userVideoProvider";
+import { demoGameIdToSport } from "../providers/demoSportsDataProvider";
 import { config } from "./config";
 import { fetchMarketSnapshots, pickRelevantMarketsForGame } from "./marketsProvider";
 import { detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
@@ -35,7 +36,8 @@ import {
   createTTSProvider,
   deriveSportsLabelMode,
   getActiveProviders,
-  getHealth
+  getHealth,
+  resolveSportsSource
 } from "./showFactories";
 import { AsyncEventQueue } from "./asyncEventQueue";
 
@@ -344,12 +346,24 @@ export class ShowEngine {
     this.started = true;
     incrementCounter("showsStarted");
 
-    const fantasyProvider = createFantasyProvider(request.providerMode, request.customLeague);
     // Sports backend is derived from the gameId prefix — see
     // resolveSportsSource. The old separate `sportsDataMode` request
     // field used to drive this and silently fell through to KC@DET when
     // the two disagreed; that whole class of bug is gone now.
     const sportsProvider = createSportsDataProvider(request.sportsGameId);
+    // Derive the sport from the gameId (nfl-..., mlb-..., demo-..., etc.)
+    // so the demo fantasy provider returns a sport-matched bundled league
+    // instead of always defaulting to NFL. Without this, picking an MLB
+    // game produced commentary that referenced Mahomes/Amon-Ra because
+    // the demo NFL roster was the listener's only roster context.
+    const sportsSource = resolveSportsSource(request.sportsGameId);
+    const sportHint =
+      sportsSource.kind === "espn"
+        ? sportsSource.sportPath.sport
+        : sportsSource.kind === "demo" && sportsSource.gameId
+          ? demoGameIdToSport(sportsSource.gameId)
+          : undefined;
+    const fantasyProvider = createFantasyProvider(request.providerMode, request.customLeague, sportHint);
     const newsProvider = createNewsProvider();
     const modelProvider = createModelProvider();
 

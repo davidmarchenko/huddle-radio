@@ -2,7 +2,8 @@ import type {
   ActiveProviderSummary,
   FantasyLeagueState,
   MultimodalModelProvider,
-  ProviderHealth
+  ProviderHealth,
+  SportLeague
 } from "../shared/contracts";
 import { config } from "./config";
 import { describeCommentaryStack, createCommentaryProvider } from "./createCommentaryProvider";
@@ -34,11 +35,21 @@ import { UserVideoProvider } from "../providers/userVideoProvider";
 
 export function createFantasyProvider(
   providerMode: "demo" | "sleeper" | "espn" | undefined,
-  customLeague?: FantasyLeagueState
+  customLeague?: FantasyLeagueState,
+  /**
+   * Optional sport hint derived from the picked gameId (see
+   * resolveSportsSource). Only the demo provider uses it — Sleeper and
+   * ESPN already carry sport identity through their leagueId. When set,
+   * the demo provider returns the bundled league for that sport (or an
+   * empty-shell league when no demo data exists), preventing the demo
+   * NFL roster from polluting commentary on a real-game in a different
+   * sport.
+   */
+  sportHint?: SportLeague
 ) {
   if (providerMode === "sleeper") return new SleeperFantasyProvider();
   if (providerMode === "espn") return new EspnFantasyProvider({ swid: config.ESPN_SWID, espnS2: config.ESPN_S2 });
-  return new DemoFantasyProvider(customLeague);
+  return new DemoFantasyProvider(customLeague, sportHint);
 }
 
 /**

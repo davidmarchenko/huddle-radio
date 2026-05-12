@@ -19,6 +19,15 @@ const DEMO_GAME_META: Record<string, DemoGameMeta> = {
 
 const DEFAULT_META = DEMO_GAME_META["demo-kc-det"];
 
+/**
+ * Look up the sport for a demo gameId. Used by the engine to drive
+ * the demo fantasy provider's sport hint so a demo NBA game doesn't
+ * get NFL fantasy roster context. Returns undefined for unknown ids.
+ */
+export function demoGameIdToSport(gameId: string): SportLeague | undefined {
+  return DEMO_GAME_META[gameId]?.sport;
+}
+
 export class DemoSportsDataProvider implements SportsDataProvider {
   id = "demo-sports-data";
   private index = 0;

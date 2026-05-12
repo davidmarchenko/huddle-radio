@@ -96,6 +96,37 @@ export const demoNbaLeagueState: FantasyLeagueState = {
 
 export const demoLeagues: FantasyLeagueState[] = [demoLeagueState, demoNbaLeagueState];
 
+/**
+ * Pick the bundled demo league for a given sport. Returns undefined for
+ * sports with no demo data (MLB, NHL, college, etc.) — callers should
+ * treat that as "no listener roster context available" so commentary
+ * doesn't pollute a baseball game with NFL fantasy names. The single
+ * production bug this prevents: demo NFL roster (Mahomes, Amon-Ra)
+ * leaking into commentary on a real ESPN MLB game.
+ */
+export function pickDemoLeagueForSport(sport: FantasyLeagueState["sport"]): FantasyLeagueState | undefined {
+  return demoLeagues.find((league) => league.sport === sport);
+}
+
+/**
+ * Empty-shell league used when the listener picks a sport for which we
+ * have no demo data. Carries the right sport so downstream UI labels
+ * (and the producer panel "fantasy" row) don't lie, but no rosters /
+ * matchups so the commentary path skips fantasy-roster framing entirely.
+ */
+export function emptyDemoLeagueForSport(sport: FantasyLeagueState["sport"]): FantasyLeagueState {
+  return {
+    provider: "demo",
+    leagueId: `demo-${sport}-empty`,
+    leagueName: `${sport.toUpperCase()} demo (no league connected)`,
+    sport,
+    season: new Date().getFullYear().toString(),
+    scoringSummary: "",
+    updatedAt: new Date().toISOString(),
+    matchups: []
+  };
+}
+
 export const demoPlays: SportsPlay[] = [
   {
     id: "play-001",

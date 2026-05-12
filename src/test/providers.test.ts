@@ -16,6 +16,42 @@ describe("demo providers", () => {
     expect(league.matchups[0].rosters.flatMap((roster) => roster.starters).some((player) => player.id === "kc-te-87")).toBe(true);
   });
 
+  it("returns the NBA demo league when the sport hint is nba — no NFL roster pollution", async () => {
+    const league = await new DemoFantasyProvider(undefined, "nba").getLeagueState();
+    expect(league.sport).toBe("nba");
+    const allStarters = league.matchups[0].rosters.flatMap((r) => r.starters);
+    expect(allStarters.some((p) => p.name === "Nikola Jokić")).toBe(true);
+    expect(allStarters.some((p) => p.name === "Patrick Mahomes")).toBe(false);
+    expect(allStarters.some((p) => p.name === "Amon-Ra St. Brown")).toBe(false);
+  });
+
+  it("returns an empty-shell league for sports with no demo data (mlb, nhl)", async () => {
+    // The bug this prevents: picking an MLB game while in demo mode used
+    // to produce commentary that referenced Mahomes/Amon-Ra because the
+    // demo NFL roster was the only roster context the engine had.
+    const mlbLeague = await new DemoFantasyProvider(undefined, "mlb").getLeagueState();
+    expect(mlbLeague.sport).toBe("mlb");
+    expect(mlbLeague.matchups).toEqual([]);
+    const nhlLeague = await new DemoFantasyProvider(undefined, "nhl").getLeagueState();
+    expect(nhlLeague.sport).toBe("nhl");
+    expect(nhlLeague.matchups).toEqual([]);
+  });
+
+  it("custom league wins over the sport hint (explicit user paste-in)", async () => {
+    const customLeague = {
+      provider: "custom-demo" as const,
+      leagueId: "user-paste",
+      leagueName: "User League",
+      sport: "nfl" as const,
+      season: "2026",
+      scoringSummary: "",
+      updatedAt: new Date().toISOString(),
+      matchups: []
+    };
+    const league = await new DemoFantasyProvider(customLeague, "nba").getLeagueState();
+    expect(league.leagueId).toBe("user-paste");
+  });
+
   it("cycles scripted sports plays and retains recent game state", async () => {
     const provider = new DemoSportsDataProvider();
     const first = await provider.nextPlay();
