@@ -108,13 +108,15 @@ export async function fetchPolymarketSnapshots(options: FetchPolymarketOptions =
         const events = await fetchEvents(slug, fetcher);
         return events.flatMap((event) => {
           const markets = event.markets ?? [];
+          // Canonical Polymarket page is the EVENT, not the individual
+          // condition outcome — both Yes and No share one URL. Slug
+          // comes straight from the API; constructing from conditionId
+          // gives a 404.
+          const marketUrl = event.slug ? `https://polymarket.com/event/${event.slug}` : undefined;
           return markets.flatMap<MarketSnapshot>((market) => {
             const outcomes = parseJsonField<string[]>(market.outcomes) ?? [];
             const prices = parseJsonField<string[]>(market.outcomePrices) ?? [];
             const question = market.question ?? event.title ?? "Unknown market";
-            // Polymarket markets are typically binary — emit one
-            // snapshot per outcome that's clearly the "yes" side
-            // (price > 0). Skip scaffolding-only outcomes.
             return outcomes
               .map<MarketSnapshot | undefined>((label, idx) => {
                 const priceStr = prices[idx];
@@ -131,7 +133,8 @@ export async function fetchPolymarketSnapshots(options: FetchPolymarketOptions =
                   outcomeLabel: label,
                   yesPriceCents,
                   volume24hUsd: market.volume24hr,
-                  observedAt
+                  observedAt,
+                  marketUrl
                 };
               })
               .filter((snapshot): snapshot is MarketSnapshot => snapshot !== undefined);

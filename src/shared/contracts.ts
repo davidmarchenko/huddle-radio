@@ -124,6 +124,15 @@ export type MarketSnapshot = {
   volume24hUsd?: number;
   /** Wall-clock timestamp the snapshot was sourced from upstream. */
   observedAt: string;
+  /**
+   * Canonical upstream URL for this market when known. Polymarket
+   * uses event slugs (`/event/{slug}`), Kalshi uses event/series
+   * tickers (`/markets/{series}/{event}`) — neither maps cleanly from
+   * the snapshot's externalId alone, so providers populate this
+   * directly from API fields. Undefined means we couldn't construct
+   * a reliable URL and the UI should hide the "View on X" CTA.
+   */
+  marketUrl?: string;
 };
 
 export type SportsGameState = {

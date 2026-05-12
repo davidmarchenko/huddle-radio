@@ -95,6 +95,14 @@ export async function fetchKalshiSnapshots(options: FetchKalshiOptions = {}): Pr
           const lastDollars = market.last_price_dollars ?? market.yes_bid_dollars ?? market.yes_ask_dollars ?? 0;
           const yesPriceCents = Math.round(Math.max(0, Math.min(1, lastDollars)) * 100);
           const title = market.title ?? market.event_ticker ?? market.ticker;
+          // Kalshi's canonical URL is /markets/{series}/{event} where
+          // both segments are lowercase. The series_ticker is fixed
+          // per sport (KXNBA, KXMLBGAME, etc.); event_ticker is the
+          // specific game/event. Falling back to /markets/{ticker}
+          // when the event ticker is missing — that route also resolves.
+          const marketUrl = market.event_ticker
+            ? `https://kalshi.com/markets/${series.toLowerCase()}/${market.event_ticker.toLowerCase()}`
+            : `https://kalshi.com/markets/${market.ticker.toLowerCase()}`;
           return {
             source: "kalshi",
             externalId: market.ticker,
@@ -104,7 +112,8 @@ export async function fetchKalshiSnapshots(options: FetchKalshiOptions = {}): Pr
             outcomeLabel: market.yes_sub_title ?? "Yes",
             yesPriceCents,
             volume24hUsd: market.volume_24h,
-            observedAt
+            observedAt,
+            marketUrl
           };
         });
       } catch {

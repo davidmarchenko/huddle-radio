@@ -28,7 +28,10 @@ export function MarketPreview({ snapshot, children, className }: MarketPreviewPr
   const noPrice = 100 - snapshot.yesPriceCents;
   const delta = snapshot.recentDeltaCents ?? 0;
   const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
-  const url = marketSourceUrl(snapshot);
+  // Prefer the canonical URL the provider supplied — earlier we tried
+  // to construct one from externalId and got a 404 because Polymarket
+  // events use slugs, not condition IDs.
+  const url = snapshot.marketUrl;
   const sourceLabel = snapshot.source === "kalshi" ? "Kalshi" : "Polymarket";
   const kindLabel = snapshot.marketKind.replace("-", " ");
   const observedRel = formatRelativeTime(snapshot.observedAt);
@@ -83,16 +86,6 @@ export function MarketPreview({ snapshot, children, className }: MarketPreviewPr
       {children}
     </HoverPopover>
   );
-}
-
-function marketSourceUrl(snapshot: MarketSnapshot): string | undefined {
-  if (snapshot.source === "kalshi") {
-    return `https://kalshi.com/markets/${snapshot.externalId.toLowerCase()}`;
-  }
-  if (snapshot.source === "polymarket") {
-    return `https://polymarket.com/event/${snapshot.externalId}`;
-  }
-  return undefined;
 }
 
 function formatCompactNumber(n: number): string {
