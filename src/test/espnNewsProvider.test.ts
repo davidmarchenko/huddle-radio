@@ -83,4 +83,49 @@ describe("EspnNewsProvider", () => {
     const provider = new EspnNewsProvider(async () => new Response("oops", { status: 500, statusText: "Internal Server Error" }));
     await expect(provider.getLatest({ playerIds: [], teams: [], sport: "nfl" })).rejects.toThrow(/ESPN news request failed: 500/);
   });
+
+  it("falls back to general league news when no article matches the team filter", () => {
+    // Bug this prevents: an MLB game (LAA vs CLE) where ESPN's articles
+    // happen to lack team category metadata used to silently return [],
+    // and the news chain would advance to the demo provider — listeners
+    // saw "Demo Wire" / "Demo Beat" placeholder copy on real games.
+    // With the fallback, any real ESPN league news beats the placeholder.
+    const items = normalizeEspnNews(
+      [
+        { headline: "Untagged league storyline A", published: "2026-05-09T12:00:00Z" },
+        {
+          headline: "Article about LAA",
+          published: "2026-05-09T13:00:00Z",
+          categories: [{ team: { abbreviation: "LAA" } }]
+        },
+        { headline: "Untagged league storyline B", published: "2026-05-09T14:00:00Z" }
+      ],
+      { sport: "mlb", teams: ["NYY"], playerIds: [] }
+    );
+    // No NYY-tagged article exists; matched bucket is empty. We fall
+    // back to the general bucket (newest first) instead of returning [].
+    expect(items.map((i) => i.title)).toEqual([
+      "Untagged league storyline B",
+      "Article about LAA",
+      "Untagged league storyline A"
+    ]);
+  });
+
+  it("prefers team-matched articles when both buckets have content", () => {
+    const items = normalizeEspnNews(
+      [
+        { headline: "General article", published: "2026-05-09T15:00:00Z" },
+        {
+          headline: "LAA story",
+          published: "2026-05-09T12:00:00Z",
+          categories: [{ team: { abbreviation: "LAA" } }]
+        }
+      ],
+      { sport: "mlb", teams: ["LAA"], playerIds: [] }
+    );
+    // Even though the general article is newer, the matched bucket
+    // wins entirely when it has content. Listeners see team-relevant
+    // copy first.
+    expect(items.map((i) => i.title)).toEqual(["LAA story"]);
+  });
 });

@@ -96,7 +96,8 @@ export function normalizeEspnNews(
 ): NewsItem[] {
   const teamSet = new Set(filter.teams.map((team) => team.toUpperCase()).filter(Boolean));
   const playerSet = new Set(filter.playerIds.filter(Boolean));
-  const items: NewsItem[] = [];
+  const matched: NewsItem[] = [];
+  const general: NewsItem[] = [];
 
   const hasTeamFilter = teamSet.size > 0;
   const hasPlayerFilter = playerSet.size > 0;
@@ -104,13 +105,7 @@ export function normalizeEspnNews(
     if (!article.headline) continue;
     const articleTeams = teamsFromCategories(article.categories);
     const articlePlayers = playersFromCategories(article.categories);
-    if (hasTeamFilter || hasPlayerFilter) {
-      const teamMatch = hasTeamFilter && articleTeams.some((team) => teamSet.has(team.toUpperCase()));
-      const playerMatch = hasPlayerFilter && articlePlayers.some((id) => playerSet.has(id));
-      if (!teamMatch && !playerMatch) continue;
-    }
-
-    items.push({
+    const item: NewsItem = {
       id: idForArticle(article, filter.sport),
       title: article.headline,
       source: article.byline ? `ESPN — ${article.byline}` : "ESPN",
@@ -118,12 +113,38 @@ export function normalizeEspnNews(
       publishedAt: article.published ?? article.lastModified ?? new Date().toISOString(),
       team: articleTeams[0],
       playerIds: articlePlayers.slice(0, 4)
-    });
+    };
+
+    // Bucket into "matches the listener's matchup" vs "general league
+    // news". Returning the general bucket as fallback is what stops
+    // a sparsely-tagged sport (MLB articles often lack team category
+    // metadata) from silently degrading to the demo storylines —
+    // real ESPN league news beats "Demo Wire" placeholder copy every
+    // time.
+    if (hasTeamFilter || hasPlayerFilter) {
+      const teamMatch = hasTeamFilter && articleTeams.some((team) => teamSet.has(team.toUpperCase()));
+      const playerMatch = hasPlayerFilter && articlePlayers.some((id) => playerSet.has(id));
+      if (teamMatch || playerMatch) {
+        matched.push(item);
+      } else {
+        general.push(item);
+      }
+    } else {
+      matched.push(item);
+    }
   }
 
-  // Newest first; cap at limit.
-  items.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
-  return items.slice(0, filter.limit ?? 6);
+  const sortNewest = (list: NewsItem[]) =>
+    list.sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime());
+  sortNewest(matched);
+  sortNewest(general);
+
+  const limit = filter.limit ?? 6;
+  if (matched.length > 0) return matched.slice(0, limit);
+  // Fall back to general league news so the pregame card stays real
+  // even when ESPN's tagging metadata didn't link any articles to
+  // either team in the matchup.
+  return general.slice(0, limit);
 }
 
 function teamsFromCategories(categories?: EspnArticle["categories"]): string[] {

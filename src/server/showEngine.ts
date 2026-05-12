@@ -669,11 +669,21 @@ export class ShowEngine {
         let recordedAtEnd = false;
         try {
           await videoProvider.observe(request.video);
-          const play = await sportsProvider.nextPlay();
-          const [gameState, observation, news] = await Promise.all([
-            sportsProvider.getGameState(),
+          // Fetch play + gameState first so we have BOTH teams in the
+          // matchup before the news call. Previously news only saw
+          // play.team (the team with possession on this play), which
+          // dropped half the relevant articles — the ESPN news provider
+          // would then return nothing and the chain would fall back to
+          // the demo storylines ("Demo Wire", "Demo Beat").
+          const [play, gameState] = await Promise.all([
+            sportsProvider.nextPlay(),
+            sportsProvider.getGameState()
+          ]);
+          const matchupTeams = [gameState.awayTeam, gameState.homeTeam, play.team]
+            .filter((team): team is string => Boolean(team));
+          const [observation, news] = await Promise.all([
             modelProvider.observe({ video: request.video, play, frame: this.latestFrame }),
-            newsProvider.getLatest({ playerIds: play.playerIds, teams: [play.team] })
+            newsProvider.getLatest({ playerIds: play.playerIds, teams: matchupTeams, sport: gameState.sport })
           ]);
           this.queue.push({ type: "play", play, game: gameState });
           this.queue.push({ type: "observation", observation });
