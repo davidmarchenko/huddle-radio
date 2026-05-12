@@ -17191,12 +17191,16 @@ body {
   transition: background 120ms ease, border-color 120ms ease;
 }
 .picks-row[data-picked="more"] {
-  background: color-mix(in srgb, var(--hr-success) 10%, rgba(255, 255, 255, 0.03));
-  border-color: color-mix(in srgb, var(--hr-success) 32%, transparent);
+  background: color-mix(in srgb, var(--hr-success) 14%, rgba(255, 255, 255, 0.03));
+  border-color: color-mix(in srgb, var(--hr-success) 40%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--hr-success) 18%, transparent),
+              0 6px 16px -8px color-mix(in srgb, var(--hr-success) 35%, transparent);
 }
 .picks-row[data-picked="less"] {
-  background: color-mix(in srgb, var(--hr-danger) 10%, rgba(255, 255, 255, 0.03));
-  border-color: color-mix(in srgb, var(--hr-danger) 32%, transparent);
+  background: color-mix(in srgb, var(--hr-danger) 14%, rgba(255, 255, 255, 0.03));
+  border-color: color-mix(in srgb, var(--hr-danger) 40%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--hr-danger) 18%, transparent),
+              0 6px 16px -8px color-mix(in srgb, var(--hr-danger) 35%, transparent);
 }
 
 .picks-row-label {
@@ -17352,59 +17356,112 @@ body {
 .picks-row-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  gap: 8px;
 }
 
+/* Stacked layout: bold label on top, line+stat value below.
+   Default state is a real button (solid muted fill, visible
+   border) — not plain text on a row. */
 .picks-side-btn {
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
   font-family: var(--hr-font-mono);
   color: var(--hr-text-soft);
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: var(--hr-radius-sm);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
-  display: grid;
-  gap: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease,
+              transform 120ms ease, box-shadow 120ms ease, opacity 160ms ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
   text-align: center;
   line-height: 1.1;
+  position: relative;
 }
 
 .picks-side-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--hr-text-xxs);
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+/* Tiny direction caret next to MORE/LESS — hint that More = up,
+   Less = down without leaning on color alone. */
+.picks-side-label::before {
+  font-size: 8px;
+  opacity: 0.6;
+  transform: translateY(-1px);
+}
+.picks-side-btn[data-side="more"] .picks-side-label::before {
+  content: "▲";
+}
+.picks-side-btn[data-side="less"] .picks-side-label::before {
+  content: "▼";
 }
 
 .picks-side-line {
   font-size: 10px;
-  letter-spacing: 0.05em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  opacity: 0.65;
+  opacity: 0.7;
 }
 
 .picks-side-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.09);
   color: var(--hr-text);
+  border-color: rgba(255, 255, 255, 0.18);
   transform: translateY(-1px);
 }
+
+/* Active (picked) state — strong solid fill, bigger label, slight
+   raise. The opposite-side sibling dims via the row-level rule
+   below so the user's choice reads at a glance. */
 .picks-side-btn[data-side="more"].active {
   background: linear-gradient(180deg, var(--hr-success), color-mix(in srgb, var(--hr-success) 75%, #000));
   color: #06180c;
   border-color: var(--hr-success);
-  box-shadow: 0 4px 10px -3px color-mix(in srgb, var(--hr-success) 60%, transparent);
+  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--hr-success) 70%, transparent),
+              inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
 }
 .picks-side-btn[data-side="less"].active {
   background: linear-gradient(180deg, var(--hr-danger), color-mix(in srgb, var(--hr-danger) 75%, #000));
   color: #1f0a0d;
   border-color: var(--hr-danger);
-  box-shadow: 0 4px 10px -3px color-mix(in srgb, var(--hr-danger) 60%, transparent);
+  box-shadow: 0 6px 14px -4px color-mix(in srgb, var(--hr-danger) 70%, transparent),
+              inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+.picks-side-btn.active .picks-side-label {
+  font-size: var(--hr-text-xs);
+}
+.picks-side-btn.active .picks-side-label::before {
+  opacity: 0.9;
 }
 .picks-side-btn.active .picks-side-line {
   opacity: 0.95;
+}
+
+/* When the row has a pick, dim the OTHER side button so the choice
+   is visually obvious from across the card. */
+.picks-row[data-picked="more"] .picks-side-btn[data-side="less"],
+.picks-row[data-picked="less"] .picks-side-btn[data-side="more"] {
+  opacity: 0.32;
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.picks-row[data-picked="more"] .picks-side-btn[data-side="less"]:hover,
+.picks-row[data-picked="less"] .picks-side-btn[data-side="more"]:hover {
+  opacity: 0.6;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 /* ---- Footer / payout preview ---- */
