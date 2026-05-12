@@ -133,6 +133,21 @@ export type MarketSnapshot = {
    * a reliable URL and the UI should hide the "View on X" CTA.
    */
   marketUrl?: string;
+  /**
+   * Polymarket CLOB token ID for the YES side. Required by the
+   * /prices-history endpoint — the public conditionId can't query
+   * history. Populated from event.markets[].clobTokenIds[idx]. Only
+   * set on polymarket snapshots; undefined for kalshi (which queries
+   * history by ticker via the externalId already).
+   */
+  clobTokenId?: string;
+};
+
+export type MarketHistoryPoint = {
+  /** ISO timestamp of the sample. */
+  ts: string;
+  /** YES-side price in cents (0..100). */
+  priceCents: number;
 };
 
 export type SportsGameState = {

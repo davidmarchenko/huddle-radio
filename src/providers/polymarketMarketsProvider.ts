@@ -22,6 +22,12 @@ type PolymarketMarket = {
   question?: string;
   outcomes?: string;            // JSON-encoded array of outcome labels
   outcomePrices?: string;       // JSON-encoded array of price strings ("0.62")
+  /**
+   * JSON-encoded array of CLOB token IDs, parallel to `outcomes`.
+   * The /prices-history CLOB endpoint takes ONE of these tokens as
+   * the `market` param — the conditionId by itself returns 404.
+   */
+  clobTokenIds?: string;
   volume24hr?: number;
   endDate?: string;
   active?: boolean;
@@ -116,6 +122,7 @@ export async function fetchPolymarketSnapshots(options: FetchPolymarketOptions =
           return markets.flatMap<MarketSnapshot>((market) => {
             const outcomes = parseJsonField<string[]>(market.outcomes) ?? [];
             const prices = parseJsonField<string[]>(market.outcomePrices) ?? [];
+            const tokens = parseJsonField<string[]>(market.clobTokenIds) ?? [];
             const question = market.question ?? event.title ?? "Unknown market";
             return outcomes
               .map<MarketSnapshot | undefined>((label, idx) => {
@@ -134,7 +141,8 @@ export async function fetchPolymarketSnapshots(options: FetchPolymarketOptions =
                   yesPriceCents,
                   volume24hUsd: market.volume24hr,
                   observedAt,
-                  marketUrl
+                  marketUrl,
+                  clobTokenId: tokens[idx]
                 };
               })
               .filter((snapshot): snapshot is MarketSnapshot => snapshot !== undefined);

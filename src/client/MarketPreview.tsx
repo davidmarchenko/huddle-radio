@@ -1,6 +1,7 @@
-import React from "react";
-import type { MarketSnapshot } from "../shared/contracts";
+import React, { useState } from "react";
+import type { MarketHistoryPoint, MarketSnapshot } from "../shared/contracts";
 import { HoverPopover } from "./HoverPopover";
+import { MarketSparkline } from "./MarketSparkline";
 
 /**
  * Market hovercard. Same shape as iMessage link previews but built
@@ -25,6 +26,9 @@ type MarketPreviewProps = {
 };
 
 export function MarketPreview({ snapshot, children, className }: MarketPreviewProps) {
+  const [history, setHistory] = useState<MarketHistoryPoint[] | undefined>(() =>
+    historyCache.get(historyKey(snapshot))
+  );
   const noPrice = 100 - snapshot.yesPriceCents;
   const delta = snapshot.recentDeltaCents ?? 0;
   const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
@@ -46,6 +50,9 @@ export function MarketPreview({ snapshot, children, className }: MarketPreviewPr
       </div>
       <p className="market-preview-title">{snapshot.title}</p>
       <p className="market-preview-outcome">{snapshot.outcomeLabel}</p>
+      {history && history.length >= 2 && (
+        <MarketSparkline history={history} />
+      )}
       <div className="market-preview-prices">
         <div className="market-preview-price-cell" data-side="yes">
           <small>YES</small>
@@ -82,10 +89,64 @@ export function MarketPreview({ snapshot, children, className }: MarketPreviewPr
   );
 
   return (
-    <HoverPopover cardClassName="market-preview-card" className={className} content={card}>
+    <HoverPopover
+      cardClassName="market-preview-card"
+      className={className}
+      content={card}
+      onOpen={() => {
+        const key = historyKey(snapshot);
+        if (historyCache.has(key)) {
+          setHistory(historyCache.get(key));
+          return;
+        }
+        void fetchHistory(snapshot).then((points) => {
+          historyCache.set(key, points);
+          setHistory(points);
+        });
+      }}
+    >
       {children}
     </HoverPopover>
   );
+}
+
+/**
+ * Per-session cache of price history, keyed by source + identifier.
+ * Browser-side only — the server endpoint also caches, but this saves
+ * the network round trip on re-hovers in the same tab.
+ */
+const historyCache = new Map<string, MarketHistoryPoint[]>();
+const historyInflight = new Map<string, Promise<MarketHistoryPoint[]>>();
+
+function historyKey(snapshot: MarketSnapshot): string {
+  const ident = snapshot.source === "polymarket" ? snapshot.clobTokenId ?? snapshot.externalId : snapshot.externalId;
+  return `${snapshot.source}:${ident}`;
+}
+
+async function fetchHistory(snapshot: MarketSnapshot): Promise<MarketHistoryPoint[]> {
+  const key = historyKey(snapshot);
+  const inflight = historyInflight.get(key);
+  if (inflight) return inflight;
+  const params = new URLSearchParams({
+    source: snapshot.source,
+    externalId: snapshot.externalId,
+    sport: snapshot.sport
+  });
+  if (snapshot.clobTokenId) params.set("clobTokenId", snapshot.clobTokenId);
+  const promise = (async () => {
+    try {
+      const response = await fetch(`/api/markets/history?${params.toString()}`);
+      if (!response.ok) return [];
+      const payload = (await response.json()) as { history?: MarketHistoryPoint[] };
+      return Array.isArray(payload.history) ? payload.history : [];
+    } catch {
+      return [];
+    } finally {
+      historyInflight.delete(key);
+    }
+  })();
+  historyInflight.set(key, promise);
+  return promise;
 }
 
 function formatCompactNumber(n: number): string {

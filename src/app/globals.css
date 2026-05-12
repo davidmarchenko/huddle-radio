@@ -388,6 +388,89 @@ body,
   color: var(--hr-text-muted);
 }
 
+/* Inline 24h price sparkline. Trend-tinted: the line + area fill
+   pick up success/danger/muted hue based on whether the close moved
+   up, down, or stayed flat over the window. Renders nothing when
+   there are <2 history points (handled by MarketSparkline itself). */
+.market-sparkline {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+
+.market-sparkline svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.market-sparkline-line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.market-sparkline-area {
+  stroke: none;
+  opacity: 0.18;
+}
+
+.market-sparkline-dot {
+  stroke: none;
+}
+
+.market-sparkline-up .market-sparkline-line,
+.market-sparkline-up .market-sparkline-dot {
+  fill: var(--hr-success);
+  stroke: var(--hr-success);
+}
+.market-sparkline-up .market-sparkline-area {
+  fill: var(--hr-success);
+}
+
+.market-sparkline-down .market-sparkline-line,
+.market-sparkline-down .market-sparkline-dot {
+  fill: var(--hr-danger);
+  stroke: var(--hr-danger);
+}
+.market-sparkline-down .market-sparkline-area {
+  fill: var(--hr-danger);
+}
+
+.market-sparkline-flat .market-sparkline-line,
+.market-sparkline-flat .market-sparkline-dot {
+  fill: var(--hr-text-muted);
+  stroke: var(--hr-text-muted);
+}
+.market-sparkline-flat .market-sparkline-area {
+  fill: var(--hr-text-muted);
+}
+
+.market-sparkline-labels {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.market-sparkline-spread {
+  opacity: 0.6;
+}
+
+.market-sparkline-last {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hr-text-soft);
+  text-align: right;
+}
+
 /* YES/NO grid — color-tinted side cells make the price the dominant
    visual element of the card. */
 .market-preview-prices {
