@@ -71,9 +71,13 @@ export function HoverPopover({
     const trigger = triggerRef.current;
     const card = cardRef.current;
     if (!trigger || !card) return;
-    const triggerRect = trigger.getBoundingClientRect();
+    const triggerRect = getEffectiveBoundingRect(trigger);
     const cardRect = card.getBoundingClientRect();
     if (cardRect.height < 20 || cardRect.width < 40) return;
+    // Trigger has no measurable box (e.g. display: contents wrapper
+    // with no children yet). Don't try to position from (0, 0) — wait
+    // for the next tick when DOM has settled.
+    if (triggerRect.width < 1 && triggerRect.height < 1) return;
 
     const margin = 10;
     const viewportH = window.innerHeight;
@@ -151,6 +155,9 @@ export function HoverPopover({
       <span
         ref={triggerRef}
         className={["hover-popover-trigger", className].filter(Boolean).join(" ")}
+        // The wrapper itself stays inline so it doesn't break parent
+        // layouts; consumers that need a different display (grid,
+        // contents, etc.) override via className.
         onMouseEnter={scheduleOpen}
         onMouseLeave={scheduleClose}
         onFocus={scheduleOpen}
@@ -180,4 +187,39 @@ export function HoverPopover({
         )}
     </>
   );
+}
+
+/**
+ * Bounding rect that survives `display: contents`.
+ *
+ * `display: contents` removes the element from the layout tree — the
+ * children behave as if direct children of the element's parent, and
+ * the element itself reports a 0×0 rect at the origin from
+ * getBoundingClientRect. That landed our market preview cards in the
+ * top-left corner because the trigger's rect was effectively (0, 0).
+ *
+ * When we detect a degenerate rect, walk into the element's children
+ * and union their boxes so the popover anchors to the actual visible
+ * extent of the trigger content. Recurses so a contents wrapper around
+ * another contents wrapper still resolves correctly.
+ */
+function getEffectiveBoundingRect(el: HTMLElement): DOMRect {
+  const rect = el.getBoundingClientRect();
+  if (rect.width >= 4 && rect.height >= 4) return rect;
+  const children = Array.from(el.children) as HTMLElement[];
+  if (children.length === 0) return rect;
+  let top = Number.POSITIVE_INFINITY;
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (const child of children) {
+    const childRect = getEffectiveBoundingRect(child);
+    if (childRect.width === 0 && childRect.height === 0) continue;
+    top = Math.min(top, childRect.top);
+    left = Math.min(left, childRect.left);
+    right = Math.max(right, childRect.right);
+    bottom = Math.max(bottom, childRect.bottom);
+  }
+  if (top === Number.POSITIVE_INFINITY) return rect;
+  return new DOMRect(left, top, right - left, bottom - top);
 }
