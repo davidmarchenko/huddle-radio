@@ -48,6 +48,7 @@ import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from ".
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
 import { DebugPanel } from "./DebugPanel";
 import { LinkPreview } from "./LinkPreview";
+import { MarketPreview } from "./MarketPreview";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
@@ -2516,21 +2517,18 @@ function MarketsTicker({
               data-direction={direction}
               className={isFlashing ? "is-flashing" : undefined}
             >
-              <MarketSourceBadge source={snapshot.source} variant="ticker" />
-              <span className="markets-ticker-title" title={`${snapshot.title} — ${snapshot.outcomeLabel}`}>{snapshot.outcomeLabel}</span>
-              <span
-                className="markets-ticker-price"
-                title={`YES ${snapshot.yesPriceCents}¢ · NO ${100 - snapshot.yesPriceCents}¢${
-                  delta !== 0 ? ` · ${delta > 0 ? "+" : ""}${delta}¢ in last 5m` : ""
-                }`}
-              >
-                {snapshot.yesPriceCents}¢
-                {delta !== 0 && (
-                  <em className={`markets-ticker-delta is-${direction}`}>
-                    {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
-                  </em>
-                )}
-              </span>
+              <MarketPreview snapshot={snapshot} className="markets-ticker-trigger">
+                <MarketSourceBadge source={snapshot.source} variant="ticker" />
+                <span className="markets-ticker-title">{snapshot.outcomeLabel}</span>
+                <span className="markets-ticker-price">
+                  {snapshot.yesPriceCents}¢
+                  {delta !== 0 && (
+                    <em className={`markets-ticker-delta is-${direction}`}>
+                      {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
+                    </em>
+                  )}
+                </span>
+              </MarketPreview>
             </li>
           );
         })}
@@ -5329,45 +5327,23 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
         {relevant.map((snapshot) => {
           const delta = snapshot.recentDeltaCents ?? 0;
           const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
-          const url = marketSourceUrl(snapshot);
-          const sourceLabel = snapshot.source === "kalshi" ? "Kalshi" : "Polymarket";
-          const rowInner = (
-            <>
-              <div className="markets-board-row-meta">
-                <MarketSourceBadge source={snapshot.source} variant="board" />
-                <strong title={snapshot.outcomeLabel}>{snapshot.outcomeLabel}</strong>
-                <span className="markets-board-title" title={snapshot.title}>{snapshot.title}</span>
-              </div>
-              <div
-                className="markets-board-row-price"
-                title={`YES ${snapshot.yesPriceCents}¢ · NO ${100 - snapshot.yesPriceCents}¢${
-                  delta !== 0 ? ` · ${delta > 0 ? "+" : ""}${delta}¢ in last 5m` : ""
-                }`}
-              >
-                <b>{snapshot.yesPriceCents}¢</b>
-                {delta !== 0 && (
-                  <em className={`markets-board-delta is-${direction}`}>
-                    {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
-                  </em>
-                )}
-              </div>
-            </>
-          );
           return (
             <li key={`${snapshot.source}:${snapshot.externalId}`} data-source={snapshot.source}>
-              {url ? (
-                <a
-                  className="markets-board-row-link"
-                  href={url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={`Open on ${sourceLabel}: ${snapshot.title}`}
-                >
-                  {rowInner}
-                </a>
-              ) : (
-                rowInner
-              )}
+              <MarketPreview snapshot={snapshot} className="markets-board-row-trigger">
+                <div className="markets-board-row-meta">
+                  <MarketSourceBadge source={snapshot.source} variant="board" />
+                  <strong>{snapshot.outcomeLabel}</strong>
+                  <span className="markets-board-title">{snapshot.title}</span>
+                </div>
+                <div className="markets-board-row-price">
+                  <b>{snapshot.yesPriceCents}¢</b>
+                  {delta !== 0 && (
+                    <em className={`markets-board-delta is-${direction}`}>
+                      {delta > 0 ? "▲" : "▼"} {Math.abs(delta)}¢
+                    </em>
+                  )}
+                </div>
+              </MarketPreview>
             </li>
           );
         })}
