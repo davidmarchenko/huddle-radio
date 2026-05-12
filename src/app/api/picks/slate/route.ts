@@ -5,7 +5,8 @@ import { getDefaultSportsGamesCache } from "@/server/sportsGamesCache";
 import { demoGameOptions } from "@/server/demoGameOptions";
 import { ESPN_SPORTS, type EspnSportPath } from "@/providers/espnSportsDataProvider";
 import { parseSportPrefixedGameId } from "@/server/showFactories";
-import type { SportLeague, SportsGameOption } from "@/shared/contracts";
+import { fetchPlayerMediaMap } from "@/server/picksLiveStats";
+import type { SportLeague, SportsGameOption, TeamMeta } from "@/shared/contracts";
 
 export const runtime = "nodejs";
 
@@ -40,19 +41,49 @@ export async function GET(request: Request) {
       teams: [homeTeam, awayTeam],
       markets
     });
+    // Enrich with media: player headshots from ESPN's roster section,
+    // team logos / colors from the game meta we already have. Demo
+    // games skip the ESPN call (no real roster) and rely on the
+    // generic fallback in the UI.
+    let enrichedProps = slate.props;
+    if (!gameId.startsWith("demo-") && slate.props.length > 0) {
+      try {
+        const mediaMap = await fetchPlayerMediaMap(gameId, sport);
+        enrichedProps = slate.props.map((prop) => {
+          const media =
+            mediaMap.get(prop.playerName.toLowerCase().trim()) ??
+            mediaMap.get(prop.playerName.toLowerCase().split(/\s+/).pop() ?? "");
+          const teamMeta = pickTeamMeta(resolved, media?.teamAbbr ?? prop.playerTeam);
+          return {
+            ...prop,
+            playerHeadshot: media?.headshot,
+            playerTeamLogo: teamMeta?.logo ?? media?.teamLogo,
+            playerTeamColor: teamMeta?.color ?? media?.teamColor,
+            playerPosition: media?.position,
+            playerTeam: media?.teamAbbr ?? prop.playerTeam
+          };
+        });
+      } catch {
+        // Enrichment is best-effort — failures fall back to bare slate.
+      }
+    }
     console.log(JSON.stringify({
       event: "picks.slate.ok",
       gameId,
       sport,
       props: slate.props.length,
       synthetic: slate.synthetic,
+      enriched: enrichedProps.filter((p) => p.playerHeadshot).length,
       latencyMs: Date.now() - startedAt
     }));
-    return NextResponse.json(slate, {
-      headers: {
-        "Cache-Control": "public, max-age=60, s-maxage=120, stale-while-revalidate=300"
+    return NextResponse.json(
+      { ...slate, props: enrichedProps },
+      {
+        headers: {
+          "Cache-Control": "public, max-age=60, s-maxage=120, stale-while-revalidate=300"
+        }
       }
-    });
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(JSON.stringify({
@@ -65,13 +96,25 @@ export async function GET(request: Request) {
   }
 }
 
-async function resolveGame(gameId: string): Promise<
-  { sport: SportLeague; homeTeam: string; awayTeam: string } | undefined
-> {
+type ResolvedGame = {
+  sport: SportLeague;
+  homeTeam: string;
+  awayTeam: string;
+  homeMeta?: TeamMeta;
+  awayMeta?: TeamMeta;
+};
+
+async function resolveGame(gameId: string): Promise<ResolvedGame | undefined> {
   if (gameId.startsWith("demo-")) {
     const game = demoGameOptions().find((g: SportsGameOption) => g.id === gameId);
     if (!game) return undefined;
-    return { sport: game.sport, homeTeam: game.homeTeam, awayTeam: game.awayTeam };
+    return {
+      sport: game.sport,
+      homeTeam: game.homeTeam,
+      awayTeam: game.awayTeam,
+      homeMeta: game.homeMeta,
+      awayMeta: game.awayMeta
+    };
   }
   const parsed = parseSportPrefixedGameId(gameId);
   if (!parsed) return undefined;
@@ -81,10 +124,25 @@ async function resolveGame(gameId: string): Promise<
     const games = await cache.get(sportPath);
     const game = games.find((g) => g.id === gameId);
     if (!game) return undefined;
-    return { sport: sportPath.sport, homeTeam: game.homeTeam, awayTeam: game.awayTeam };
+    return {
+      sport: sportPath.sport,
+      homeTeam: game.homeTeam,
+      awayTeam: game.awayTeam,
+      homeMeta: game.homeMeta,
+      awayMeta: game.awayMeta
+    };
   } catch {
     return undefined;
   }
   // Fallback never used — narrowing keeps tsc happy.
   void ESPN_SPORTS;
+}
+
+/** Match a team-abbreviation against the resolved game's home/away meta. */
+function pickTeamMeta(game: ResolvedGame | undefined, abbr?: string): TeamMeta | undefined {
+  if (!game || !abbr) return undefined;
+  const target = abbr.toUpperCase();
+  if (game.homeTeam.toUpperCase() === target) return game.homeMeta;
+  if (game.awayTeam.toUpperCase() === target) return game.awayMeta;
+  return undefined;
 }

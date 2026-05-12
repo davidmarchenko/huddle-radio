@@ -56,6 +56,14 @@ export type PickProp = {
   source: "polymarket" | "kalshi" | "synthetic";
   /** Original market title — useful for UI hover and debugging the parse. */
   rawTitle?: string;
+  /** ESPN player headshot URL when we resolved the player against the roster. */
+  playerHeadshot?: string;
+  /** Team logo URL — pulled from the game's awayMeta/homeMeta when teams match. */
+  playerTeamLogo?: string;
+  /** Hex team color (no leading #). Used to tint the row's accent stripe. */
+  playerTeamColor?: string;
+  /** Player position — adds beat-writer flavor to the row ("PG", "QB", etc.). */
+  playerPosition?: string;
 };
 
 export type PickSide = "more" | "less";

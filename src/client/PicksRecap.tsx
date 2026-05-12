@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import type { EntryStatus, PickEntry } from "../shared/picksContracts";
-import { settleEntry, statIcon, statLabel } from "./picksClient";
+import { settleEntry, statLabel } from "./picksClient";
+import { PlayerAvatar } from "./PicksCard";
 
 /**
  * Final recap card — visible in the recap phase and in any history
@@ -43,9 +44,15 @@ export function PicksRecap({ entry, listenerId }: PicksRecapProps) {
           const pick = status?.picks.find((p) => p.propId === prop.id);
           const side = entry.selections.find((s) => s.propId === prop.id)?.side ?? "more";
           const result = pick?.status ?? "pending";
+          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
-            <li key={prop.id} className="picks-recap-row" data-status={result}>
-              <span className={`icon ${statIcon(prop.statType)}`} aria-hidden="true" />
+            <li
+              key={prop.id}
+              className="picks-recap-row"
+              data-status={result}
+              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
+            >
+              <PlayerAvatar prop={prop} size="sm" />
               <div className="picks-recap-row-text">
                 <strong>{prop.playerName}</strong>
                 <small>

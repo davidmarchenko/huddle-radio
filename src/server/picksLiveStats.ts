@@ -27,6 +27,21 @@ const summaryInflight = new Map<string, Promise<EspnSummary | undefined>>();
 type EspnSummary = {
   boxscore?: EspnBoxscore;
   header?: { competitions?: Array<{ status?: { type?: { state?: string; completed?: boolean } } }> };
+  rosters?: Array<EspnRoster>;
+};
+
+type EspnRoster = {
+  homeAway?: "home" | "away";
+  team?: { abbreviation?: string; color?: string; logo?: string };
+  roster?: Array<{
+    athlete?: {
+      id?: string | number;
+      displayName?: string;
+      shortName?: string;
+      headshot?: { href?: string };
+      position?: { abbreviation?: string };
+    };
+  }>;
 };
 
 type EspnBoxscore = {
@@ -235,4 +250,62 @@ function matchesByLastName(
 export function resetLiveStatsCache(): void {
   summaryCache.clear();
   summaryInflight.clear();
+}
+
+export type PlayerMedia = {
+  headshot?: string;
+  teamAbbr?: string;
+  teamColor?: string;
+  teamLogo?: string;
+  position?: string;
+};
+
+/**
+ * Build a player-name → media map from the ESPN summary's rosters
+ * block, which is populated pre-game (unlike the boxscore, which only
+ * fills once the game is live). Used by the slate route to attach
+ * headshots + team chips to every prop so the picks card doesn't look
+ * like a barebones list.
+ *
+ * Keyed by both the displayName and the lone last name so a market
+ * title that says "Mahomes" still resolves the headshot of "Patrick
+ * Mahomes".
+ */
+export async function fetchPlayerMediaMap(
+  gameId: string,
+  sport: SportLeague,
+  fetcher: Fetcher = fetch
+): Promise<Map<string, PlayerMedia>> {
+  const summary = await fetchSummary(gameId, sport, fetcher);
+  const map = new Map<string, PlayerMedia>();
+  if (!summary?.rosters) return map;
+  for (const teamRoster of summary.rosters) {
+    const teamAbbr = teamRoster.team?.abbreviation;
+    const teamColor = teamRoster.team?.color;
+    const teamLogo = teamRoster.team?.logo;
+    for (const entry of teamRoster.roster ?? []) {
+      const athlete = entry.athlete;
+      if (!athlete?.displayName) continue;
+      const media: PlayerMedia = {
+        headshot: athlete.headshot?.href,
+        teamAbbr,
+        teamColor,
+        teamLogo,
+        position: athlete.position?.abbreviation
+      };
+      const display = athlete.displayName.toLowerCase().trim();
+      map.set(display, media);
+      const last = display.split(/\s+/).pop();
+      if (last && last !== display) {
+        // Only set last-name → media if no other player on the
+        // roster shares the same last name (avoid Mahomes / J. Mahomes
+        // collisions, even though that's rare in pro sports).
+        if (!map.has(last)) map.set(last, media);
+      }
+      if (athlete.shortName) {
+        map.set(athlete.shortName.toLowerCase().trim(), media);
+      }
+    }
+  }
+  return map;
 }

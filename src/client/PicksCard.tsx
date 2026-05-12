@@ -147,17 +147,32 @@ export function PicksCard({ gameId, listenerId, entry, onEntrySubmitted }: Picks
       <ul className="picks-list">
         {slate.props.map((prop) => {
           const side = selectedById.get(prop.id);
+          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
-            <li key={prop.id} className="picks-row" data-picked={side ?? "no"}>
+            <li
+              key={prop.id}
+              className="picks-row"
+              data-picked={side ?? "no"}
+              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
+            >
               <div className="picks-row-label">
-                <span className={`icon ${statIcon(prop.statType)}`} aria-hidden="true" />
+                <PlayerAvatar prop={prop} />
                 <div className="picks-row-text">
                   <strong>{prop.playerName}</strong>
-                  <small>
-                    {prop.playerTeam ? `${prop.playerTeam} · ` : ""}
-                    {prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)} {statLabel(prop.statType)}
-                    {prop.source === "synthetic" && <span className="picks-synth-tag" title="No live market — line set from sport baseline">est</span>}
-                  </small>
+                  <div className="picks-row-meta">
+                    {prop.playerTeam && (
+                      <span className="picks-team-chip" style={accent ? { background: accent } : undefined}>
+                        {prop.playerTeamLogo && <img src={prop.playerTeamLogo} alt="" />}
+                        <span>{prop.playerTeam}</span>
+                      </span>
+                    )}
+                    {prop.playerPosition && <span className="picks-position-chip">{prop.playerPosition}</span>}
+                    <span className="picks-line">
+                      <strong>{prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)}</strong>{" "}
+                      <em>{statLabel(prop.statType)}</em>
+                    </span>
+                    <SourceBadge source={prop.source} />
+                  </div>
                 </div>
               </div>
               <div className="picks-row-buttons">
@@ -168,6 +183,7 @@ export function PicksCard({ gameId, listenerId, entry, onEntrySubmitted }: Picks
                   onClick={() => togglePick(prop, "more")}
                   aria-pressed={side === "more"}
                 >
+                  <span className="picks-side-arrow" aria-hidden="true">▲</span>
                   More
                 </button>
                 <button
@@ -177,6 +193,7 @@ export function PicksCard({ gameId, listenerId, entry, onEntrySubmitted }: Picks
                   onClick={() => togglePick(prop, "less")}
                   aria-pressed={side === "less"}
                 >
+                  <span className="picks-side-arrow" aria-hidden="true">▼</span>
                   Less
                 </button>
               </div>
@@ -228,12 +245,20 @@ function PicksLockedBanner({ entry }: { entry: PickEntry }) {
       <ul className="picks-locked-list">
         {entry.lockedProps.map((prop) => {
           const side = entry.selections.find((s) => s.propId === prop.id)?.side ?? "more";
+          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
-            <li key={prop.id} className="picks-locked-row" data-side={side}>
-              <span className={`icon ${statIcon(prop.statType)}`} aria-hidden="true" />
+            <li
+              key={prop.id}
+              className="picks-locked-row"
+              data-side={side}
+              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
+            >
+              <PlayerAvatar prop={prop} size="sm" />
               <div className="picks-locked-text">
                 <strong>{prop.playerName}</strong>
-                <small>{side === "more" ? "Over" : "Under"} {prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)} {statLabel(prop.statType)}</small>
+                <small>
+                  {side === "more" ? "Over" : "Under"} {prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)} {statLabel(prop.statType)}
+                </small>
               </div>
             </li>
           );
@@ -243,3 +268,55 @@ function PicksLockedBanner({ entry }: { entry: PickEntry }) {
     </article>
   );
 }
+
+/**
+ * Player avatar — circular ESPN headshot when we have it, monogram
+ * with a team-color fill when we don't. Falls back gracefully on
+ * 404s without leaving a broken image.
+ */
+function PlayerAvatar({ prop, size = "md" }: { prop: PickProp; size?: "sm" | "md" }) {
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => setFailed(false), [prop.playerHeadshot]);
+  const initials = prop.playerName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+  const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
+  return (
+    <span
+      className="picks-avatar"
+      data-size={size}
+      style={accent ? { background: `linear-gradient(135deg, ${accent}, color-mix(in srgb, ${accent} 55%, #000))` } : undefined}
+      title={prop.playerName}
+    >
+      {prop.playerHeadshot && !failed ? (
+        <img
+          src={prop.playerHeadshot}
+          alt=""
+          loading="lazy"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="picks-avatar-initials">{initials}</span>
+      )}
+      {prop.playerTeamLogo && (
+        <span className="picks-avatar-badge">
+          <img src={prop.playerTeamLogo} alt="" loading="lazy" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+function SourceBadge({ source }: { source: PickProp["source"] }) {
+  if (source === "synthetic") {
+    return <span className="picks-synth-tag" title="No live market — line set from sport baseline">est</span>;
+  }
+  const src = source === "polymarket" ? "/icons/Logos/polymarket-logo.png" : "/icons/Logos/Kalshi_logo.svg.png";
+  const label = source === "polymarket" ? "Polymarket" : "Kalshi";
+  return <img className="picks-source-badge" src={src} alt={label} title={`Line from ${label}`} />;
+}
+
+export { PlayerAvatar };
