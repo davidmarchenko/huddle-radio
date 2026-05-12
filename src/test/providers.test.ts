@@ -37,7 +37,42 @@ describe("demo providers", () => {
     expect(nhlLeague.matchups).toEqual([]);
   });
 
-  it("custom league wins over the sport hint (explicit user paste-in)", async () => {
+  it("custom league wins when its sport matches the sport hint", async () => {
+    const customLeague = {
+      provider: "custom-demo" as const,
+      leagueId: "user-paste-nba",
+      leagueName: "User NBA League",
+      sport: "nba" as const,
+      season: "2026",
+      scoringSummary: "",
+      updatedAt: new Date().toISOString(),
+      matchups: []
+    };
+    const league = await new DemoFantasyProvider(customLeague, "nba").getLeagueState();
+    expect(league.leagueId).toBe("user-paste-nba");
+  });
+
+  it("custom league is IGNORED when its sport mismatches the picked game", async () => {
+    // Bug this prevents: client persists customLeagueJson defaulting to
+    // the NFL demo league, sends it to the server on every show start,
+    // and unconditionally winning over sportHint leaked the NFL roster
+    // (Mahomes, Amon-Ra) into commentary on NBA/MLB games.
+    const customNflLeague = {
+      provider: "custom-demo" as const,
+      leagueId: "user-paste-nfl",
+      leagueName: "User NFL League",
+      sport: "nfl" as const,
+      season: "2026",
+      scoringSummary: "",
+      updatedAt: new Date().toISOString(),
+      matchups: []
+    };
+    const league = await new DemoFantasyProvider(customNflLeague, "nba").getLeagueState();
+    expect(league.sport).toBe("nba");
+    expect(league.leagueId).not.toBe("user-paste-nfl");
+  });
+
+  it("custom league still wins when no sport hint is supplied", async () => {
     const customLeague = {
       provider: "custom-demo" as const,
       leagueId: "user-paste",
@@ -48,7 +83,7 @@ describe("demo providers", () => {
       updatedAt: new Date().toISOString(),
       matchups: []
     };
-    const league = await new DemoFantasyProvider(customLeague, "nba").getLeagueState();
+    const league = await new DemoFantasyProvider(customLeague).getLeagueState();
     expect(league.leagueId).toBe("user-paste");
   });
 
