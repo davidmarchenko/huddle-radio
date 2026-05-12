@@ -85,9 +85,10 @@ export async function GET(request: Request) {
     return NextResponse.json(
       { ...slate, props: enrichedProps },
       {
-        headers: {
-          "Cache-Control": "public, max-age=60, s-maxage=120, stale-while-revalidate=300"
-        }
+        // Short cache — slate only changes when ESPN's roster does
+        // (rarely) or markets shift. Long cache hid the headshot
+        // enrichment fix during the last debugging cycle.
+        headers: { "Cache-Control": "public, max-age=15, s-maxage=30, stale-while-revalidate=120" }
       }
     );
   } catch (error) {

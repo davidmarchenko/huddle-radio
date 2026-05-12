@@ -866,12 +866,12 @@ function App() {
           if (livecastSessionRef.current !== sessionId) return;
           if (message.type === "snapshot") {
         setFantasy(message.fantasy);
-        setGame(message.game);
+        setGame(withSportPrefixedGameId(message.game));
         setHealth(Array.isArray(message.health) ? message.health : []);
         setProviders(message.providers);
       }
       if (message.type === "play") {
-        setGame(message.game);
+        setGame(withSportPrefixedGameId(message.game));
         // Dedup by play.id: ESPN's pre-game scoreboard returns the
         // same placeholder play (id ending in `-pre-0-0.0`) on every
         // tick. Without this guard the play array fills with
@@ -6731,6 +6731,21 @@ function providerLabel(providerMode: "demo" | "sleeper" | "espn") {
   if (providerMode === "espn") return "ESPN Fantasy";
   if (providerMode === "sleeper") return "Sleeper Fantasy";
   return "Demo Fantasy";
+}
+
+/**
+ * The ESPN provider emits the raw event id ("401871156"); the client +
+ * picks routes need the sport-prefixed form ("nba-401871156") so the
+ * sport router can find the right scoreboard. Idempotent — already-
+ * prefixed ids pass through untouched, demo ids stay demo, paid feeds
+ * (sportradar/sportsdataio) keep their colon-prefixed form.
+ */
+function withSportPrefixedGameId(game: SportsGameState): SportsGameState {
+  const id = game.gameId;
+  if (!id) return game;
+  if (id.startsWith("demo-") || id.includes(":")) return game;
+  if (id.startsWith(`${game.sport}-`)) return game;
+  return { ...game, gameId: `${game.sport}-${id}` };
 }
 
 function sportsGameOptionPlay(option: SportsGameOption): SportsPlay {
