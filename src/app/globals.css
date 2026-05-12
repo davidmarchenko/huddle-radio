@@ -214,30 +214,32 @@ body,
   z-index: 100;
   width: 340px;
   max-width: calc(100vw - 24px);
-  /* Frosted glass: heavy backdrop blur + a near-opaque dark fill so
-     anything behind gets blurred but nothing distracting bleeds
-     through. The 0.92 alpha keeps a hint of depth without reading as
-     "see-through"; the saturate(140%) brightens the colors behind so
-     the blur feels intentional rather than washed out. */
-  background: color-mix(in srgb, var(--hr-bg-1) 92%, transparent);
-  backdrop-filter: blur(24px) saturate(140%);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
-  border: 1px solid color-mix(in srgb, var(--hr-text) 12%, transparent);
+  /* Fully opaque dark fill. Earlier attempts used translucency +
+     backdrop-filter for a frosted-glass effect, but the codebase has
+     several `backdrop-filter: none !important` overrides on cards
+     that bled into the portal stacking context, killing the blur and
+     leaving only the translucency. Solid + a soft top-edge gradient
+     gives the same iMessage-on-dark feel without depending on the
+     blur actually rendering.
+     `!important` on background defends against the global
+     `.huddle-app .huddle-card { background: ... !important }` rule —
+     the portal is at body level so that selector technically
+     shouldn't match, but a future refactor that moves the portal
+     could re-trigger the bug, so explicit beats implicit here. */
+  background: linear-gradient(180deg, #1a2238 0%, #11192a 100%) !important;
+  border: 1px solid color-mix(in srgb, var(--hr-text) 14%, transparent);
   border-radius: var(--hr-radius-md);
   overflow: hidden;
-  box-shadow: 0 18px 48px #02040ce6, 0 2px 8px #000000a6;
+  /* isolation: isolate gives the card its own stacking context so
+     descendant blend modes / shadows on hover don't leak into the
+     blurred page background. */
+  isolation: isolate;
+  box-shadow:
+    0 24px 56px #02040cd9,
+    0 4px 12px #000000a6,
+    0 0 0 1px #00000040;
   transform-origin: top left;
   animation: link-preview-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-/* Browsers without backdrop-filter support get a fully opaque fill so
-   the card never reads as transparent (Firefox legacy paths, some
-   embedded WebViews). Drops to a flat solid background instead of
-   missing the blur entirely. */
-@supports not (backdrop-filter: blur(1px)) {
-  .link-preview-card {
-    background: var(--hr-bg-1);
-  }
 }
 
 .link-preview-card[data-placement="top"] {
