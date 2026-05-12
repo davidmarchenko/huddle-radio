@@ -17369,15 +17369,20 @@ body {
 
 /* Stacked layout: bold label on top, line+stat value below.
    Default state is a real button (solid muted fill, visible
-   border) — not plain text on a row. */
-.picks-side-btn {
+   border) — not plain text on a row. The .huddle-app prefix beats
+   the default `.huddle-app button` rule that otherwise pillifies
+   every button + slaps a violet gradient on it. */
+.huddle-app button.picks-side-btn {
   appearance: none;
   -webkit-appearance: none;
   cursor: pointer;
+  min-height: 0;
   font-family: var(--hr-font-mono);
+  font-weight: var(--hr-weight-semi);
   color: var(--hr-text-soft);
   padding: 10px 12px;
   border-radius: var(--hr-radius-row-inner);
+  box-shadow: none;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.12);
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease,
@@ -17422,7 +17427,7 @@ body {
   opacity: 0.7;
 }
 
-.picks-side-btn:hover {
+.huddle-app button.picks-side-btn:hover {
   background: rgba(255, 255, 255, 0.09);
   color: var(--hr-text);
   border-color: rgba(255, 255, 255, 0.18);
@@ -17432,7 +17437,7 @@ body {
 /* Active (picked) state — strong solid fill, bigger label, slight
    raise. The opposite-side sibling dims via the row-level rule
    below so the user's choice reads at a glance. */
-.picks-side-btn[data-side="more"].active {
+.huddle-app button.picks-side-btn[data-side="more"].active {
   background: linear-gradient(180deg, var(--hr-success), color-mix(in srgb, var(--hr-success) 75%, #000));
   color: #06180c;
   border-color: var(--hr-success);
@@ -17440,7 +17445,7 @@ body {
               inset 0 1px 0 rgba(255, 255, 255, 0.25);
   transform: translateY(-1px);
 }
-.picks-side-btn[data-side="less"].active {
+.huddle-app button.picks-side-btn[data-side="less"].active {
   background: linear-gradient(180deg, var(--hr-danger), color-mix(in srgb, var(--hr-danger) 75%, #000));
   color: #1f0a0d;
   border-color: var(--hr-danger);
@@ -17460,14 +17465,14 @@ body {
 
 /* When the row has a pick, dim the OTHER side button so the choice
    is visually obvious from across the card. */
-.picks-row[data-picked="more"] .picks-side-btn[data-side="less"],
-.picks-row[data-picked="less"] .picks-side-btn[data-side="more"] {
+.huddle-app .picks-row[data-picked="more"] button.picks-side-btn[data-side="less"],
+.huddle-app .picks-row[data-picked="less"] button.picks-side-btn[data-side="more"] {
   opacity: 0.32;
   background: transparent;
   border-color: rgba(255, 255, 255, 0.08);
 }
-.picks-row[data-picked="more"] .picks-side-btn[data-side="less"]:hover,
-.picks-row[data-picked="less"] .picks-side-btn[data-side="more"]:hover {
+.huddle-app .picks-row[data-picked="more"] button.picks-side-btn[data-side="less"]:hover,
+.huddle-app .picks-row[data-picked="less"] button.picks-side-btn[data-side="more"]:hover {
   opacity: 0.6;
   background: rgba(255, 255, 255, 0.05);
 }
