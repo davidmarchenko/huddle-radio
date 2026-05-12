@@ -320,7 +320,7 @@ function App() {
       .then((response) => response.json())
       .then((payload) => {
         if (payload.fantasy) setFantasy(payload.fantasy);
-        if (payload.game) setGame(payload.game);
+        if (payload.game) setGame(withSportPrefixedGameId(payload.game));
         if (!persisted.group && payload.group?.friends) setGroup(payload.group);
         setHealth(Array.isArray(payload.health) ? payload.health : []);
         setProviders(payload.providers ?? defaultProviderSummary);
@@ -1474,7 +1474,7 @@ function App() {
       if (!response.ok) throw new Error(`Load failed with ${response.status}`);
       const payload = await response.json();
       if (payload.fantasy) setFantasy(payload.fantasy);
-      if (payload.game) setGame(payload.game);
+      if (payload.game) setGame(withSportPrefixedGameId(payload.game));
       setHealth(Array.isArray(payload.health) ? payload.health : []);
       setProviders(payload.providers ?? providers);
       await loadImportPreview();

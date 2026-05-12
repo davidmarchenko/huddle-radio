@@ -124,25 +124,51 @@ async function resolveGame(gameId: string): Promise<ResolvedGame | undefined> {
     };
   }
   const parsed = parseSportPrefixedGameId(gameId);
-  if (!parsed) return undefined;
-  const sportPath: EspnSportPath = parsed.sportPath;
   const cache = getDefaultSportsGamesCache();
-  try {
-    const games = await cache.get(sportPath);
-    const game = games.find((g) => g.id === gameId);
-    if (!game) return undefined;
-    return {
-      sport: sportPath.sport,
-      homeTeam: game.homeTeam,
-      awayTeam: game.awayTeam,
-      homeMeta: game.homeMeta,
-      awayMeta: game.awayMeta
-    };
-  } catch {
-    return undefined;
+
+  // Sport-prefixed form (the happy path). Look up in that sport's
+  // cached scoreboard.
+  if (parsed) {
+    try {
+      const games = await cache.get(parsed.sportPath);
+      const matchById = games.find((g) => g.id === gameId);
+      const matchByEvent = matchById ?? games.find((g) => g.id.endsWith(`-${parsed.eventId}`));
+      if (matchByEvent) {
+        return {
+          sport: parsed.sportPath.sport,
+          homeTeam: matchByEvent.homeTeam,
+          awayTeam: matchByEvent.awayTeam,
+          homeMeta: matchByEvent.homeMeta,
+          awayMeta: matchByEvent.awayMeta
+        };
+      }
+    } catch {
+      // Fall through to the unprefixed scan below.
+    }
   }
-  // Fallback never used — narrowing keeps tsc happy.
-  void ESPN_SPORTS;
+
+  // Defense-in-depth: callers that hand us a raw ESPN event id (no
+  // `${sport}-` prefix) — e.g. an older client cache or a hand-typed
+  // URL — should still get a slate. Scan each sport's scoreboard for
+  // an id matching the raw or suffix form. First hit wins.
+  for (const sportPath of ESPN_SPORTS) {
+    try {
+      const games = await cache.get(sportPath);
+      const match = games.find((g) => g.id === gameId || g.id.endsWith(`-${gameId}`));
+      if (match) {
+        return {
+          sport: sportPath.sport,
+          homeTeam: match.homeTeam,
+          awayTeam: match.awayTeam,
+          homeMeta: match.homeMeta,
+          awayMeta: match.awayMeta
+        };
+      }
+    } catch {
+      // Single-sport fetch failure shouldn't poison the scan.
+    }
+  }
+  return undefined;
 }
 
 /** Match a team-abbreviation against the resolved game's home/away meta. */
