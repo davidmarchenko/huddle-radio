@@ -6,7 +6,7 @@ import { fetchPolymarketSnapshots } from "../providers/polymarketMarketsProvider
 // callers don't have to update their imports. The implementation
 // lives in shared/ now so the W19 client ticker can call it without
 // pulling in the Kalshi/Polymarket fetchers.
-export { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
+export { pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "../shared/marketsRelevance";
 
 /**
  * Unified prediction-markets provider.

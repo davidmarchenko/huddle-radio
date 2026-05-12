@@ -42,7 +42,7 @@ import { buildProductReadiness } from "../shared/productReadiness";
 import { buildSessionDirector, type SessionDirectorPlan, type SessionDirectorStepState } from "../shared/sessionDirector";
 import { buildTranscriptExport } from "../shared/transcriptExport";
 import { createYouTubeEmbedUrl, isYouTubeUrl } from "../shared/videoLinks";
-import { pickRelevantMarketsForGame } from "../shared/marketsRelevance";
+import { pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "../shared/marketsRelevance";
 import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
@@ -2492,12 +2492,16 @@ function MarketsTicker({
 
   const relevant = useMemo(() => {
     if (!game?.sport || snapshots.length === 0) return [];
-    return pickRelevantMarketsForGame(
-      snapshots,
-      { sport: game.sport, teams: [game.awayTeam, game.homeTeam] },
-      3
-    );
-  }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam]);
+    // Pass full team display names + city + mascot in addition to the
+    // abbreviation so the matcher can hit "Will the San Francisco
+    // Giants win the World Series?" instead of relying on "SF" being
+    // a substring (it isn't, in most market titles).
+    const teams = [
+      ...teamIdentifiersFromMeta(game.awayTeam, game.awayMeta),
+      ...teamIdentifiersFromMeta(game.homeTeam, game.homeMeta)
+    ];
+    return pickRelevantMarketsForGame(snapshots, { sport: game.sport, teams }, 3);
+  }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam, game?.awayMeta, game?.homeMeta]);
 
   if (!relevant.length) return null;
 
@@ -5308,12 +5312,12 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
 
   const relevant = useMemo(() => {
     if (!game?.sport || snapshots.length === 0) return [];
-    return pickRelevantMarketsForGame(
-      snapshots,
-      { sport: game.sport, teams: [game.awayTeam, game.homeTeam] },
-      4
-    );
-  }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam]);
+    const teams = [
+      ...teamIdentifiersFromMeta(game.awayTeam, game.awayMeta),
+      ...teamIdentifiersFromMeta(game.homeTeam, game.homeMeta)
+    ];
+    return pickRelevantMarketsForGame(snapshots, { sport: game.sport, teams }, 4);
+  }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam, game?.awayMeta, game?.homeMeta]);
 
   if (!relevant.length) return null;
 

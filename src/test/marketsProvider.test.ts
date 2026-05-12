@@ -68,4 +68,61 @@ describe("pickRelevantMarketsForGame", () => {
     const picks = pickRelevantMarketsForGame(snapshots, { sport: "nfl", teams: ["Chiefs"] }, 2);
     expect(picks).toHaveLength(2);
   });
+
+  it("matches short identifiers (≤3 chars) only on word boundaries — no false positives in 'Vladimir'", () => {
+    // Bug this prevents: passing "lad" (LAD = Dodgers) as a substring
+    // matched inside words like "Vladimir" / "salad" / "blade".
+    const snapshots = [
+      market({ externalId: "vlad", title: "Will Vladimir Guerrero Jr. hit 30 HR?", sport: "mlb" }),
+      market({ externalId: "real", title: "Will the LAD bullpen hold tonight?", sport: "mlb" })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["LAD"] }
+    );
+    expect(picks.map((p) => p.externalId)).toEqual(["real"]);
+  });
+
+  it("falls back to general league markets when no team match exists", () => {
+    // Bug this prevents: a quiet game day with no team-tagged markets
+    // returned [] and the markets section disappeared. Now we surface
+    // the highest-scoring general league markets so the section never
+    // hides entirely on real games.
+    const snapshots = [
+      market({ externalId: "general-low", title: "Will the World Series go 7?", sport: "mlb", marketKind: "futures", volume24hUsd: 100 }),
+      market({ externalId: "general-high", title: "Will the World Series go 7?", sport: "mlb", marketKind: "moneyline", volume24hUsd: 100_000 })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["SF", "LAD", "Giants", "Dodgers"] }
+    );
+    // No market mentions any of those teams; we surface generals
+    // sorted by kind+volume — moneyline + high volume wins.
+    expect(picks.map((p) => p.externalId)).toEqual(["general-high", "general-low"]);
+  });
+
+  it("prefers team-matched markets even when general markets have higher volume", () => {
+    const snapshots = [
+      market({ externalId: "matched-low", title: "Will the Giants win tonight?", sport: "mlb", marketKind: "moneyline", volume24hUsd: 100 }),
+      market({ externalId: "general-huge", title: "Will the Yankees win World Series?", sport: "mlb", marketKind: "futures", volume24hUsd: 1_000_000 })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["Giants"] }
+    );
+    // Matched bucket wins entirely when it has any content.
+    expect(picks.map((p) => p.externalId)).toEqual(["matched-low"]);
+  });
+
+  it("matches long identifiers anywhere as a substring (city / mascot / display name)", () => {
+    const snapshots = [
+      market({ externalId: "city", title: "San Francisco Giants over 90 wins", sport: "mlb" }),
+      market({ externalId: "irrelevant", title: "Yankees first in AL East", sport: "mlb" })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "mlb", teams: ["San Francisco"] }
+    );
+    expect(picks.map((p) => p.externalId)).toEqual(["city"]);
+  });
 });

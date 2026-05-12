@@ -25,7 +25,7 @@ import { recordTurn, type TurnSummary } from "./turnSummaries";
 import { UserVideoProvider } from "../providers/userVideoProvider";
 import { demoGameIdToSport } from "../providers/demoSportsDataProvider";
 import { config } from "./config";
-import { fetchMarketSnapshots, pickRelevantMarketsForGame } from "./marketsProvider";
+import { fetchMarketSnapshots, pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "./marketsProvider";
 import { detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
 import { redactSecret } from "./redactSecret";
 import {
@@ -708,11 +708,15 @@ export class ShowEngine {
           let swingForTurn: ReturnType<typeof detectMarketSwings> = undefined;
           try {
             const allMarkets = await fetchMarketSnapshots({ sports: [gameState.sport] });
+            const teamIds = [
+              ...teamIdentifiersFromMeta(gameState.awayTeam, gameState.awayMeta),
+              ...teamIdentifiersFromMeta(gameState.homeTeam, gameState.homeMeta)
+            ];
             marketsForTurn = pickRelevantMarketsForGame(
               allMarkets,
               {
                 sport: gameState.sport,
-                teams: [gameState.awayTeam, gameState.homeTeam],
+                teams: teamIds,
                 players: play.playerIds
               },
               6
