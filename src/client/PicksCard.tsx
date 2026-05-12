@@ -289,12 +289,33 @@ function PlayerAvatar({ prop, size = "md" }: { prop: PickProp; size?: "sm" | "md
         )}
       </span>
       {prop.playerTeamLogo && (
-        <span className="picks-avatar-badge">
+        <span
+          className="picks-avatar-badge"
+          style={badgeStyle(prop)}
+        >
           <img src={prop.playerTeamLogo} alt="" loading="lazy" />
         </span>
       )}
     </span>
   );
+}
+
+/**
+ * Sticker background uses the team's alternateColor (the on-brand
+ * complement to the primary team color the avatar gradient already
+ * uses). Lakers gold against purple, Spurs silver against black, etc.
+ * Falls back to the deep app background if alt color is missing.
+ */
+function badgeStyle(prop: PickProp): React.CSSProperties | undefined {
+  if (!prop.playerTeamAltColor) return undefined;
+  const fill = `#${prop.playerTeamAltColor}`;
+  return {
+    background: fill,
+    // Outer ring matches the row background so the badge feels lifted
+    // off the page; inner ring uses the same alt color but slightly
+    // darker for soft definition against the bright sticker fill.
+    boxShadow: `0 0 0 2px var(--hr-bg-1), 0 2px 6px rgba(0,0,0,0.4), inset 0 0 0 1px color-mix(in srgb, ${fill} 70%, #000)`
+  };
 }
 
 function SourceBadge({ source }: { source: PickProp["source"] }) {

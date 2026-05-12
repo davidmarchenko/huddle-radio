@@ -78,6 +78,7 @@ export async function GET(request: Request) {
           playerHeadshot: media?.headshot,
           playerTeamLogo: teamMeta?.logo ?? media?.teamLogo,
           playerTeamColor: teamMeta?.color ?? media?.teamColor,
+          playerTeamAltColor: teamMeta?.alternateColor,
           playerPosition: media?.position,
           playerTeam: media?.teamAbbr ?? prop.playerTeam
         };

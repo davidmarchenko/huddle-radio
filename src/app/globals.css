@@ -17255,7 +17255,9 @@ body {
 
 /* Mini team-logo badge — sticker-style sits over the avatar's
    bottom-right corner. Lives outside .picks-avatar so it isn't
-   clipped by the headshot's circle. */
+   clipped by the headshot's circle. Background defaults to the
+   team's alternateColor (set inline by PicksCard.badgeStyle); when
+   that's missing we fall back to a light sticker so logos read. */
 .picks-avatar-badge {
   position: absolute;
   right: -4px;
@@ -17263,7 +17265,7 @@ body {
   width: 20px;
   height: 20px;
   border-radius: var(--hr-radius-circle);
-  background: #fff;
+  background: rgba(245, 247, 255, 0.96);
   display: flex;
   align-items: center;
   justify-content: center;

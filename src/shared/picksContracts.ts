@@ -62,6 +62,8 @@ export type PickProp = {
   playerTeamLogo?: string;
   /** Hex team color (no leading #). Used to tint the row's accent stripe. */
   playerTeamColor?: string;
+  /** Hex alternate team color (no leading #). Used as the badge sticker background — designed by the team to contrast with the primary. */
+  playerTeamAltColor?: string;
   /** Player position — adds beat-writer flavor to the row ("PG", "QB", etc.). */
   playerPosition?: string;
 };
