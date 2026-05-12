@@ -5348,13 +5348,7 @@ function NewsStorylineCard({ news, extras }: { news: NewsItem[]; extras: string[
       <span className="eyebrow"><span className="icon icon-megaphone-loud" aria-hidden="true" />Storylines to watch</span>
       <ul className="storyline-news-list">
         {news.slice(0, 3).map((item) => (
-          <li key={item.id} className="storyline-news-item">
-            <strong>{item.title}</strong>
-            <span>
-              {item.source}
-              {item.publishedAt ? ` · ${formatRelativeTime(item.publishedAt)}` : ""}
-            </span>
-          </li>
+          <StorylineRow key={item.id} item={item} />
         ))}
         {news.length === 0 && extras.slice(0, 2).map((line) => (
           <li key={line} className="storyline-news-item storyline-news-item--fallback">
@@ -5366,6 +5360,57 @@ function NewsStorylineCard({ news, extras }: { news: NewsItem[]; extras: string[
         <p className="storyline-news-fallback-note">{extras[0]}</p>
       )}
     </article>
+  );
+}
+
+/**
+ * One storyline row. Renders rich-media affordances:
+ *
+ *   - title is a hyperlink when item.url is present (opens in a new tab)
+ *   - title attr carries the full text so a clipped/wrapped headline
+ *     surfaces in the native browser tooltip on hover
+ *   - source becomes a small chip with its own tooltip carrying the
+ *     full source byline (e.g. "ESPN — Jeff Passan") when the visible
+ *     label is truncated
+ *   - publish time uses <time> with an ISO datetime + a tooltip of the
+ *     absolute timestamp so listeners can confirm freshness
+ *
+ * Items without a url (demo fallback or untagged feed entries) render
+ * as plain text, preserving the same visual treatment minus the link
+ * affordance.
+ */
+function StorylineRow({ item }: { item: NewsItem }) {
+  const hasLink = Boolean(item.url);
+  const relativeTime = item.publishedAt ? formatRelativeTime(item.publishedAt) : "";
+  const absoluteTime = item.publishedAt ? new Date(item.publishedAt).toLocaleString() : "";
+  const headline = hasLink ? (
+    <a
+      className="storyline-news-link"
+      href={item.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={item.title}
+    >
+      <strong>{item.title}</strong>
+      <span className="storyline-news-link-hint" aria-hidden="true">
+        <span className="icon icon-share-link" />
+      </span>
+    </a>
+  ) : (
+    <strong title={item.title}>{item.title}</strong>
+  );
+  return (
+    <li className="storyline-news-item">
+      {headline}
+      <span className="storyline-news-meta">
+        <span className="storyline-news-source-chip" title={item.source}>{item.source}</span>
+        {relativeTime && (
+          <time className="storyline-news-time" dateTime={item.publishedAt} title={absoluteTime}>
+            {relativeTime}
+          </time>
+        )}
+      </span>
+    </li>
   );
 }
 

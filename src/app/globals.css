@@ -13955,11 +13955,95 @@ body {
   color: var(--hr-text);
 }
 
-.storyline-news-item span {
+/* Headline link wrapper. The whole headline becomes a tappable target
+   when item.url is present; hover/focus reveals the share-link glyph
+   so the affordance reads as "this opens elsewhere". Native `title=`
+   attr surfaces the full headline if it wraps or clips. */
+.storyline-news-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  text-decoration: none;
+  color: inherit;
+  border-radius: var(--hr-radius-xs);
+  padding: 0.05rem 0;
+  transition: color var(--hr-motion-fast) var(--hr-ease-soft);
+}
+
+.storyline-news-link strong {
+  text-decoration-color: transparent;
+  text-decoration-line: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color var(--hr-motion-fast) var(--hr-ease-soft);
+}
+
+.storyline-news-link:hover strong,
+.storyline-news-link:focus-visible strong {
+  text-decoration-color: var(--hr-violet-soft);
+  color: var(--hr-text);
+}
+
+.storyline-news-link:visited strong {
+  color: var(--hr-text-soft);
+}
+
+.storyline-news-link:focus-visible {
+  outline: 2px solid var(--hr-violet-soft);
+  outline-offset: 3px;
+}
+
+.storyline-news-link-hint {
+  display: inline-flex;
+  align-items: center;
+  opacity: 0;
+  transform: translateX(-2px);
+  transition: opacity var(--hr-motion-fast) var(--hr-ease-soft),
+              transform var(--hr-motion-fast) var(--hr-ease-soft);
+  color: var(--hr-text-muted);
+  --icon-size: 0.75rem;
+}
+
+.storyline-news-link:hover .storyline-news-link-hint,
+.storyline-news-link:focus-visible .storyline-news-link-hint {
+  opacity: 1;
+  transform: translateX(0);
+  color: var(--hr-violet-soft);
+}
+
+.storyline-news-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hr-space-2);
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-xs);
   letter-spacing: 0.04em;
   color: var(--hr-text-muted);
+  /* min-width: 0 in a flex parent lets the source chip truncate
+     instead of overflowing the card on a long byline. */
+  min-width: 0;
+}
+
+.storyline-news-source-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 22ch;
+  padding: 0.18rem 0.5rem;
+  border-radius: var(--hr-radius-pill);
+  background: color-mix(in srgb, var(--hr-violet-soft) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hr-violet-soft) 16%, transparent);
+  color: var(--hr-text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Native title attribute surfaces the full source string on hover so
+     a clipped "ESPN — Jeff Pa..." stays inspectable. */
+  cursor: help;
+}
+
+.storyline-news-time {
+  flex: 0 0 auto;
+  cursor: help;
 }
 
 .storyline-news-item--fallback strong {
