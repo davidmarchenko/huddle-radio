@@ -14455,16 +14455,6 @@ body {
   color: var(--hr-text-soft);
 }
 
-.storyline-news-fallback-note {
-  margin: 0;
-  padding-top: var(--hr-space-3);
-  border-top: 1px solid var(--hr-line-soft);
-  font-size: var(--hr-text-xs);
-  letter-spacing: 0.005em;
-  color: var(--hr-text-muted);
-  font-style: italic;
-}
-
 .friend-matchups-card {
   display: grid;
   gap: var(--hr-space-3);
@@ -17120,4 +17110,636 @@ body {
 @keyframes cast-shimmer {
   0%   { background-position: -100% 0; }
   100% { background-position: 100% 0; }
+}
+
+/* =====================================================
+   PICKS — pregame slate, live tracker, recap
+   PrizePicks-style player props. Three states:
+     1) Pregame slate selector (PicksCard) — tap More/Less,
+        build a 2-6 leg parlay, lock for a fixed-multiplier
+        payout.
+     2) Locked banner — shown once submitted, before tipoff.
+     3) Live tracker (PicksTracker) — per-pick progress bar,
+        status chip, headline payout.
+     4) Recap (PicksRecap) — settled, hits/misses + final $.
+   ===================================================== */
+
+.picks-card,
+.picks-tracker-card,
+.picks-recap-card {
+  display: grid;
+  gap: var(--hr-space-3);
+}
+
+.picks-card .picks-header,
+.picks-tracker-header,
+.picks-recap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.picks-count {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+  padding: 4px 10px;
+  border-radius: var(--hr-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.picks-count[data-active="true"] {
+  color: var(--hr-text);
+  background: color-mix(in srgb, var(--hr-success) 18%, transparent);
+  border-color: color-mix(in srgb, var(--hr-success) 35%, transparent);
+}
+
+.picks-subtitle {
+  margin: 0;
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text-muted);
+  letter-spacing: 0.005em;
+}
+
+.picks-empty-line {
+  margin: 0;
+  font-size: var(--hr-text-sm);
+  color: var(--hr-text-muted);
+  font-style: italic;
+}
+
+/* ---- Slate rows ---- */
+
+.picks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.picks-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--hr-radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.picks-row[data-picked="more"] {
+  background: color-mix(in srgb, var(--hr-success) 10%, rgba(255, 255, 255, 0.03));
+  border-color: color-mix(in srgb, var(--hr-success) 32%, transparent);
+}
+.picks-row[data-picked="less"] {
+  background: color-mix(in srgb, var(--hr-danger) 10%, rgba(255, 255, 255, 0.03));
+  border-color: color-mix(in srgb, var(--hr-danger) 32%, transparent);
+}
+
+.picks-row-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.picks-row-label .icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  background-color: var(--hr-text-soft);
+}
+
+.picks-row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.picks-row-text strong {
+  font-size: var(--hr-text-sm);
+  color: var(--hr-text);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.picks-row-text small {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.picks-synth-tag {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--hr-text-muted);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+
+/* ---- More / Less buttons ---- */
+
+.picks-row-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.picks-side-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xxs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hr-text-soft);
+  padding: 8px 14px;
+  border-radius: var(--hr-radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.picks-side-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--hr-text);
+}
+.picks-side-btn[data-side="more"].active {
+  background: var(--hr-success);
+  color: #06180c;
+  border-color: var(--hr-success);
+}
+.picks-side-btn[data-side="less"].active {
+  background: var(--hr-danger);
+  color: #1f0a0d;
+  border-color: var(--hr-danger);
+}
+
+/* ---- Footer / payout preview ---- */
+
+.picks-footer {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--hr-line-soft);
+}
+
+.picks-payout-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-sm);
+}
+
+.picks-payout-stake {
+  color: var(--hr-text-muted);
+}
+
+.picks-payout-arrow {
+  color: var(--hr-text-muted);
+}
+
+.picks-payout-amount {
+  color: var(--hr-text);
+  font-size: var(--hr-text-md);
+  font-weight: 600;
+}
+
+.picks-payout-multiplier {
+  color: var(--hr-success);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.picks-payout-empty {
+  color: var(--hr-text-muted);
+  font-style: italic;
+  font-size: var(--hr-text-xs);
+}
+
+.picks-lock-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.picks-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--hr-radius-xs);
+  background: color-mix(in srgb, var(--hr-danger) 18%, transparent);
+  color: var(--hr-text);
+  font-size: var(--hr-text-xs);
+}
+
+.picks-synth-note {
+  margin: 0;
+  font-size: var(--hr-text-3xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+  font-style: italic;
+}
+
+/* ---- Locked banner ---- */
+
+.picks-locked-payout {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hr-success);
+}
+
+.picks-locked-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.picks-locked-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--hr-radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid transparent;
+}
+.picks-locked-row[data-side="more"] {
+  border-left-color: var(--hr-success);
+}
+.picks-locked-row[data-side="less"] {
+  border-left-color: var(--hr-danger);
+}
+
+.picks-locked-row .icon {
+  width: 18px;
+  height: 18px;
+  background-color: var(--hr-text-soft);
+}
+
+.picks-locked-text {
+  display: grid;
+  gap: 2px;
+}
+
+.picks-locked-text strong {
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text);
+}
+
+.picks-locked-text small {
+  font-family: var(--hr-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.picks-locked-note {
+  margin: 0;
+  font-size: var(--hr-text-3xs);
+  text-align: center;
+  color: var(--hr-text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ---- Live tracker ---- */
+
+.picks-tracker-card.tracker-on-track {
+  border-color: color-mix(in srgb, var(--hr-success) 25%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--hr-success) 18%, transparent),
+              0 0 24px -8px color-mix(in srgb, var(--hr-success) 35%, transparent);
+}
+
+.picks-tracker-payout {
+  display: grid;
+  text-align: right;
+  font-family: var(--hr-font-mono);
+}
+
+.picks-tracker-payout small {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.picks-tracker-payout strong {
+  font-size: var(--hr-text-md);
+  color: var(--hr-text);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.picks-tracker-payout strong em {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+  font-weight: 400;
+}
+
+.picks-tracker-payout.payout-tracking strong {
+  color: var(--hr-success);
+}
+
+.picks-tracker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.picks-tracker-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: var(--hr-radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.picks-tracker-row[data-status="hit"],
+.picks-tracker-row[data-status="live-on-track"] {
+  background: color-mix(in srgb, var(--hr-success) 9%, rgba(255, 255, 255, 0.03));
+  border-color: color-mix(in srgb, var(--hr-success) 28%, transparent);
+}
+.picks-tracker-row[data-status="miss"],
+.picks-tracker-row[data-status="live-off-track"],
+.picks-tracker-row[data-status="push"] {
+  background: color-mix(in srgb, var(--hr-danger) 9%, rgba(255, 255, 255, 0.03));
+  border-color: color-mix(in srgb, var(--hr-danger) 28%, transparent);
+}
+
+.picks-tracker-row-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.picks-tracker-row-label .icon {
+  width: 16px;
+  height: 16px;
+  background-color: var(--hr-text-soft);
+}
+
+.picks-tracker-row-text {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.picks-tracker-row-text strong {
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text);
+}
+
+.picks-tracker-row-text small {
+  font-family: var(--hr-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.picks-tracker-row-progress {
+  display: grid;
+  gap: 4px;
+}
+
+/* Progress bar — line marker shows where the listener needs to clear. */
+.picks-progress-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.picks-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hr-success) 70%, transparent), var(--hr-success));
+  transition: width 240ms ease;
+}
+
+.picks-tracker-row[data-status="miss"] .picks-progress-fill,
+.picks-tracker-row[data-status="live-off-track"] .picks-progress-fill {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--hr-danger) 70%, transparent), var(--hr-danger));
+}
+
+.picks-progress-line {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 1px;
+}
+
+.picks-progress-value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 6px;
+  font-family: var(--hr-font-mono);
+  font-size: 9px;
+  color: var(--hr-text);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+/* ---- Status chips ---- */
+
+.picks-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--hr-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--hr-radius-pill);
+  align-self: end;
+  justify-self: end;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hr-text-muted);
+}
+
+.picks-chip.chip-hit {
+  background: var(--hr-success);
+  color: #06180c;
+  font-weight: 600;
+}
+.picks-chip.chip-miss {
+  background: var(--hr-danger);
+  color: #1f0a0d;
+  font-weight: 600;
+}
+.picks-chip.chip-push {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--hr-text);
+}
+.picks-chip.chip-on-track {
+  background: color-mix(in srgb, var(--hr-success) 25%, transparent);
+  color: var(--hr-success);
+}
+.picks-chip.chip-off-track {
+  background: color-mix(in srgb, var(--hr-danger) 25%, transparent);
+  color: var(--hr-danger);
+}
+.picks-chip.chip-pending {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--hr-text-muted);
+}
+
+.picks-tracker-host-hint {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--hr-radius-xs);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text-soft);
+  font-style: italic;
+}
+
+.picks-tracker-host-hint .icon {
+  width: 14px;
+  height: 14px;
+  background-color: var(--hr-text-muted);
+  flex-shrink: 0;
+}
+
+/* ---- Recap ---- */
+
+.picks-recap-card.recap-win {
+  border-color: color-mix(in srgb, var(--hr-success) 35%, transparent);
+}
+.picks-recap-card.recap-loss {
+  border-color: color-mix(in srgb, var(--hr-danger) 25%, transparent);
+}
+
+.picks-recap-result {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-sm);
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.picks-recap-result.result-win {
+  color: var(--hr-success);
+}
+.picks-recap-result.result-loss {
+  color: var(--hr-danger);
+}
+
+.picks-recap-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.picks-recap-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--hr-radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+}
+.picks-recap-row[data-status="hit"] {
+  background: color-mix(in srgb, var(--hr-success) 12%, rgba(255, 255, 255, 0.03));
+}
+.picks-recap-row[data-status="miss"],
+.picks-recap-row[data-status="push"] {
+  background: color-mix(in srgb, var(--hr-danger) 12%, rgba(255, 255, 255, 0.03));
+}
+
+.picks-recap-row .icon {
+  width: 18px;
+  height: 18px;
+  background-color: var(--hr-text-soft);
+}
+
+.picks-recap-row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.picks-recap-row-text strong {
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text);
+}
+
+.picks-recap-row-text small {
+  font-family: var(--hr-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--hr-text-muted);
+}
+
+.picks-recap-final {
+  font-style: normal;
+  color: var(--hr-text-soft);
+}
+
+.picks-recap-badge {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hr-radius-circle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--hr-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.picks-recap-badge.badge-hit {
+  background: var(--hr-success);
+  color: #06180c;
+}
+.picks-recap-badge.badge-miss {
+  background: var(--hr-danger);
+  color: #1f0a0d;
+}
+.picks-recap-badge.badge-push {
+  background: rgba(255, 255, 255, 0.2);
+  color: var(--hr-text);
+}
+.picks-recap-badge.badge-pending {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hr-text-muted);
 }

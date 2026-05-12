@@ -49,6 +49,10 @@ import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showL
 import { DebugPanel } from "./DebugPanel";
 import { LinkPreview } from "./LinkPreview";
 import { MarketPreview } from "./MarketPreview";
+import { PicksCard } from "./PicksCard";
+import { PicksTracker } from "./PicksTracker";
+import { PicksRecap } from "./PicksRecap";
+import type { PickEntry } from "../shared/picksContracts";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
@@ -217,6 +221,10 @@ function App() {
   // Vegas line for the picked game. Undefined until a real game is
   // picked AND the server has THE_ODDS_API_KEY configured.
   const [pregameOdds, setPregameOdds] = useState<GameOdds | undefined>(undefined);
+  // Picks (PrizePicks-style player props). Reuses the module-level
+  // `listenerId` (huddle-listener-id) so picks history ties back to
+  // the same opaque per-device id the rest of the app uses.
+  const [pickEntry, setPickEntry] = useState<PickEntry | undefined>(undefined);
   const [plays, setPlays] = useState<SportsPlay[]>([]);
   const [commentary, setCommentary] = useState<LivecastCommentary[]>([]);
   const [ttsLatencyByCommentary, setTtsLatencyByCommentary] = useState<Record<string, number>>({});
@@ -649,6 +657,24 @@ function App() {
     };
   }, [game?.gameId, game?.sport, game?.awayTeam, game?.homeTeam, listenerStakes?.startersInGame]);
 
+  // Restore any pre-existing picks entry when the game changes.
+  // Server retains the listener's last entry per (listenerId, gameId)
+  // until overwritten, so a reload mid-show or a same-day return to
+  // the same matchup re-hydrates the locked parlay automatically.
+  useEffect(() => {
+    setPickEntry(undefined);
+    if (!game?.gameId) return;
+    const ctrl = new AbortController();
+    void import("./picksClient").then(({ fetchEntry }) => {
+      if (ctrl.signal.aborted) return;
+      void fetchEntry(listenerId, game.gameId, ctrl.signal).then((entry) => {
+        if (ctrl.signal.aborted) return;
+        if (entry) setPickEntry(entry);
+      });
+    });
+    return () => ctrl.abort();
+  }, [game?.gameId]);
+
   // W8: pastShows lives in localStorage (already hydrated above when
   // we read `persisted.pastShows`). The cross-device sync via
   // /api/history/shows ran on the Fastify codepath; that route was
@@ -796,7 +822,11 @@ function App() {
         ttsEnabled,
         ttsProviderOverride: ttsProviderOverride === "auto" ? undefined : ttsProviderOverride,
         cadenceMs: cadenceSeconds * 1000,
-        priorContext
+        priorContext,
+        // Server engine pulls the listener's parlay status per tick
+        // and feeds a hostHint into the commentary prompt so the hosts
+        // can react to "you're 3-of-4, Mahomes needs 1 more TD."
+        picksListenerId: listenerId
       },
       {
         onOpen: () => {
@@ -1660,10 +1690,12 @@ function App() {
         setFantasyState(leagueForSport);
       }
     }
-    // Demo mode bypasses the readiness gate so users can listen without
-    // a connected fantasy account. They can still hit "connect" later
-    // via the discover header.
-    setDemoMode(true);
+    // Demo flag drives UI labels only ("Demo rehearsal" eyebrow). Pin
+    // it to the gameId — picking a real ESPN game shouldn't flip the
+    // app into demo-labeled UI just because the listener has no
+    // connected account. The readiness bypass for unauth listeners is
+    // handled separately via `bypassReadiness: true` at start sites.
+    setDemoMode(isDemoId);
     // showPrepared=true is what `deriveHuddlePhase` watches for to
     // route into `pregame` — without it we'd fall back to `empty`.
     setShowPrepared(true);
@@ -1828,6 +1860,9 @@ function App() {
         pregameNews={pregameNews}
         pregameOdds={pregameOdds}
         friendMatchups={friendMatchups}
+        picksListenerId={listenerId}
+        pickEntry={pickEntry}
+        onPickEntrySubmitted={setPickEntry}
       />
       <div className="legacy-control-room" aria-hidden="true">
       <header className="room-header">
@@ -2689,7 +2724,10 @@ function HuddleExperience({
   marketSwing,
   pregameNews,
   pregameOdds,
-  friendMatchups
+  friendMatchups,
+  picksListenerId,
+  pickEntry,
+  onPickEntrySubmitted
 }: {
   phase: HuddlePhase;
   game?: SportsGameState;
@@ -2757,6 +2795,9 @@ function HuddleExperience({
   pregameNews: NewsItem[];
   pregameOdds?: GameOdds;
   friendMatchups: ReturnType<typeof buildFriendMatchups>;
+  picksListenerId: string;
+  pickEntry?: PickEntry;
+  onPickEntrySubmitted: (entry: PickEntry) => void;
 }) {
   // Effective view: home overrides phase. Phase still drives downstream
   // logic (player bar visibility, etc.) but the rendered surface is
@@ -2810,6 +2851,9 @@ function HuddleExperience({
             odds={pregameOdds}
             friendMatchups={friendMatchups}
             profile={profile}
+            picksListenerId={picksListenerId}
+            pickEntry={pickEntry}
+            onPickEntrySubmitted={onPickEntrySubmitted}
           />
         )}
         {!showHome && phase === "live" && (
@@ -2827,6 +2871,8 @@ function HuddleExperience({
             observation={observation}
             modelLabel={modelLabel}
             marketSwing={marketSwing}
+            picksListenerId={picksListenerId}
+            pickEntry={pickEntry}
           />
         )}
         {!showHome && phase === "live-audio" && (
@@ -2846,6 +2892,8 @@ function HuddleExperience({
             observation={observation}
             modelLabel={modelLabel}
             profile={profile}
+            picksListenerId={picksListenerId}
+            pickEntry={pickEntry}
           />
         )}
         {!showHome && phase === "recap" && (
@@ -2865,6 +2913,8 @@ function HuddleExperience({
             onArchiveClip={onArchiveClip}
             onGetClipSubtitles={onGetClipSubtitles}
             profile={profile}
+            picksListenerId={picksListenerId}
+            pickEntry={pickEntry}
           />
         )}
       </section>
@@ -4340,7 +4390,10 @@ function HuddlePregame({
   news,
   odds,
   friendMatchups,
-  profile
+  profile,
+  picksListenerId,
+  pickEntry,
+  onPickEntrySubmitted
 }: {
   game?: SportsGameState;
   fantasy?: FantasyLeagueState;
@@ -4362,6 +4415,9 @@ function HuddlePregame({
   odds?: GameOdds;
   friendMatchups?: ReturnType<typeof buildFriendMatchups>;
   profile?: UserProfile;
+  picksListenerId: string;
+  pickEntry?: PickEntry;
+  onPickEntrySubmitted: (entry: PickEntry) => void;
 }) {
   const startLabel = demoMode ? "Start demo show" : "Start live show";
   const unmet = readiness.requirements.filter((req) => !req.met);
@@ -4430,6 +4486,14 @@ function HuddlePregame({
         {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
         {profile && friendMatchups && friendMatchups.length > 0 && <FriendMatchupsCard matchups={friendMatchups} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
+        {game && (
+          <PicksCard
+            gameId={game.gameId}
+            listenerId={picksListenerId}
+            entry={pickEntry}
+            onEntrySubmitted={onPickEntrySubmitted}
+          />
+        )}
         {odds && <OddsCard odds={odds} />}
         <MarketsBoardCard game={game} />
         {news && news.length > 0 ? (
@@ -4640,7 +4704,9 @@ function HuddleLiveWithStream({
   onStop,
   observation,
   modelLabel,
-  marketSwing
+  marketSwing,
+  picksListenerId,
+  pickEntry
 }: {
   game?: SportsGameState;
   hostTurns: HuddleHostTurn[];
@@ -4655,6 +4721,8 @@ function HuddleLiveWithStream({
   observation?: LivecastCommentary["observation"];
   modelLabel?: string;
   marketSwing?: { source: string; externalId: string; deltaCents: number; emittedAt: number };
+  picksListenerId: string;
+  pickEntry?: PickEntry;
 }) {
   return (
     <section className="live-layout">
@@ -4671,6 +4739,7 @@ function HuddleLiveWithStream({
       </div>
       <aside className="on-air-panel">
         <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
+        {pickEntry && <PicksTracker entry={pickEntry} listenerId={picksListenerId} />}
         <HostTurns turns={hostTurns} />
         <button className="secondary" onClick={onStop}><span className="icon icon-stop" aria-hidden="true" />Stop show</button>
       </aside>
@@ -4837,7 +4906,9 @@ function HuddleLiveAudio({
   onSubmitCue,
   observation,
   modelLabel,
-  profile
+  profile,
+  picksListenerId,
+  pickEntry
 }: {
   game?: SportsGameState;
   fantasy?: FantasyLeagueState;
@@ -4854,6 +4925,8 @@ function HuddleLiveAudio({
   observation?: LivecastCommentary["observation"];
   modelLabel?: string;
   profile?: UserProfile;
+  picksListenerId: string;
+  pickEntry?: PickEntry;
 }) {
   const latestPlay = plays[0] ?? game?.currentPlay;
   const rawSpotlightPlayer = findPlayPlayer(fantasy, latestPlay) ?? findSpotlightPlayer(fantasy, fantasySpotlight.title);
@@ -4963,6 +5036,7 @@ function HuddleLiveAudio({
       </section>
       <aside className="audio-live-rail">
         <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
+        {pickEntry && <PicksTracker entry={pickEntry} listenerId={picksListenerId} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         <article className="huddle-card fantasy-impact-card">
           <span className="eyebrow"><span className="icon icon-trophy-winner" aria-hidden="true" />Fantasy impact</span>
@@ -4998,7 +5072,9 @@ function HuddleRecap({
   listenerRecapHighlight,
   onArchiveClip,
   onGetClipSubtitles,
-  profile
+  profile,
+  picksListenerId,
+  pickEntry
 }: {
   game?: SportsGameState;
   hosts: typeof HUDDLE_HOSTS;
@@ -5015,6 +5091,8 @@ function HuddleRecap({
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
   onGetClipSubtitles?: (commentaryId: string) => Promise<{ vtt: string; text: string } | undefined>;
   profile?: UserProfile;
+  picksListenerId: string;
+  pickEntry?: PickEntry;
 }) {
   const hasListener = Boolean(profile) && listenerStakes?.status === "ready";
   const recapTitle = hasListener
@@ -5047,6 +5125,7 @@ function HuddleRecap({
           />
         )}
         {profile && listenerStakes && <ListenerStakesCard stakes={listenerStakes} />}
+        {pickEntry && <PicksRecap entry={pickEntry} listenerId={picksListenerId} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         <StorylineCard icon="icon-flag" title="The turning point" items={[recapSummary.turningPoint, fantasySpotlight.body]} />
         <StorylineCard icon="icon-star-filled" title="Best host moment" items={[recapSummary.hostMoment, recapSummary.matchupShift]} />
@@ -5382,9 +5461,6 @@ function NewsStorylineCard({ news, extras }: { news: NewsItem[]; extras: string[
           </li>
         ))}
       </ul>
-      {news.length > 0 && extras.length > 0 && (
-        <p className="storyline-news-fallback-note">{extras[0]}</p>
-      )}
     </article>
   );
 }

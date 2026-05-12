@@ -297,6 +297,14 @@ export type LivecastRequest = {
    * 4-for-7 right now"). Capped client-side to the most recent few.
    */
   listenerCues?: ListenerCue[];
+  /**
+   * Per-device listener id for the picks feature. When set, the
+   * server engine fetches the listener's locked parlay for this
+   * gameId and pipes a structured pickContext into the commentary
+   * prompt — hosts can then react to "your parlay is 3-of-4 with
+   * Mahomes needing 1 more TD" naturally during the show.
+   */
+  picksListenerId?: string;
 };
 
 /**

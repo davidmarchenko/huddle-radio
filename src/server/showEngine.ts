@@ -27,6 +27,8 @@ import { demoGameIdToSport } from "../providers/demoSportsDataProvider";
 import { config } from "./config";
 import { fetchMarketSnapshots, pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "./marketsProvider";
 import { detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
+import { computeEntryStatus, getEntry } from "./picksStore";
+import { fetchLiveStats } from "./picksLiveStats";
 import { redactSecret } from "./redactSecret";
 import {
   createFantasyProvider,
@@ -746,6 +748,40 @@ export class ShowEngine {
             );
           }
 
+          // Picks: compute the listener's parlay state for THIS game
+          // and surface a one-line hostHint to the commentary prompt.
+          // Only does work when the listener has actually locked an
+          // entry — no-op otherwise so unauthenticated listeners pay
+          // nothing for the feature.
+          let pickContextForTurn: string | undefined;
+          if (request.picksListenerId) {
+            try {
+              const entry = getEntry(request.picksListenerId, gameState.gameId);
+              if (entry) {
+                const wants = entry.lockedProps.map((prop) => ({
+                  playerName: prop.playerName,
+                  statType: prop.statType
+                }));
+                // Demo gameIds have no ESPN box score — pickContext
+                // stays undefined and the entry shows as "queued".
+                if (!gameState.gameId.startsWith("demo-")) {
+                  const { stats, gameCompleted } = await fetchLiveStats({
+                    gameId: gameState.gameId,
+                    sport: gameState.sport,
+                    wants
+                  });
+                  const status = computeEntryStatus({ entry, stats, settle: gameCompleted });
+                  pickContextForTurn = status.hostHint;
+                }
+              }
+            } catch (error) {
+              this.logger.warn(
+                { err: error instanceof Error ? error.message : String(error) },
+                "Picks status fetch failed for tick — proceeding without pick context"
+              );
+            }
+          }
+
           const commentary = createLivecastCommentary({
             league: fantasy,
             play,
@@ -827,6 +863,7 @@ export class ShowEngine {
             listenerCues: cuesForTurn,
             markets: marketsForTurn.length > 0 ? marketsForTurn : undefined,
             marketSwing: swingForTurn,
+            pickContext: pickContextForTurn,
             fallbackText: commentary.text
           });
           commentary.lines = dialogueLines;

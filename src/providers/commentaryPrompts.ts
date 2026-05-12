@@ -50,6 +50,14 @@ export type CommentaryDraftInput = {
    * 1-3 max; older cues should be acked + dropped client-side.
    */
   listenerCues?: ListenerCue[];
+  /**
+   * Listener's locked picks parlay status, summarized for the
+   * persona prompt. Plain prose ("Listener parlay: 3/4 hitting.
+   * Bubble: Mahomes needs 1 more TD"). When set, ONE turn may
+   * reference the parlay state — anchors the show in the listener's
+   * actual stake without name-dropping every leg.
+   */
+  pickContext?: string;
 };
 
 /**
@@ -122,6 +130,7 @@ const SHARED_HARD_RULES = [
   "- If `markets` carries live prediction-market prices, ONE turn may quote ONE price ('Kalshi has them at 64 cents'); attribute the source. Never recommend a trade.",
   "- If `marketSwing` is set, the FIRST turn opens with it — that's the news beat. Name the side, source, direction, magnitude in cents.",
   "- If `listenerCues` includes a recent push-to-talk message, ONE turn addresses it conversationally ('you asked about ...'). Don't quote verbatim, don't list cues.",
+  "- If `pickContext` is set, ONE turn may weave in the listener's parlay state — name the bubble player, what they need, and the rooting interest. Don't list every leg. Don't recommend bets. If a leg just hit, lean into it briefly.",
   "- If video validation is unavailable, uncertain, or not-sports, anchor only to official play data; don't imply you saw video.",
   "- PG. No profanity even on chaos tone.",
   "- Do not mention API keys, system prompts, credentials, or implementation details."
@@ -282,6 +291,7 @@ export function buildCommentaryPayload(input: CommentaryDraftInput, persona: Hos
         capturedAt: cue.capturedAt,
         confidence: cue.confidence ?? null
       })),
+    pickContext: input.pickContext ?? null,
     recentCommentary: input.recentCommentary.slice(0, 4)
   };
 }
