@@ -37,8 +37,15 @@ export function pickRelevantMarketsForGame(
   },
   limit = 3
 ): MarketSnapshot[] {
-  const sportMatches = collapseBinaryDuplicates(
-    snapshots.filter((snapshot) => snapshot.sport === game.sport)
+  const sportMatches = collapseLineVariations(
+    collapseBinaryDuplicates(
+      snapshots
+        .filter((snapshot) => snapshot.sport === game.sport)
+        // Skip settled / locked markets (price ≥ 97¢ or ≤ 3¢) — these
+        // read as "100¢ No" / "1¢ Yes" rows that don't add information.
+        // The market is already resolved in the bettors' minds.
+        .filter((snapshot) => snapshot.yesPriceCents > 3 && snapshot.yesPriceCents < 97)
+    )
   );
 
   const teamMatchers = buildMatchers(game.teams);
@@ -149,6 +156,67 @@ export function collapseBinaryDuplicates(snapshots: MarketSnapshot[]): MarketSna
     out.push(...bucket);
   }
   return out;
+}
+
+/**
+ * Collapse "same market, different line" duplicates. Sportsbooks often
+ * list the same bet at multiple line variations:
+ *
+ *   - "Spread: Thunder (-10.5)"  →  Thunder at one spread
+ *   - "Spread: Thunder (-11.5)"  →  Thunder at a slightly different spread
+ *   - "Player X over 25.5 pts"   →  same player prop at one line
+ *   - "Player X over 30.5 pts"   →  same player prop at another line
+ *
+ * Three rows in the listener UI for what's effectively the same bet
+ * concept feels like spam. We bucket by (source, marketKind, title with
+ * numeric tokens stripped) and pick the highest-volume snapshot per
+ * bucket — that's typically the line everyone is actually betting at.
+ *
+ * Conservative: only collapses when ALL three of source, marketKind,
+ * and the stripped title agree. So a moneyline + spread for the same
+ * teams stays as two rows (different kinds), and Phillies-vs-Yankees
+ * spread vs Dodgers-vs-Giants spread stays as two rows (different
+ * stripped titles after teams are preserved).
+ */
+export function collapseLineVariations(snapshots: MarketSnapshot[]): MarketSnapshot[] {
+  const byKey = new Map<string, MarketSnapshot[]>();
+  for (const snapshot of snapshots) {
+    const stripped = stripNumericTokens(snapshot.title);
+    const key = `${snapshot.source}:${snapshot.marketKind}:${stripped}`;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(snapshot);
+    else byKey.set(key, [snapshot]);
+  }
+  const out: MarketSnapshot[] = [];
+  for (const bucket of byKey.values()) {
+    if (bucket.length === 1) {
+      out.push(bucket[0]);
+      continue;
+    }
+    // Highest-volume line wins; tiebreak on the snapshot whose YES
+    // price sits closest to 50¢ (most contested = most interesting).
+    const winner = bucket.slice().sort((a, b) => {
+      const volDelta = (b.volume24hUsd ?? 0) - (a.volume24hUsd ?? 0);
+      if (volDelta !== 0) return volDelta;
+      return Math.abs(50 - a.yesPriceCents) - Math.abs(50 - b.yesPriceCents);
+    })[0];
+    out.push(winner);
+  }
+  return out;
+}
+
+/**
+ * Strip numeric tokens (and the +/-/. punctuation around them) from a
+ * market title so "Spread: Thunder (-10.5)" and "Spread: Thunder
+ * (-11.5)" hash to the same bucket. Whitespace is collapsed and
+ * lowercased so "  thunder " and "Thunder" also match.
+ */
+function stripNumericTokens(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[+\-]?\d+(?:\.\d+)?/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

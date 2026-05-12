@@ -62,9 +62,17 @@ describe("pickRelevantMarketsForGame", () => {
   });
 
   it("respects the limit parameter", () => {
-    const snapshots = Array.from({ length: 6 }, (_, i) =>
-      market({ externalId: `m${i}`, title: `Chiefs market ${i}` })
-    );
+    // Use distinct titles so line-variation dedup doesn't collapse
+    // them — these are 6 genuinely separate markets about the Chiefs.
+    const titles = [
+      "Chiefs to win Super Bowl",
+      "Chiefs over wins season total",
+      "Chiefs first-half lead",
+      "Chiefs cover spread tonight",
+      "Chiefs win division",
+      "Chiefs conference winner"
+    ];
+    const snapshots = titles.map((title, i) => market({ externalId: `m${i}`, title }));
     const picks = pickRelevantMarketsForGame(snapshots, { sport: "nfl", teams: ["Chiefs"] }, 2);
     expect(picks).toHaveLength(2);
   });
@@ -131,13 +139,16 @@ describe("pickRelevantMarketsForGame", () => {
     // for the same binary market (conditionId:0 + conditionId:1).
     // Both have the same title; their yesPrices sum to ~100¢. The
     // listener saw both as separate rows — confusing duplicates.
+    // Use 8/92 instead of 3/97 — the latter would be filtered out by
+    // the settled-market guard (anything ≥97¢ or ≤3¢ is treated as
+    // resolved). 8/92 is still binary but in the live range.
     const snapshots = [
       market({
         externalId: "cond123:0",
         source: "polymarket",
         title: "Will the Phillies win the 2026 World Series?",
         outcomeLabel: "Yes",
-        yesPriceCents: 3,
+        yesPriceCents: 8,
         sport: "mlb"
       }),
       market({
@@ -145,7 +156,7 @@ describe("pickRelevantMarketsForGame", () => {
         source: "polymarket",
         title: "Will the Phillies win the 2026 World Series?",
         outcomeLabel: "No",
-        yesPriceCents: 97,
+        yesPriceCents: 92,
         sport: "mlb"
       })
     ];
@@ -153,7 +164,7 @@ describe("pickRelevantMarketsForGame", () => {
       snapshots,
       { sport: "mlb", teams: ["Phillies"] }
     );
-    // Only one row, and it's the favored side (No, at 97¢).
+    // Only one row, and it's the favored side (No, at 92¢).
     expect(picks).toHaveLength(1);
     expect(picks[0].outcomeLabel).toBe("No");
   });
@@ -188,12 +199,13 @@ describe("pickRelevantMarketsForGame", () => {
     expect(picks[0].outcomeLabel).toBe("Philadelphia");
   });
 
-  it("does NOT collapse pairs whose prices don't sum to ~100¢", () => {
-    // Two distinct markets that happen to share a generic title —
-    // not a binary pair. Keep both.
+  it("does NOT collapse binary pairs whose prices don't sum to ~100¢", () => {
+    // Two markets with different titles — not a binary pair, even
+    // though both happen to be Yes-side priced low. Different titles
+    // also means line-variation dedup doesn't catch them.
     const snapshots = [
-      market({ externalId: "a", title: "Will it rain today?", outcomeLabel: "Yes", yesPriceCents: 30, sport: "mlb" }),
-      market({ externalId: "b", title: "Will it rain today?", outcomeLabel: "Yes", yesPriceCents: 35, sport: "mlb" })
+      market({ externalId: "a", title: "Will it rain in Boston today?", outcomeLabel: "Yes", yesPriceCents: 30, sport: "mlb" }),
+      market({ externalId: "b", title: "Will it rain in NYC today?", outcomeLabel: "Yes", yesPriceCents: 35, sport: "mlb" })
     ];
     const picks = pickRelevantMarketsForGame(
       snapshots,
@@ -217,5 +229,80 @@ describe("pickRelevantMarketsForGame", () => {
     // Three outcomes preserved (matched bucket has Jokic; generals
     // are SGA + Tatum, but matched-wins-when-present rule applies).
     expect(picks.map((p) => p.outcomeLabel)).toEqual(["Jokic"]);
+  });
+
+  it("filters out settled markets (price ≥ 97¢ or ≤ 3¢)", () => {
+    // Bug this prevents: a 100¢ "No" row showing up in the listener
+    // UI for a market that's already resolved in everyone's mind.
+    // Adds nothing — pure noise.
+    const snapshots = [
+      market({ externalId: "settled-no", title: "Will Lakers win 2026?", outcomeLabel: "No", yesPriceCents: 100, sport: "nba", marketKind: "futures" }),
+      market({ externalId: "live", title: "Lakers vs Celtics ML", outcomeLabel: "Lakers", yesPriceCents: 55, sport: "nba", marketKind: "moneyline" })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "nba", teams: ["Lakers"] }
+    );
+    expect(picks.map((p) => p.externalId)).toEqual(["live"]);
+  });
+
+  it("collapses spread variations at different lines into the highest-volume one", () => {
+    // Bug this prevents: same spread market quoted at -10.5 / -11.5
+    // showed up as two rows in the markets card. Same kind, same
+    // teams, slightly different line — listener sees them as dupes.
+    const snapshots = [
+      market({
+        externalId: "spread-low",
+        title: "Spread: Thunder (-10.5)",
+        outcomeLabel: "Thunder",
+        marketKind: "spread",
+        yesPriceCents: 61,
+        volume24hUsd: 5_000,
+        sport: "nba"
+      }),
+      market({
+        externalId: "spread-high",
+        title: "Spread: Thunder (-11.5)",
+        outcomeLabel: "Thunder",
+        marketKind: "spread",
+        yesPriceCents: 55,
+        volume24hUsd: 25_000,
+        sport: "nba"
+      })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "nba", teams: ["Thunder"] }
+    );
+    // Only one row — and it's the higher-volume line.
+    expect(picks).toHaveLength(1);
+    expect(picks[0].externalId).toBe("spread-high");
+  });
+
+  it("does NOT collapse line variations across different market kinds", () => {
+    // Same teams, different bet types — must stay as separate rows.
+    const snapshots = [
+      market({
+        externalId: "ml",
+        title: "Thunder vs Lakers",
+        outcomeLabel: "Thunder",
+        marketKind: "moneyline",
+        yesPriceCents: 91,
+        sport: "nba"
+      }),
+      market({
+        externalId: "spread",
+        title: "Spread: Thunder (-10.5)",
+        outcomeLabel: "Thunder",
+        marketKind: "spread",
+        yesPriceCents: 55,
+        sport: "nba"
+      })
+    ];
+    const picks = pickRelevantMarketsForGame(
+      snapshots,
+      { sport: "nba", teams: ["Thunder"] }
+    );
+    expect(picks).toHaveLength(2);
   });
 });
