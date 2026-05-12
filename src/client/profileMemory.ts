@@ -90,6 +90,41 @@ export function applyProfileToGroup(
 }
 
 /**
+ * Strip demo placeholder identities from the commentary group when the
+ * show is running on real data. Without this, a real ESPN game with no
+ * profile / no fantasy connection still hands the LLM `listener.name =
+ * "Alex"` and demo `friends = [Alex, Maya, ...]` — the hosts then read
+ * out demo names that the listener has nothing to do with. The UI
+ * still gets the unmodified group (so default labels in the sidebar
+ * keep working); only the commentary payload is sanitized.
+ */
+export function sanitizeCommentaryGroup(input: {
+  group: GroupSettings;
+  demoMode: boolean;
+  hasProfile: boolean;
+  hasRealFantasy: boolean;
+}): GroupSettings {
+  if (input.demoMode) return input.group;
+  const out: GroupSettings = { ...input.group };
+  if (!input.hasProfile) {
+    // No claimed identity — empty the name so the prompt rules fall
+    // back to "address them as 'you' / 'tonight's listener'."
+    out.listener = {
+      name: "",
+      rosterId: input.group.listener?.rosterId,
+      favoriteTeam: input.group.listener?.favoriteTeam
+    };
+  }
+  if (!input.hasRealFantasy) {
+    // No connected league — no real friends, so drop the demo
+    // placeholder roster entirely. The model won't invent friends
+    // it wasn't given.
+    out.friends = [];
+  }
+  return out;
+}
+
+/**
  * Brief callback the LLM weaves into the next show's opener if it
  * lands naturally. We pick same-sport-same-listener first, then any
  * same-listener entry, then the most recent overall.

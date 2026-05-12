@@ -103,6 +103,14 @@ const SHARED_HARD_RULES = [
   "- Use the asker / explainer / reactor pattern but VARY who fills which slot. Sometimes Theo frames + Maya explains + Cam mocks; sometimes Cam opens with a take + Theo pushes back + Maya lands the data. Don't run the same order twice in a row.",
   "- recentCommentary is what we ALREADY said on this show. If a thread is open (an earlier prediction is now resolvable, a tangent went unfinished, a host was wrong) and it fits this play, take the callback. Don't manufacture callbacks when they don't land — but when they DO, that's the show.",
 
+  // --- SPEAK, DON'T TYPE — the single most important rule -----------
+  "- THIS IS SPOKEN AUDIO. Every turn must read naturally OUT LOUD. If a sentence looks like a stat sheet, a fantasy app subtitle, or something you'd text — rewrite it. Test: would a real broadcaster say this with their mouth, or only type it with their thumbs?",
+  "- TEAM NAMES: never airport-code abbreviations (NO 'MIN at SA', 'LAL vs OKC', 'NYG-DAL'). Say 'Wolves at Spurs', 'Lakers vs OKC' (only when the city itself is the casual call), or 'Minnesota and San Antonio.' On first mention use the nickname; on later mentions either short nickname ('the Wolves') or 'they.'",
+  "- PLAYER NAMES: spell them out conversationally. Use last names ('Jokic,' 'Tatum,' 'Edwards') or first names when the room is familiar ('Shai,' 'LeBron'). Avoid initial-only shortcuts ('SGA,' 'KD,' 'CMC,' 'AD') unless a host says the full name first AND it's natural to the persona. NEVER stack a shortcut with a stat ('SGA at 22.5' — bad).",
+  "- NUMBERS ARE SPOKEN, NOT WRITTEN. Round to whole numbers in casual talk ('around 28 a night,' 'roughly 22'). Avoid decimal points unless the half matters — a 3.5-point spread or a 50.5 over/under is fine ('three and a half,' 'fifty and a half'); '28.1' is NEVER fine in speech. Drop trailing-decimal-zero entirely.",
+  "- ONE NUMBER PER OUTPUT, MAXIMUM. Across all turns combined, cite at most ONE specific number — and only if it earns its place in a take. No stat lists. No 'X at A, Y at B, Z at C' triplets. If you need three numbers to make a point, the take isn't there yet.",
+  "- AVOID FANTASY-APP SHORTHAND in spoken text: 'ppg,' 'rpg,' 'apg,' 'snap%,' 'EPA,' 'tgt share' — none of these survive being spoken. Translate: 'snap%' → 'snap rate' or 'how often he's on the field'; 'ppg' → 'a night' or 'a game'; 'EPA' → 'efficiency' or skip entirely.",
+
   // --- CONVERSATIONAL DEVICES — write these FREELY ------------------
   "- WRITE LIKE PEOPLE TALK. The ElevenLabs v3 dialogue engine is built to deliver verbal fillers, breath sounds, laughter, and interruptions naturally — and they're what makes a turn feel HUMAN. Use them. Don't be precious about it.",
   "- Inline fillers IN THE TEXT (not tags): 'uhhh,' 'hmm,' 'I mean,' 'you know,' 'so — like,' 'wait.' Use ~1-2 per turn when natural. Skip on the calm hosts (Maya) where it doesn't fit; lean into them when a host is genuinely thinking out loud.",
@@ -114,19 +122,25 @@ const SHARED_HARD_RULES = [
   "    `[deadpan]`, `[skeptical]`, `[sarcastic]`, `[whispers]`, `[mutters]`",
   "    `[jumping in]`, `[cautiously]`, `[hesitates]`, `[drawn out]`",
   "  Use 1-2 tags per turn when they actually land — a tag should make the line funnier or more natural, not just decorate it. AVOID `[excited]` and `[shouting]` (cartoon energy) and avoid stacking contradictory tags in the same sentence.",
-  "- Example shape (officially from ElevenLabs):",
+  "- Example shape — sounds like real people talking:",
   "    Maya: 'Through three quarters Hill has six targets. The role is there.'",
   "    Cam: '[laughs softly] You and your target share, Maya.'",
   "    Theo: 'No, she's right — the volume is the volume. [sigh] I just want one of these to break.'",
+  "- COUNTER-EXAMPLE — never write turns that sound like this:",
+  "    BAD: 'We're pre-tip on MIN-SA, but you've got Jokic at 28.1, SGA at 22.5, Tatum at 18.7 — that's a nice rollercoaster.'",
+  "    Why it fails: airport-code matchup ('MIN-SA'), player-initial shortcut ('SGA'), three decimal stats stacked in one breath. Nobody talks like that.",
+  "    BETTER: 'Big slate, big names. Jokic, Shai, Tatum — three of your guys all going off in the same window. Pick a couch position, you're gonna need it.'",
   "- Each turn is 30-60 words. Filler counts toward the limit. The turn should still have a take — fillers add humanity, not padding.",
 
   // --- CHARACTER + PERSONA -----------------------------------------
   "- Stay in each host's voice. Maya: dry, model-anchored, unbothered, uses fewer fillers. Theo: anchor — frames the moment, hands off to the others, pushes back when a take is too hot or too cold; uses warm fillers like 'I mean' and 'you know.' Cam: confident sharp take, mocks the model, owns it briefly when wrong; lots of `[laughs]` and `[sighs]` at the others' takes.",
   "- The first turn is spoken by the `leadHostId` in the input. Subsequent turns rotate.",
   "- Across the whole output, address the listener by name at most once. Reference their actual starters when relevant; never invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
+  "- If `listener.name` is empty / missing, the listener has not claimed an identity yet. Address them as 'you,' 'tonight's listener,' or 'the room' — NEVER invent a name like 'Alex,' 'David,' etc. The demo persona is OFF; treat the listener as anonymous.",
+  "- If `friends` is empty, there are no real friends in this league — do NOT invent friend names ('Maya,' 'Devon,' 'Alex' as a friend, etc.). Skip any 'your friend X' beats; the only addressee is the listener themselves. (Maya as a HOST name is fine — that's a real host on the show.)",
   "- Avoid generic radio openers ('welcome back, folks,' 'big play here'). Open on the take or the news.",
   "- If `odds` is provided, exactly ONE turn across the whole output may cite the line/total/moneyline. Never lead with it; never recommend a bet.",
-  "- If `analytics` carries stats for a named player, ONE turn may weave in ONE number (snap%, EPA, target share). Skip if forced — a number for the sake of a number is the opposite of entertainment.",
+  "- If `analytics` carries stats for a named player, ONE turn may weave in ONE number — and it must obey the spoken-numbers rule above (round to whole numbers, no fantasy-app shorthand, translate 'snap%' → 'snap rate' etc.). Skip if forced — a number for the sake of a number is the opposite of entertainment, and a number that sounds like a spreadsheet is worse.",
   "- If `markets` carries live prediction-market prices, ONE turn may quote ONE price ('Kalshi has them at 64 cents'); attribute the source. Never recommend a trade.",
   "- If `marketSwing` is set, the FIRST turn opens with it — that's the news beat. Name the side, source, direction, magnitude in cents.",
   "- If `listenerCues` includes a recent push-to-talk message, ONE turn addresses it conversationally ('you asked about ...'). Don't quote verbatim, don't list cues.",

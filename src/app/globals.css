@@ -6291,7 +6291,10 @@ body:has(.huddle-app.phase-empty)::after,
 
 .phase-pregame .pregame-hero > p {
   margin: 0.65rem 0 1rem;
-  text-align: center;
+  /* Match the h1's left alignment — text-align:center used to live
+     here from when the hero was a marketing-style centered block.
+     The hero is now an action-oriented left-rail composition. */
+  text-align: left;
 }
 
 .phase-pregame .host-studio {
@@ -12285,10 +12288,15 @@ body {
   font-size: 0.85em;
 }
 
-/* Sub-line under H1 — restrained */
+/* Sub-line under H1 — restrained.
+   margin-top mirrors the eyebrow's margin-bottom (--hr-space-2) so the
+   eyebrow→h1 and h1→p gaps read as a balanced pair. An earlier rule at
+   `.huddle-app .pregame-hero > p` (`margin: 0`, same specificity) was
+   overriding the previous attempt at this; we need 0,3,2 here to win. */
 .huddle-app.phase-pregame .pregame-hero > p {
   color: var(--hr-text-soft);
   font-size: var(--hr-text-md);
+  margin-top: var(--hr-space-2);
 }
 
 /* Re-enable button row in pregame (it was display:none earlier). */
@@ -18103,4 +18111,266 @@ body {
 .picks-recap-badge.badge-pending {
   background: rgba(255, 255, 255, 0.06);
   color: var(--hr-text-muted);
+}
+
+/* =====================================================================
+   Topbar matchup chip.
+
+   The page-level topbar (eyebrow + heading + meta line) is where the
+   game matchup now lives. The pregame hero used to repeat the same
+   "AWAY at HOME" pair — that duplication is gone. Logos sit inline on
+   the meta row so the chip stays compact and doesn't stretch the
+   topbar's height.
+   ===================================================================== */
+.huddle-app .huddle-top-identity {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.huddle-app .huddle-top-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0;
+  font-size: var(--hr-text-sm, 0.82rem);
+  color: var(--hr-text-soft);
+}
+
+.huddle-app .huddle-top-matchup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.huddle-app .huddle-top-matchup .media-avatar {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border-radius: var(--hr-radius-pill);
+  background: var(--hr-surface);
+  border: 1px solid var(--hr-line-soft, rgba(255, 255, 255, 0.1));
+  overflow: hidden;
+  padding: 0;
+}
+
+.huddle-app .huddle-top-matchup .media-avatar img {
+  padding: 12%;
+  background: transparent;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.huddle-app .huddle-top-matchup-name {
+  font-family: var(--hr-font-display);
+  font-size: 0.92rem;
+  font-weight: var(--hr-weight-black);
+  color: var(--hr-text);
+  letter-spacing: -0.005em;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.huddle-app .huddle-top-matchup-vs {
+  font-family: var(--hr-font-display);
+  font-size: 0.82rem;
+  font-style: italic;
+  font-weight: var(--hr-weight-semi);
+  color: var(--hr-text);
+  letter-spacing: 0.02em;
+  padding: 0 0.1rem;
+}
+
+.huddle-app .huddle-top-matchup-empty {
+  color: var(--hr-text-soft);
+  font-size: var(--hr-text-sm, 0.82rem);
+}
+
+.huddle-app .huddle-top-meta-sep {
+  color: var(--hr-text-dim, var(--hr-text-soft));
+  opacity: 0.5;
+}
+
+.huddle-app .huddle-top-room {
+  color: var(--hr-text-soft);
+}
+
+/* When the matchup chip is promoted to the strong-heading slot (no
+   profile + game selected), mirror the old `.huddle-topbar strong`
+   typography: editorial Fraunces, regular weight, clamp(1.4rem, 1.8vw,
+   2.1rem). Same chip markup, just heading-sized. */
+.huddle-app .huddle-top-heading-matchup {
+  display: flex;
+  align-items: center;
+  margin-top: 0.2rem;
+}
+
+.huddle-app .huddle-top-heading-matchup .huddle-top-matchup {
+  gap: 0.65rem;
+}
+
+.huddle-app .huddle-top-heading-matchup .huddle-top-matchup .media-avatar {
+  width: clamp(38px, 2.6vw, 52px);
+  height: clamp(38px, 2.6vw, 52px);
+}
+
+.huddle-app .huddle-top-heading-matchup .huddle-top-matchup-name {
+  font-family: var(--hr-font-display);
+  font-weight: var(--hr-weight-regular);
+  font-size: clamp(1.4rem, 1.8vw, 2.1rem);
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+  color: var(--hr-text);
+}
+
+.huddle-app .huddle-top-heading-matchup .huddle-top-matchup-vs {
+  font-family: var(--hr-font-display);
+  font-style: italic;
+  font-weight: var(--hr-weight-regular);
+  font-size: clamp(1rem, 1.3vw, 1.4rem);
+  letter-spacing: 0.01em;
+  color: var(--hr-text-soft);
+}
+
+/* Show more / Show fewer toggle inside cards (storylines, markets,
+   etc). Sits flush below the list, ghosted style so it doesn't compete
+   with primary CTAs. */
+.huddle-app .card-expand-btn {
+  width: 100%;
+  margin-top: var(--hr-space-3);
+  justify-content: center;
+  background: transparent !important;
+  background-image: none !important;
+  border: 1px solid var(--hr-line, rgba(255, 255, 255, 0.12)) !important;
+  color: var(--hr-text-soft) !important;
+  font-size: var(--hr-text-sm, 0.82rem) !important;
+  font-weight: var(--hr-weight-semi) !important;
+  letter-spacing: 0.01em;
+  box-shadow: none !important;
+  min-height: 2.1rem !important;
+  padding: 0.45rem 0.9rem !important;
+}
+
+.huddle-app .card-expand-btn:hover:not(:disabled) {
+  background: var(--hr-surface, rgba(255, 255, 255, 0.04)) !important;
+  color: var(--hr-text) !important;
+  border-color: var(--hr-line-strong, rgba(255, 255, 255, 0.18)) !important;
+}
+
+/* =====================================================================
+   Audio footer — host avatar popover.
+
+   With HostStudio removed from pregame, host personalities are
+   surfaced via the audio footer's mini-host-stack: hover or keyboard
+   focus on an avatar reveals a small card with name/role/description.
+   Pure CSS — no React state.
+   ===================================================================== */
+.mini-host-stack .mini-host-pop {
+  position: relative;
+  display: inline-flex;
+  cursor: pointer;
+  outline: none;
+  transition: transform 0.18s ease;
+  border-radius: var(--hr-radius-pill);
+  /* Inherit the avatar overlap behaviour that used to live on
+     .host-avatar directly — now the pop wrapper owns it so the
+     popover positioning stays anchored to the visible avatar. */
+  margin-left: -0.4rem;
+}
+
+.mini-host-stack .mini-host-pop:first-child {
+  margin-left: 0;
+}
+
+/* Reset the legacy avatar-level negative margin inside the pop;
+   otherwise the avatar would shift inside its own wrapper. */
+.mini-host-stack .mini-host-pop .host-avatar {
+  margin-left: 0;
+}
+
+.mini-host-stack .mini-host-pop:hover,
+.mini-host-stack .mini-host-pop:focus-visible {
+  transform: translateY(-2px);
+}
+
+.mini-host-stack .mini-host-pop:focus-visible {
+  box-shadow: 0 0 0 2px var(--hr-accent, var(--huddle-violet, #9b6cff));
+}
+
+/* Portal-rendered popover. Sits at body level (not inside the audio
+   bar) so it escapes every ancestor's `overflow: hidden` and stacking
+   context. Position is set inline via React from the trigger's
+   getBoundingClientRect — `left` and `top` are the trigger's
+   top-center anchor point, the transform pulls the card up + centers it. */
+.mini-host-card {
+  position: fixed;
+  /* `left` and `top` are written inline by React. */
+  transform: translate(-50%, calc(-100% - 0.6rem));
+  pointer-events: none;
+  z-index: var(--hr-z-toast, 2147483647);
+  display: grid;
+  gap: 0.15rem;
+  width: 220px;
+  padding: 0.7rem 0.85rem 0.8rem;
+  background: var(--hr-bg-1, #131420);
+  border: 1px solid var(--hr-line-strong, rgba(255, 255, 255, 0.14));
+  /* Inner > outer concentric: pop card sits over a footer with a
+     larger surrounding radius, so its corners stay tighter. */
+  border-radius: var(--hr-radius-md);
+  box-shadow:
+    0 16px 36px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  text-align: left;
+  /* When this rule applies to a portal copy (.mini-host-card-portal)
+     we set is-open via React; pure-CSS fallback uses the legacy
+     .mini-host-stack :hover selectors below. */
+}
+
+.mini-host-card.is-open {
+  opacity: 1;
+}
+
+.mini-host-card::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  background: var(--hr-bg-1, #131420);
+  border-right: 1px solid var(--hr-line-strong, rgba(255, 255, 255, 0.14));
+  border-bottom: 1px solid var(--hr-line-strong, rgba(255, 255, 255, 0.14));
+  transform: translate(-50%, -55%) rotate(45deg);
+}
+
+.mini-host-card strong {
+  font-family: var(--hr-font-display);
+  font-size: 1rem;
+  font-weight: var(--hr-weight-black);
+  color: var(--hr-text);
+  letter-spacing: -0.01em;
+}
+
+.mini-host-card em {
+  font-family: var(--hr-font-mono);
+  font-style: normal;
+  font-size: 0.65rem;
+  font-weight: var(--hr-weight-semi);
+  color: var(--hr-text-muted, var(--hr-text-soft));
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.mini-host-card[data-accent="violet"] em { color: #b698ff; }
+.mini-host-card[data-accent="orange"] em { color: #ff9b76; }
+.mini-host-card[data-accent="gold"] em { color: #f4c861; }
+
+.mini-host-card p {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--hr-text-soft);
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type {
   ActiveProviderSummary,
   ClientServerEvent,
@@ -59,6 +60,7 @@ import {
   applyProfileToGroup,
   buildPriorContext,
   formatRelativeTime,
+  sanitizeCommentaryGroup,
   sportNounForContext,
   type LeagueClaim,
   type ShowHistoryEntry,
@@ -783,10 +785,20 @@ function App() {
     setFrameCaptureStatus("Connecting frame capture");
 
     const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
+    // Drop demo placeholders ("Alex", demo friends) when this is a real
+    // cast with no claimed identity / no connected league. UI keeps the
+    // unmodified `effectiveGroup`; only the commentary payload is
+    // sanitized so the hosts don't read out demo names.
+    const commentaryGroup = sanitizeCommentaryGroup({
+      group: effectiveGroup,
+      demoMode,
+      hasProfile: Boolean(profile),
+      hasRealFantasy: providerMode !== "demo" && allLeagues.length > 0
+    });
     // Cross-show memory: brief callback the LLM can weave into the
     // opener if it lands naturally. Most-recent same-sport same-listener
     // first; otherwise the most-recent show overall.
-    const priorContext = buildPriorContext(pastShows, game?.sport, effectiveGroup.listener?.name);
+    const priorContext = buildPriorContext(pastShows, game?.sport, commentaryGroup.listener?.name || undefined);
 
     // Frame pump — runs after we have a session handle.
     const startFramePump = (handle: import("./liveSession").LiveSessionHandle) => {
@@ -816,7 +828,7 @@ function App() {
         espnLeagueId: espnLeagueId || undefined,
         espnSeason,
         week,
-        group: effectiveGroup,
+        group: commentaryGroup,
         customLeague: providerMode === "demo" ? customLeague : undefined,
         video: { mode: videoMode, url: videoUrl || undefined },
         ttsEnabled,
@@ -2803,7 +2815,6 @@ function HuddleExperience({
   // logic (player bar visibility, etc.) but the rendered surface is
   // discover when viewingHome is true.
   const showHome = viewingHome || phase === "empty";
-  const gameLabel = showHome ? "Choose a game" : game ? `${game.awayTeam} at ${game.homeTeam}` : "Choose a game";
   const roomLabel = showHome
     ? "Connect fantasy · choose stream · meet hosts"
     : `${fantasy?.leagueName ?? "Your league"} · ${group.friends.length} friend${group.friends.length === 1 ? "" : "s"} · ${ttsEnabled ? "voice on" : "voice off"}`;
@@ -2811,7 +2822,7 @@ function HuddleExperience({
     <>
       <HuddleSidebar fantasy={fantasy} allLeagues={allLeagues} group={group} phase={showHome ? "empty" : phase} profile={profile} pastShows={pastShows} matchupTotals={matchupTotals} listenerStakes={listenerStakes} friendMatchups={friendMatchups} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} onOpenFriends={onOpenFriends} onGoHome={onGoHome} onOpenProfile={onOpenProfile} />
       <section className="huddle-main" aria-label="Huddle Radio">
-        {!showHome && <HuddleTopBar phase={phase} status={status} roomLabel={roomLabel} gameLabel={gameLabel} onOpenSettings={onOpenSettings} demoMode={demoMode} onGoHome={onGoHome} profile={profile} claimedTeamName={claimedTeamName} providerMode={providerMode} />}
+        {!showHome && <HuddleTopBar phase={phase} status={status} roomLabel={roomLabel} game={game} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} demoMode={demoMode} onGoHome={onGoHome} profile={profile} claimedTeamName={claimedTeamName} providerMode={providerMode} />}
         {showHome && (
           <HuddleDiscover
             setup={emptySetup}
@@ -3122,7 +3133,8 @@ function HuddleTopBar({
   phase,
   status,
   roomLabel,
-  gameLabel,
+  game,
+  mediaIndex,
   onOpenSettings,
   demoMode,
   profile,
@@ -3132,7 +3144,8 @@ function HuddleTopBar({
   phase: HuddlePhase;
   status: string;
   roomLabel: string;
-  gameLabel: string;
+  game?: SportsGameState;
+  mediaIndex: MediaLookupIndex;
   onOpenSettings: () => void;
   demoMode: boolean;
   onGoHome: () => void;
@@ -3156,12 +3169,57 @@ function HuddleTopBar({
     if (providerMode === "espn") return { label: "Synced · ESPN", tone: "sync" as const, title: "Hosts are reading your real ESPN roster." };
     return undefined;
   })();
+  const awayLabel = game?.awayMeta?.shortName ?? game?.awayMeta?.displayName ?? game?.awayTeam;
+  const homeLabel = game?.homeMeta?.shortName ?? game?.homeMeta?.displayName ?? game?.homeTeam;
+  // The matchup chip replaces the generic "Personalized show room" /
+  // "Live sports talk" placeholder when there's no listener identity to
+  // claim. When a profile IS set, the strong slot keeps "Starring X" —
+  // that's identifying content, not boilerplate, and the matchup is
+  // still implied by the rest of the page.
+  const showMatchupAsHeading = !starring && Boolean(game);
+  const matchupChip = game ? (
+    <span className="huddle-top-matchup" aria-label={`${game.awayTeam} at ${game.homeTeam}`}>
+      <MediaAvatar
+        src={game.awayMeta?.logo}
+        asset={resolveTeamMedia(mediaIndex, game.awayTeam)}
+        label={game.awayTeam ?? "AWAY"}
+        size="sm"
+      />
+      <span className="huddle-top-matchup-name">{awayLabel}</span>
+      <span className="huddle-top-matchup-vs" aria-hidden="true">at</span>
+      <span className="huddle-top-matchup-name">{homeLabel}</span>
+      <MediaAvatar
+        src={game.homeMeta?.logo}
+        asset={resolveTeamMedia(mediaIndex, game.homeTeam)}
+        label={game.homeTeam ?? "HOME"}
+        size="sm"
+      />
+    </span>
+  ) : null;
   return (
     <header className="huddle-topbar">
-      <div>
+      <div className="huddle-top-identity">
         <span className="eyebrow">Huddle Radio</span>
-        <strong>{heading}</strong>
-        <p>{gameLabel} · {roomLabel}</p>
+        {showMatchupAsHeading ? (
+          <div className="huddle-top-heading-matchup">{matchupChip}</div>
+        ) : (
+          <strong>{heading}</strong>
+        )}
+        <p className="huddle-top-meta">
+          {starring && matchupChip ? (
+            <>
+              {matchupChip}
+              <span className="huddle-top-meta-sep" aria-hidden="true">·</span>
+            </>
+          ) : null}
+          {!game && !starring ? (
+            <>
+              <span className="huddle-top-matchup-empty">Choose a game</span>
+              <span className="huddle-top-meta-sep" aria-hidden="true">·</span>
+            </>
+          ) : null}
+          <span className="huddle-top-room">{roomLabel}</span>
+        </p>
       </div>
       <div className="huddle-top-actions">
         {connectionBadge && (
@@ -4441,6 +4499,29 @@ function formatGameTime(isoString: string): string {
   }
 }
 
+// Sport-aware anticipation phrase used in the hero sub-line. The hero
+// h1 itself now carries the matchup (logos + team names), so the sub
+// adds the emotional beat ("Tipoff incoming — tap Start when ready").
+function kickoffPhrase(sport?: SportLeague): string {
+  switch (sport) {
+    case "nba":
+    case "wnba":
+    case "ncaab":
+      return "Tipoff incoming";
+    case "nfl":
+    case "ncaaf":
+      return "Kickoff incoming";
+    case "mlb":
+      return "First pitch incoming";
+    case "nhl":
+      return "Puck drop incoming";
+    case "soccer":
+      return "Kickoff incoming";
+    default:
+      return "Almost go time";
+  }
+}
+
 function HuddlePregame({
   game,
   fantasy,
@@ -4496,15 +4577,18 @@ function HuddlePregame({
   // demo mode but a bug for a real new user — they'd see "Tonight's
   // show, Alex" pulled from default seed data.
   const hasListener = Boolean(profile) && listenerStakes?.status === "ready";
-  const gameLabel = game ? `${game.awayTeam} at ${game.homeTeam}` : undefined;
   const heroEyebrow = hasListener
     ? `Tonight's show, ${listenerStakes!.listenerName}`
     : (demoMode ? "Pregame · demo rehearsal" : "Pregame show");
+  // The topbar now carries the visual game matchup (logos + team
+  // names), so the hero h1 is a text-only hook:
+  //   - Fantasy listeners → their personal matchup ("Your Wolves vs Devon's Lakers")
+  //   - Everyone else → a sport-aware anticipation phrase ("Tipoff incoming")
   const heroHeadline = hasListener && listenerStakes!.opponent
     ? `${listenerStakes!.teamName ?? "Your team"} vs ${listenerStakes!.opponent.teamName}`
-    : (gameLabel ?? "Almost ready");
+    : (game ? kickoffPhrase(game.sport) : "Almost ready");
   const heroSub = hasListener
-    ? `${listenerStakes!.stakesLine} · ${gameLabel ?? "Your matchup"} · Week ${fantasy?.matchups[0]?.week ?? 7}`
+    ? `${listenerStakes!.stakesLine} · Week ${fantasy?.matchups[0]?.week ?? 7}`
     : (fantasy
       ? `Week ${fantasy.matchups[0]?.week ?? 7} · ${fantasy.leagueName}`
       : (demoMode ? "Demo rehearsal — tap Start when ready" : "Tap Start when you're ready to go live"));
@@ -4518,7 +4602,6 @@ function HuddlePregame({
           <span className="eyebrow"><span className="icon icon-clock" aria-hidden="true" />{heroEyebrow}</span>
           <h1>{heroHeadline}</h1>
           <p>{heroSub}</p>
-          <HostStudio hosts={hosts} turns={hostTurns} />
           {!readiness.canStart && unmet.length > 0 && (
             <div className="pregame-checklist" role="status" aria-live="polite">
               <span className="eyebrow"><span className="icon icon-check" aria-hidden="true" />Before you go live</span>
@@ -4556,17 +4639,16 @@ function HuddlePregame({
             )}
           </div>
         </div>
-        <div className="pregame-stack">
-          <MatchupCard game={game} mediaIndex={mediaIndex} />
-          {game && (
+        {game && (
+          <div className="pregame-stack">
             <PicksCard
               gameId={game.gameId}
               listenerId={picksListenerId}
               entry={pickEntry}
               onEntrySubmitted={onPickEntrySubmitted}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
       {/* Right rail: secondary context. Listener-personal cards
           (your stakes, friend matchups, live matchup) moved to the
@@ -5217,7 +5299,7 @@ function HuddleRecap({
   );
 }
 
-function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, onStart, onStop, onOpenStream }: { phase: HuddlePhase; game?: SportsGameState; hostTurns: HuddleHostTurn[]; audioPlaying: boolean; audioLevels: number[]; onStart: () => void; onStop: () => void; onOpenStream: () => void }) {
+function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, onStart, onStop, onOpenStream }: { phase: HuddlePhase; game?: SportsGameState; hostTurns: HuddleHostTurn[]; audioPlaying: boolean; audioLevels: number[]; onStart: (opts?: { bypassReadiness?: boolean }) => void; onStop: () => void; onOpenStream: () => void }) {
   const isLive = phase === "live" || phase === "live-audio";
   const isEmpty = phase === "empty";
   const isPregame = phase === "pregame";
@@ -5230,9 +5312,13 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, on
   return (
     <footer className="huddle-player">
       <div className="player-show">
+        {/* Each host is a focusable pop trigger — hover or keyboard
+            focus reveals a card with name + role + description. Lets
+            us drop the bulky HostStudio from the pregame view while
+            still keeping the personalities discoverable. */}
         <div className="mini-host-stack">
           {HUDDLE_HOSTS.map((host) => (
-            <HostAvatar key={host.id} label={host.name} accent={host.accent} size="sm" src={host.avatar} />
+            <MiniHostPop key={host.id} host={host} />
           ))}
         </div>
         <div>
@@ -5242,7 +5328,12 @@ function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, on
       </div>
       <button
         className="player-main-button"
-        onClick={isLive ? onStop : onStart}
+        // Bypass the pregame readiness gate: by the time the user
+        // reaches the audio-bar play button they have already chosen a
+        // game (otherwise we wouldn't be in pregame). The fantasy
+        // account requirement is a *soft* prereq for richer commentary,
+        // not a hard block — without bypass the click silently fails.
+        onClick={isLive ? onStop : () => onStart({ bypassReadiness: true })}
         aria-label={isLive ? "Stop show" : isEmpty ? "Try demo show" : isPregame ? "Start show" : "Play"}
       >
         <span className={`icon ${isLive ? "icon-stop" : "icon-play"}`} aria-hidden="true" />
@@ -5336,6 +5427,74 @@ function HostAvatar({
         initialsForUi(label).slice(0, 2)
       )}
     </span>
+  );
+}
+
+/**
+ * Audio-footer host avatar with a portal-rendered popover.
+ *
+ * The popover is rendered into `document.body` (not as a sibling of the
+ * avatar) so it escapes the audio bar's stacking context AND the main
+ * scroll area's `overflow: hidden`. Position is computed from the
+ * trigger's bounding rect each time the popover opens, so it always
+ * lands directly above the avatar regardless of the surrounding layout.
+ */
+function MiniHostPop({ host }: { host: import("./huddleViewModel").HuddleHost }) {
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
+
+  const reposition = useCallback(() => {
+    const node = triggerRef.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    setCoords({ left: rect.left + rect.width / 2, top: rect.top });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    reposition();
+    // Reposition on scroll/resize so the card tracks the trigger.
+    const onScroll = () => reposition();
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onScroll);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [open, reposition]);
+
+  const showCard = open && coords && typeof document !== "undefined";
+
+  return (
+    <>
+      <div
+        ref={triggerRef}
+        className="mini-host-pop"
+        tabIndex={0}
+        role="button"
+        aria-label={`${host.name}, ${host.role}. ${host.description}`}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        <HostAvatar label={host.name} accent={host.accent} size="sm" src={host.avatar} />
+      </div>
+      {showCard && createPortal(
+        <div
+          className="mini-host-card mini-host-card-portal is-open"
+          data-accent={host.accent}
+          aria-hidden="true"
+          style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
+        >
+          <strong>{host.name}</strong>
+          <em>{host.role}</em>
+          <p>{host.description}</p>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
@@ -5440,6 +5599,9 @@ function OddsCard({ odds }: { odds: GameOdds }) {
  */
 function MarketsBoardCard({ game }: { game?: SportsGameState }) {
   const [snapshots, setSnapshots] = useState<MarketSnapshot[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  const COLLAPSED_COUNT = 4;
+  const EXPANDED_COUNT = 20;
 
   useEffect(() => {
     if (!game?.sport) return;
@@ -5466,16 +5628,21 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
     };
   }, [game?.sport]);
 
-  const relevant = useMemo(() => {
+  // Pull the bigger list once; slice client-side based on `expanded`.
+  // Keeps Show fewer / Show more instant — no extra fetch round-trip.
+  const relevantAll = useMemo(() => {
     if (!game?.sport || snapshots.length === 0) return [];
     const teams = [
       ...teamIdentifiersFromMeta(game.awayTeam, game.awayMeta),
       ...teamIdentifiersFromMeta(game.homeTeam, game.homeMeta)
     ];
-    return pickRelevantMarketsForGame(snapshots, { sport: game.sport, teams }, 4);
+    return pickRelevantMarketsForGame(snapshots, { sport: game.sport, teams }, EXPANDED_COUNT);
   }, [snapshots, game?.sport, game?.awayTeam, game?.homeTeam, game?.awayMeta, game?.homeMeta]);
 
-  if (!relevant.length) return null;
+  const visible = expanded ? relevantAll : relevantAll.slice(0, COLLAPSED_COUNT);
+  const remaining = Math.max(0, relevantAll.length - COLLAPSED_COUNT);
+
+  if (!relevantAll.length) return null;
 
   return (
     <article className="huddle-card markets-board-card">
@@ -5484,7 +5651,7 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
         What the markets say
       </span>
       <ul className="markets-board-list">
-        {relevant.map((snapshot) => {
+        {visible.map((snapshot) => {
           const delta = snapshot.recentDeltaCents ?? 0;
           const direction = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
           return (
@@ -5508,6 +5675,16 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
           );
         })}
       </ul>
+      {remaining > 0 && (
+        <button
+          type="button"
+          className="secondary compact card-expand-btn"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+        >
+          {expanded ? "Show fewer" : `Show ${remaining} more`}
+        </button>
+      )}
     </article>
   );
 }
@@ -5525,11 +5702,15 @@ function formatMoneyline(price: number): string {
 }
 
 function NewsStorylineCard({ news, extras }: { news: NewsItem[]; extras: string[] }) {
+  const COLLAPSED_COUNT = 6;
+  const [expanded, setExpanded] = useState(false);
+  const visibleNews = expanded ? news : news.slice(0, COLLAPSED_COUNT);
+  const remaining = Math.max(0, news.length - COLLAPSED_COUNT);
   return (
     <article className="huddle-card storyline-news-card">
       <span className="eyebrow"><span className="icon icon-megaphone-loud" aria-hidden="true" />Storylines to watch</span>
       <ul className="storyline-news-list">
-        {news.slice(0, 3).map((item) => (
+        {visibleNews.map((item) => (
           <StorylineRow key={item.id} item={item} />
         ))}
         {news.length === 0 && extras.slice(0, 2).map((line) => (
@@ -5538,6 +5719,16 @@ function NewsStorylineCard({ news, extras }: { news: NewsItem[]; extras: string[
           </li>
         ))}
       </ul>
+      {remaining > 0 && (
+        <button
+          type="button"
+          className="secondary compact card-expand-btn"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+        >
+          {expanded ? "Show fewer" : `Show ${remaining} more`}
+        </button>
+      )}
     </article>
   );
 }
