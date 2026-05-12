@@ -3346,7 +3346,8 @@ h1 {
 
 .stakes-shelf .panel {
   min-height: 178px;
-  border-radius: var(--hr-radius-sm);
+  /* Panel inside .listener-stakes-card (36px) — inner > outer rule. */
+  border-radius: var(--hr-radius-row);
   background: rgba(10, 13, 18, 0.78);
   backdrop-filter: blur(18px);
 }
@@ -7375,7 +7376,9 @@ body:has(.huddle-app) {
   padding: var(--hr-space-3) var(--hr-space-3);
   border-left: 2px solid var(--hr-line-strong);
   background: rgba(0, 0, 0, 0.18);
-  border-radius: 0 var(--hr-radius-sm) var(--hr-radius-sm) 0;
+  /* Asymmetric: flush left for the rule, larger radius on the right
+     edge to honor inner > outer for the .listener-highlight-card. */
+  border-radius: 0 var(--hr-radius-row) var(--hr-radius-row) 0;
   font-size: var(--hr-text-base);
   font-style: italic;
   color: color-mix(in srgb, var(--hr-text) 92%, transparent);
@@ -12985,7 +12988,7 @@ body {
 .huddle-app.phase-live-audio .play-row {
   background: transparent !important;
   border: 1px solid transparent !important;
-  border-radius: var(--hr-radius-sm) !important;
+  border-radius: var(--hr-radius-row) !important;
   padding: var(--hr-space-3) var(--hr-space-4) !important;
   transition: background var(--hr-motion-fast) var(--hr-ease-standard),
               border-color var(--hr-motion-fast) var(--hr-ease-standard) !important;
@@ -13478,7 +13481,7 @@ body {
 .huddle-app.phase-recap .play-row {
   background: transparent !important;
   border: 1px solid transparent !important;
-  border-radius: var(--hr-radius-sm) !important;
+  border-radius: var(--hr-radius-row) !important;
   padding: var(--hr-space-3) var(--hr-space-4) !important;
   transition: background var(--hr-motion-fast) var(--hr-ease-standard),
               border-color var(--hr-motion-fast) var(--hr-ease-standard) !important;
@@ -14526,7 +14529,8 @@ body {
   align-items: baseline;
   column-gap: var(--hr-space-3);
   padding: var(--hr-space-2) var(--hr-space-3);
-  border-radius: var(--hr-radius-sm);
+  /* Inner row inside .friend-matchups-card (36px) — inner > outer rule. */
+  border-radius: var(--hr-radius-row);
   background: var(--hr-bg-2);
   border: 1px solid var(--hr-line);
 }
