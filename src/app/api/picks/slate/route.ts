@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { fetchMarketSnapshots } from "@/server/marketsProvider";
-import { buildPickSlate } from "@/server/picksGenerator";
+import { buildPickSlate, parseMarketTitle } from "@/server/picksGenerator";
 import { getDefaultSportsGamesCache } from "@/server/sportsGamesCache";
 import { demoGameOptions } from "@/server/demoGameOptions";
 import { ESPN_SPORTS, type EspnSportPath } from "@/providers/espnSportsDataProvider";
 import { parseSportPrefixedGameId } from "@/server/showFactories";
-import { fetchPlayerMediaMap } from "@/server/picksLiveStats";
+import { fetchPlayerMediaMap, type PlayerMedia } from "@/server/picksLiveStats";
 import type { SportLeague, SportsGameOption, TeamMeta } from "@/shared/contracts";
 
 export const runtime = "nodejs";
@@ -34,44 +34,54 @@ export async function GET(request: Request) {
 
   const startedAt = Date.now();
   try {
-    const markets = await fetchMarketSnapshots({ sports: [sport] });
+    // Fan out markets + roster media in parallel. The roster media
+    // doubles as a "who's playing in this game" filter — without it
+    // the slate ends up showing whichever player-prop markets are
+    // most popular for the sport, not the ones in THIS game.
+    const isDemo = gameId.startsWith("demo-");
+    const [markets, mediaMap] = await Promise.all([
+      fetchMarketSnapshots({ sports: [sport] }),
+      isDemo
+        ? Promise.resolve(new Map())
+        : fetchPlayerMediaMap(gameId, sport, {
+            teamAbbreviations: [homeTeam, awayTeam],
+            teamLogos: {
+              [homeTeam.toLowerCase()]: resolved.homeMeta?.logo,
+              [awayTeam.toLowerCase()]: resolved.awayMeta?.logo
+            }
+          })
+    ]);
+
+    // Pre-filter markets to ONLY those whose player is on a roster in
+    // this game. We do this BEFORE generating the slate so the
+    // diversification logic (one prop per player, max 2 per stat)
+    // operates on the right candidate pool. Demo gameIds skip the
+    // filter — they fall back to the generator's roster-based synth.
+    const relevantMarkets = isDemo
+      ? markets
+      : markets.filter((market) => playerInGame(market.title, mediaMap, sport));
+
     const slate = buildPickSlate({
       gameId,
       sport,
       teams: [homeTeam, awayTeam],
-      markets
+      markets: relevantMarkets
     });
-    // Enrich with media: player headshots from ESPN's roster section,
-    // team logos / colors from the game meta we already have. Demo
-    // games skip the ESPN call (no real roster) and rely on the
-    // generic fallback in the UI.
+    // Now enrich each picked prop with the media we already fetched.
     let enrichedProps = slate.props;
-    if (!gameId.startsWith("demo-") && slate.props.length > 0) {
-      try {
-        const mediaMap = await fetchPlayerMediaMap(gameId, sport, {
-          teamAbbreviations: [homeTeam, awayTeam],
-          teamLogos: {
-            [homeTeam.toLowerCase()]: resolved.homeMeta?.logo,
-            [awayTeam.toLowerCase()]: resolved.awayMeta?.logo
-          }
-        });
-        enrichedProps = slate.props.map((prop) => {
-          const media =
-            mediaMap.get(prop.playerName.toLowerCase().trim()) ??
-            mediaMap.get(prop.playerName.toLowerCase().split(/\s+/).pop() ?? "");
-          const teamMeta = pickTeamMeta(resolved, media?.teamAbbr ?? prop.playerTeam);
-          return {
-            ...prop,
-            playerHeadshot: media?.headshot,
-            playerTeamLogo: teamMeta?.logo ?? media?.teamLogo,
-            playerTeamColor: teamMeta?.color ?? media?.teamColor,
-            playerPosition: media?.position,
-            playerTeam: media?.teamAbbr ?? prop.playerTeam
-          };
-        });
-      } catch {
-        // Enrichment is best-effort — failures fall back to bare slate.
-      }
+    if (!isDemo && slate.props.length > 0) {
+      enrichedProps = slate.props.map((prop) => {
+        const media = lookupMedia(mediaMap, prop.playerName);
+        const teamMeta = pickTeamMeta(resolved, media?.teamAbbr ?? prop.playerTeam);
+        return {
+          ...prop,
+          playerHeadshot: media?.headshot,
+          playerTeamLogo: teamMeta?.logo ?? media?.teamLogo,
+          playerTeamColor: teamMeta?.color ?? media?.teamColor,
+          playerPosition: media?.position,
+          playerTeam: media?.teamAbbr ?? prop.playerTeam
+        };
+      });
     }
     console.log(JSON.stringify({
       event: "picks.slate.ok",
@@ -178,4 +188,26 @@ function pickTeamMeta(game: ResolvedGame | undefined, abbr?: string): TeamMeta |
   if (game.homeTeam.toUpperCase() === target) return game.homeMeta;
   if (game.awayTeam.toUpperCase() === target) return game.awayMeta;
   return undefined;
+}
+
+/** Look up a player's media by parsed title fragments (full + last name). */
+function lookupMedia(map: Map<string, PlayerMedia>, playerName: string): PlayerMedia | undefined {
+  const lower = playerName.toLowerCase().trim();
+  return map.get(lower) ?? map.get(lower.split(/\s+/).pop() ?? "");
+}
+
+/**
+ * True when the market title parses to a player who's on a roster
+ * for this game. Used to drop the long tail of "popular NBA prop"
+ * markets that aren't for tonight's matchup.
+ */
+function playerInGame(
+  title: string,
+  mediaMap: Map<string, PlayerMedia>,
+  sport: SportLeague
+): boolean {
+  if (mediaMap.size === 0) return true; // No roster fetched — don't filter.
+  const parsed = parseMarketTitle(title, sport);
+  if (!parsed) return false;
+  return Boolean(lookupMedia(mediaMap, parsed.playerName));
 }
