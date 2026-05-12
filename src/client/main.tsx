@@ -2809,7 +2809,7 @@ function HuddleExperience({
     : `${fantasy?.leagueName ?? "Your league"} · ${group.friends.length} friend${group.friends.length === 1 ? "" : "s"} · ${ttsEnabled ? "voice on" : "voice off"}`;
   return (
     <>
-      <HuddleSidebar fantasy={fantasy} allLeagues={allLeagues} group={group} phase={showHome ? "empty" : phase} profile={profile} pastShows={pastShows} onOpenSettings={onOpenSettings} onOpenFriends={onOpenFriends} onGoHome={onGoHome} onOpenProfile={onOpenProfile} />
+      <HuddleSidebar fantasy={fantasy} allLeagues={allLeagues} group={group} phase={showHome ? "empty" : phase} profile={profile} pastShows={pastShows} matchupTotals={matchupTotals} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} onOpenFriends={onOpenFriends} onGoHome={onGoHome} onOpenProfile={onOpenProfile} />
       <section className="huddle-main" aria-label="Huddle Radio">
         {!showHome && <HuddleTopBar phase={phase} status={status} roomLabel={roomLabel} gameLabel={gameLabel} onOpenSettings={onOpenSettings} demoMode={demoMode} onGoHome={onGoHome} profile={profile} claimedTeamName={claimedTeamName} providerMode={providerMode} />}
         {showHome && (
@@ -2944,7 +2944,33 @@ function HuddleExperience({
   );
 }
 
-function HuddleSidebar({ fantasy, allLeagues, group, phase, profile, pastShows, onOpenSettings, onOpenFriends, onGoHome, onOpenProfile }: { fantasy?: FantasyLeagueState; allLeagues: FantasyLeagueState[]; group: GroupSettings; phase: HuddlePhase; profile?: UserProfile; pastShows: ShowHistoryEntry[]; onOpenSettings: () => void; onOpenFriends: () => void; onGoHome: () => void; onOpenProfile: () => void }) {
+function HuddleSidebar({
+  fantasy,
+  allLeagues,
+  group,
+  phase,
+  profile,
+  pastShows,
+  matchupTotals,
+  mediaIndex,
+  onOpenSettings,
+  onOpenFriends,
+  onGoHome,
+  onOpenProfile
+}: {
+  fantasy?: FantasyLeagueState;
+  allLeagues: FantasyLeagueState[];
+  group: GroupSettings;
+  phase: HuddlePhase;
+  profile?: UserProfile;
+  pastShows: ShowHistoryEntry[];
+  matchupTotals: Array<{ id: string; ownerName: string; teamName: string; team?: string; points: number }>;
+  mediaIndex: MediaLookupIndex;
+  onOpenSettings: () => void;
+  onOpenFriends: () => void;
+  onGoHome: () => void;
+  onOpenProfile: () => void;
+}) {
   // Resolve which roster (if any) belongs to the profile so the sidebar
   // can show the user's actual fantasy team name instead of the first
   // roster in the league. Auto-match by ownerName if no explicit pick.
@@ -2990,6 +3016,27 @@ function HuddleSidebar({ fantasy, allLeagues, group, phase, profile, pastShows, 
           <strong>{fantasy?.leagueName ?? "Redraft League"}</strong>
           <p>{group.friends.length} friends ready for the show.</p>
           <button className="secondary compact" onClick={onOpenFriends}><span className="icon icon-league" aria-hidden="true" />Invite friends</button>
+        </section>
+      )}
+      {profile && matchupTotals.length >= 2 && (
+        <section className="sidebar-live-matchup" aria-label="Your fantasy matchup">
+          <span className="eyebrow"><span className="icon icon-pie-chart" aria-hidden="true" />Live matchup</span>
+          <div className="sidebar-roster-list">
+            {matchupTotals.slice(0, 2).map((roster) => (
+              <div key={roster.id} className="sidebar-roster-row">
+                <MediaAvatar
+                  asset={resolveTeamMedia(mediaIndex, roster.team)}
+                  label={roster.teamName}
+                  size="sm"
+                />
+                <div className="sidebar-roster-info">
+                  <strong>{roster.ownerName}</strong>
+                  <span>{roster.teamName}</span>
+                </div>
+                <b>{roster.points.toFixed(1)}</b>
+              </div>
+            ))}
+          </div>
         </section>
       )}
       {pastShows.length > 0 && (
@@ -4504,7 +4551,6 @@ function HuddlePregame({
         ) : (
           <StorylineCard icon="icon-target" title="Storylines to watch" items={[matchupStory.line, fantasySpotlight.body, "The hosts will stay quiet when the game needs room."]} />
         )}
-        <RostersCard matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
       </aside>
     </section>
   );
