@@ -48,7 +48,10 @@ export async function GET(request: Request) {
     let enrichedProps = slate.props;
     if (!gameId.startsWith("demo-") && slate.props.length > 0) {
       try {
-        const mediaMap = await fetchPlayerMediaMap(gameId, sport);
+        const mediaMap = await fetchPlayerMediaMap(gameId, sport, {
+          homeLogoUrl: resolved.homeMeta?.logo,
+          awayLogoUrl: resolved.awayMeta?.logo
+        });
         enrichedProps = slate.props.map((prop) => {
           const media =
             mediaMap.get(prop.playerName.toLowerCase().trim()) ??

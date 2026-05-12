@@ -44,14 +44,8 @@ export function PicksRecap({ entry, listenerId }: PicksRecapProps) {
           const pick = status?.picks.find((p) => p.propId === prop.id);
           const side = entry.selections.find((s) => s.propId === prop.id)?.side ?? "more";
           const result = pick?.status ?? "pending";
-          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
-            <li
-              key={prop.id}
-              className="picks-recap-row"
-              data-status={result}
-              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
-            >
+            <li key={prop.id} className="picks-recap-row" data-status={result}>
               <PlayerAvatar prop={prop} size="sm" />
               <div className="picks-recap-row-text">
                 <strong>{prop.playerName}</strong>

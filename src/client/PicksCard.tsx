@@ -147,30 +147,19 @@ export function PicksCard({ gameId, listenerId, entry, onEntrySubmitted }: Picks
       <ul className="picks-list">
         {slate.props.map((prop) => {
           const side = selectedById.get(prop.id);
-          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
             <li
               key={prop.id}
               className="picks-row"
               data-picked={side ?? "no"}
-              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
             >
               <div className="picks-row-label">
                 <PlayerAvatar prop={prop} />
                 <div className="picks-row-text">
                   <strong>{prop.playerName}</strong>
                   <div className="picks-row-meta">
-                    {prop.playerTeam && (
-                      <span className="picks-team-chip" style={accent ? { background: accent } : undefined}>
-                        {prop.playerTeamLogo && <img src={prop.playerTeamLogo} alt="" />}
-                        <span>{prop.playerTeam}</span>
-                      </span>
-                    )}
-                    {prop.playerPosition && <span className="picks-position-chip">{prop.playerPosition}</span>}
-                    <span className="picks-line">
-                      <strong>{prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)}</strong>{" "}
-                      <em>{statLabel(prop.statType)}</em>
-                    </span>
+                    {prop.playerTeam && <span className="picks-team-text">{prop.playerTeam}</span>}
+                    {prop.playerPosition && <span className="picks-position-text">{prop.playerPosition}</span>}
                     <SourceBadge source={prop.source} />
                   </div>
                 </div>
@@ -183,8 +172,8 @@ export function PicksCard({ gameId, listenerId, entry, onEntrySubmitted }: Picks
                   onClick={() => togglePick(prop, "more")}
                   aria-pressed={side === "more"}
                 >
-                  <span className="picks-side-arrow" aria-hidden="true">▲</span>
-                  More
+                  <span className="picks-side-label">More</span>
+                  <span className="picks-side-line">{prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)} {statLabel(prop.statType)}</span>
                 </button>
                 <button
                   type="button"
@@ -193,8 +182,8 @@ export function PicksCard({ gameId, listenerId, entry, onEntrySubmitted }: Picks
                   onClick={() => togglePick(prop, "less")}
                   aria-pressed={side === "less"}
                 >
-                  <span className="picks-side-arrow" aria-hidden="true">▼</span>
-                  Less
+                  <span className="picks-side-label">Less</span>
+                  <span className="picks-side-line">{prop.line.toFixed(prop.line % 1 === 0 ? 0 : 1)} {statLabel(prop.statType)}</span>
                 </button>
               </div>
             </li>
@@ -245,14 +234,8 @@ function PicksLockedBanner({ entry }: { entry: PickEntry }) {
       <ul className="picks-locked-list">
         {entry.lockedProps.map((prop) => {
           const side = entry.selections.find((s) => s.propId === prop.id)?.side ?? "more";
-          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
-            <li
-              key={prop.id}
-              className="picks-locked-row"
-              data-side={side}
-              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
-            >
+            <li key={prop.id} className="picks-locked-row" data-side={side}>
               <PlayerAvatar prop={prop} size="sm" />
               <div className="picks-locked-text">
                 <strong>{prop.playerName}</strong>

@@ -261,51 +261,175 @@ export type PlayerMedia = {
 };
 
 /**
- * Build a player-name → media map from the ESPN summary's rosters
- * block, which is populated pre-game (unlike the boxscore, which only
- * fills once the game is live). Used by the slate route to attach
- * headshots + team chips to every prop so the picks card doesn't look
- * like a barebones list.
+ * Build a player-name → media map for picks UI enrichment. Tries
+ * multiple sources because ESPN's summary endpoint is unreliable for
+ * upcoming games:
  *
- * Keyed by both the displayName and the lone last name so a market
- * title that says "Mahomes" still resolves the headshot of "Patrick
- * Mahomes".
+ *   1) Summary's `rosters` block (works for some games)
+ *   2) Per-team `/teams/{teamId}/roster` endpoint — much more
+ *      reliable, returns full athlete records with headshot URLs.
+ *      Team IDs are extracted from the team logo URL pattern
+ *      (`a.espncdn.com/i/teamlogos/{sport}/500/{teamId}.png`).
+ *
+ * Keys are stored under multiple variants (full name, last name,
+ * shortName) so a market title like "Mahomes" still resolves the
+ * headshot of "Patrick Mahomes".
  */
 export async function fetchPlayerMediaMap(
   gameId: string,
   sport: SportLeague,
-  fetcher: Fetcher = fetch
+  options: { homeLogoUrl?: string; awayLogoUrl?: string; fetcher?: Fetcher } = {}
 ): Promise<Map<string, PlayerMedia>> {
-  const summary = await fetchSummary(gameId, sport, fetcher);
+  const fetcher = options.fetcher ?? fetch;
   const map = new Map<string, PlayerMedia>();
-  if (!summary?.rosters) return map;
-  for (const teamRoster of summary.rosters) {
-    const teamAbbr = teamRoster.team?.abbreviation;
-    const teamColor = teamRoster.team?.color;
-    const teamLogo = teamRoster.team?.logo;
-    for (const entry of teamRoster.roster ?? []) {
-      const athlete = entry.athlete;
-      if (!athlete?.displayName) continue;
-      const media: PlayerMedia = {
-        headshot: athlete.headshot?.href,
-        teamAbbr,
-        teamColor,
-        teamLogo,
-        position: athlete.position?.abbreviation
-      };
-      const display = athlete.displayName.toLowerCase().trim();
-      map.set(display, media);
-      const last = display.split(/\s+/).pop();
-      if (last && last !== display) {
-        // Only set last-name → media if no other player on the
-        // roster shares the same last name (avoid Mahomes / J. Mahomes
-        // collisions, even though that's rare in pro sports).
-        if (!map.has(last)) map.set(last, media);
-      }
-      if (athlete.shortName) {
-        map.set(athlete.shortName.toLowerCase().trim(), media);
-      }
+
+  // Source 1 — summary rosters (sometimes empty).
+  const summary = await fetchSummary(gameId, sport, fetcher);
+  for (const teamRoster of summary?.rosters ?? []) {
+    addRosterToMap(map, teamRoster.roster ?? [], {
+      teamAbbr: teamRoster.team?.abbreviation,
+      teamColor: teamRoster.team?.color,
+      teamLogo: teamRoster.team?.logo
+    });
+  }
+
+  // Source 2 — team roster endpoint (much more reliable). Fan out
+  // home + away in parallel; if Source 1 already covered them we
+  // skip silently when the same name is re-added.
+  const teamIds: Array<{ id: string; logoUrl: string }> = [];
+  if (options.homeLogoUrl) {
+    const id = extractTeamIdFromLogoUrl(options.homeLogoUrl);
+    if (id) teamIds.push({ id, logoUrl: options.homeLogoUrl });
+  }
+  if (options.awayLogoUrl) {
+    const id = extractTeamIdFromLogoUrl(options.awayLogoUrl);
+    if (id) teamIds.push({ id, logoUrl: options.awayLogoUrl });
+  }
+  if (teamIds.length > 0) {
+    const sportPath = ESPN_SPORTS.find((entry) => entry.sport === sport)?.path;
+    if (sportPath) {
+      await Promise.all(
+        teamIds.map(async ({ id, logoUrl }) => {
+          try {
+            const teamRoster = await fetchTeamRoster(sportPath, id, fetcher);
+            if (!teamRoster) return;
+            addRosterToMap(map, teamRoster.athletes ?? [], {
+              teamAbbr: teamRoster.team?.abbreviation,
+              teamColor: teamRoster.team?.color,
+              teamLogo: logoUrl
+            });
+          } catch {
+            // Best-effort — one team's failure doesn't poison the slate.
+          }
+        })
+      );
     }
   }
+
   return map;
+}
+
+type EspnTeamRoster = {
+  team?: { abbreviation?: string; color?: string };
+  athletes?: Array<{
+    id?: string | number;
+    displayName?: string;
+    fullName?: string;
+    shortName?: string;
+    headshot?: { href?: string };
+    position?: { abbreviation?: string };
+  }>;
+};
+
+const TEAM_ROSTER_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const teamRosterCache = new Map<string, { value: EspnTeamRoster; expiresAt: number }>();
+const teamRosterInflight = new Map<string, Promise<EspnTeamRoster | undefined>>();
+
+async function fetchTeamRoster(
+  sportPath: string,
+  teamId: string,
+  fetcher: Fetcher
+): Promise<EspnTeamRoster | undefined> {
+  const cacheKey = `${sportPath}:${teamId}`;
+  const cached = teamRosterCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const inflight = teamRosterInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const url = `https://site.api.espn.com/apis/site/v2/sports/${sportPath}/teams/${encodeURIComponent(teamId)}/roster`;
+  const job = (async () => {
+    try {
+      const response = await fetcher(url, { headers: { accept: "application/json" } });
+      if (!response.ok) return undefined;
+      const value = (await response.json()) as EspnTeamRoster;
+      teamRosterCache.set(cacheKey, { value, expiresAt: Date.now() + TEAM_ROSTER_TTL_MS });
+      return value;
+    } catch {
+      return undefined;
+    } finally {
+      teamRosterInflight.delete(cacheKey);
+    }
+  })();
+  teamRosterInflight.set(cacheKey, job);
+  return job;
+}
+
+/**
+ * ESPN team logos live at:
+ *   https://a.espncdn.com/i/teamlogos/{sport}/500/{teamId}.png
+ * The teamId is the basename minus the extension (e.g. "12.png" → 12).
+ * We parse it out here so callers can hand us the existing team meta
+ * without an extra ID lookup.
+ */
+function extractTeamIdFromLogoUrl(url: string): string | undefined {
+  if (!url) return undefined;
+  const match = /\/teamlogos\/[^/]+\/(?:500|scoreboard|primary_logo)\/([^/.]+)\.(?:png|svg|jpg)/i.exec(url);
+  return match?.[1];
+}
+
+type AthleteEntry = {
+  athlete?: {
+    displayName?: string;
+    fullName?: string;
+    shortName?: string;
+    headshot?: { href?: string };
+    position?: { abbreviation?: string };
+  };
+  // Some endpoints inline athlete fields directly on the entry.
+  displayName?: string;
+  fullName?: string;
+  shortName?: string;
+  headshot?: { href?: string };
+  position?: { abbreviation?: string };
+};
+
+function addRosterToMap(
+  map: Map<string, PlayerMedia>,
+  entries: AthleteEntry[],
+  team: { teamAbbr?: string; teamColor?: string; teamLogo?: string }
+): void {
+  for (const entry of entries) {
+    const a = entry.athlete ?? entry;
+    const display = a.displayName ?? a.fullName;
+    if (!display) continue;
+    const media: PlayerMedia = {
+      headshot: a.headshot?.href,
+      teamAbbr: team.teamAbbr,
+      teamColor: team.teamColor,
+      teamLogo: team.teamLogo,
+      position: a.position?.abbreviation
+    };
+    const lower = display.toLowerCase().trim();
+    // Only overwrite if we have a better record (i.e. headshot present
+    // and the existing one didn't have it).
+    const existing = map.get(lower);
+    if (!existing || (!existing.headshot && media.headshot)) {
+      map.set(lower, media);
+    }
+    const last = lower.split(/\s+/).pop();
+    if (last && last !== lower && !map.has(last)) map.set(last, media);
+    if (a.shortName) {
+      const short = a.shortName.toLowerCase().trim();
+      if (!map.has(short)) map.set(short, media);
+    }
+  }
 }

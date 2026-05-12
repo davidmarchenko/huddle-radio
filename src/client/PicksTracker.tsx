@@ -65,14 +65,8 @@ export function PicksTracker({ entry, listenerId, active = true }: PicksTrackerP
         {entry.lockedProps.map((prop) => {
           const pick = status?.picks.find((p) => p.propId === prop.id);
           const side = entry.selections.find((s) => s.propId === prop.id)?.side ?? "more";
-          const accent = prop.playerTeamColor ? `#${prop.playerTeamColor}` : undefined;
           return (
-            <li
-              key={prop.id}
-              className="picks-tracker-row"
-              data-status={pick?.status ?? "pending"}
-              style={accent ? ({ "--pick-accent": accent } as React.CSSProperties) : undefined}
-            >
+            <li key={prop.id} className="picks-tracker-row" data-status={pick?.status ?? "pending"}>
               <div className="picks-tracker-row-label">
                 <PlayerAvatar prop={prop} size="sm" />
                 <div className="picks-tracker-row-text">
