@@ -17458,9 +17458,9 @@ body {
               inset 0 1px 0 rgba(255, 255, 255, 0.25);
   transform: translateY(-1px);
 }
-.picks-side-btn.active .picks-side-label {
-  font-size: var(--hr-text-xs);
-}
+/* Active styling stays paint-only — color, gradient, shadow, opacity.
+   Avoid font-size / letter-spacing changes here, they reflow the
+   button and push siblings around when the user picks. */
 .picks-side-btn.active .picks-side-label::before {
   opacity: 0.9;
 }
@@ -17491,10 +17491,13 @@ body {
   border-top: 1px solid var(--hr-line-soft);
 }
 
+/* Reserve room for the larger populated state ($10 → $30 3×) so the
+   footer doesn't grow when the user crosses the 2-pick threshold. */
 .picks-payout-preview {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-height: calc(var(--hr-text-md) * 1.4);
   font-family: var(--hr-font-mono);
   font-size: var(--hr-text-sm);
 }
