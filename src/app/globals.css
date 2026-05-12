@@ -9412,7 +9412,13 @@ body:has(.huddle-app)::after,
   .huddle-app *,
   .profile-modal-backdrop,
   .profile-modal,
-  .profile-modal * {
+  .profile-modal *,
+  /* Hover-preview popovers portal to document.body, so they're NOT
+     descendants of .huddle-app and would otherwise miss the squircle
+     treatment. Listed explicitly here so the link / market preview
+     cards match the rest of the app's continuous-corner aesthetic. */
+  .hover-popover-card,
+  .hover-popover-card * {
     corner-shape: squircle;
     -webkit-corner-shape: squircle;
   }
