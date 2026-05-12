@@ -3998,7 +3998,7 @@ function HuddleDiscover({
         if (failedKey === "" || failedKey === setup.dismissedFailedSportsKey) return null;
         return (
           <article className="notice is-warn" role="status" aria-live="polite">
-            <span className="icon icon-warning" aria-hidden="true" />
+            <span className="icon icon-alert" aria-hidden="true" />
             <div>
               <strong>
                 {setup.failedSports.length === 1
@@ -4213,7 +4213,7 @@ function GameCard({
         <span className="game-card-detail">{metaLine}</span>
         {spotlight?.topStarter && (
           <span className="game-card-spotlight">
-            <span className="icon icon-user-filled" aria-hidden="true" />
+            <span className="icon icon-user" aria-hidden="true" />
             {spotlight.topStarter.position} {spotlight.topStarter.name} · {spotlight.topStarter.projectedPoints.toFixed(1)} proj
           </span>
         )}
@@ -4455,7 +4455,7 @@ function ListenerStakesCard({ stakes }: { stakes: NonNullable<ReturnType<typeof 
   const marginTone = stakes.margin > 0.05 ? "lead" : stakes.margin < -0.05 ? "trail" : "even";
   return (
     <article className={`huddle-card listener-stakes-card stakes-${marginTone}`}>
-      <span className="eyebrow"><span className="icon icon-user-filled" aria-hidden="true" />Your show, {stakes.listenerName}</span>
+      <span className="eyebrow"><span className="icon icon-user" aria-hidden="true" />Your show, {stakes.listenerName}</span>
       <header className="listener-stakes-header">
         <strong>{stakes.teamName ?? "Your roster"}</strong>
         {stakes.opponent && (
@@ -5051,7 +5051,7 @@ function HuddleRecap({
       </section>
       <div className="button-row">
         <button className="primary" onClick={onStart}><span className="icon icon-broadcast" aria-hidden="true" />Go live again</button>
-        <button className="secondary" onClick={onExportRecap}><span className="icon icon-export" aria-hidden="true" />Export transcript</button>
+        <button className="secondary" onClick={onExportRecap}><span className="icon icon-share" aria-hidden="true" />Export transcript</button>
       </div>
     </section>
   );
@@ -5252,7 +5252,7 @@ function OddsCard({ odds }: { odds: GameOdds }) {
   const awayMl = odds.moneyline?.away != null ? formatMoneyline(odds.moneyline.away) : undefined;
   return (
     <article className="huddle-card odds-card">
-      <span className="eyebrow"><span className="icon icon-chart" aria-hidden="true" />Vegas line</span>
+      <span className="eyebrow"><span className="icon icon-graph-bar" aria-hidden="true" />Vegas line</span>
       <ul className="odds-card-list">
         {spread && <li><strong>Spread</strong><span>{spread}</span></li>}
         {total && <li><strong>Total</strong><span>{total}</span></li>}
@@ -5320,7 +5320,7 @@ function MarketsBoardCard({ game }: { game?: SportsGameState }) {
   return (
     <article className="huddle-card markets-board-card">
       <span className="eyebrow">
-        <span className="icon icon-chart" aria-hidden="true" />
+        <span className="icon icon-graph-bar" aria-hidden="true" />
         What the markets say
       </span>
       <ul className="markets-board-list">
