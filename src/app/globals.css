@@ -214,13 +214,30 @@ body,
   z-index: 100;
   width: 340px;
   max-width: calc(100vw - 24px);
-  background: var(--hr-surface-strong);
-  border: 1px solid var(--hr-line);
+  /* Frosted glass: heavy backdrop blur + a near-opaque dark fill so
+     anything behind gets blurred but nothing distracting bleeds
+     through. The 0.92 alpha keeps a hint of depth without reading as
+     "see-through"; the saturate(140%) brightens the colors behind so
+     the blur feels intentional rather than washed out. */
+  background: color-mix(in srgb, var(--hr-bg-1) 92%, transparent);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--hr-text) 12%, transparent);
   border-radius: var(--hr-radius-md);
   overflow: hidden;
-  box-shadow: 0 18px 48px #02040cb3, 0 2px 8px #00000080;
+  box-shadow: 0 18px 48px #02040ce6, 0 2px 8px #000000a6;
   transform-origin: top left;
   animation: link-preview-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Browsers without backdrop-filter support get a fully opaque fill so
+   the card never reads as transparent (Firefox legacy paths, some
+   embedded WebViews). Drops to a flat solid background instead of
+   missing the blur entirely. */
+@supports not (backdrop-filter: blur(1px)) {
+  .link-preview-card {
+    background: var(--hr-bg-1);
+  }
 }
 
 .link-preview-card[data-placement="top"] {
