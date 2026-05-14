@@ -141,8 +141,24 @@ export function deriveHuddlePhase(input: {
   hasVideoSource: boolean;
   commentaryCount: number;
   gameStatus?: SportsGameState["status"];
+  /** When the listener has paused mid-show, keep the live-audio phase
+   *  even if the SSE session timed out — they expect to resume into
+   *  the same view, not get dumped into recap. */
+  isPaused?: boolean;
+  /** When the page boots on a /watch/{gameId} URL we hold the
+   *  live-audio phase across the brief window between bootstrap and
+   *  the user gesture that wakes the audio context. Without this
+   *  flag, phase=empty fires showHome and the listener lands back on
+   *  discover after a refresh. */
+  awaitingResume?: boolean;
 }): HuddlePhase {
   if (input.isLive) return input.hasVideoSource ? "live" : "live-audio";
+  if (input.isPaused && input.commentaryCount > 0) {
+    return input.hasVideoSource ? "live" : "live-audio";
+  }
+  if (input.awaitingResume) {
+    return input.hasVideoSource ? "live" : "live-audio";
+  }
   if (!input.showPrepared && input.commentaryCount === 0) return "empty";
   if (input.commentaryCount > 0 || input.gameStatus === "final") return "recap";
   if (input.showPrepared) return "pregame";

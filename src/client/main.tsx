@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { AnimatePresence, motion, MotionConfig } from "motion/react";
 import type {
   ActiveProviderSummary,
   ClientServerEvent,
@@ -17,6 +18,7 @@ import type {
   ListenerCue,
   LivecastCommentary,
   MarketSnapshot,
+  MentionCue,
   NewsItem,
   ProviderDiagnostics,
   ProviderHealth,
@@ -26,7 +28,8 @@ import type {
   SportsPlay,
   StreamValidation,
   VideoFrameSnapshot,
-  VideoMode
+  VideoMode,
+  WordTiming
 } from "../shared/contracts";
 import {
   createMediaLookupIndex,
@@ -47,8 +50,10 @@ import { pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "../shared/m
 import { startMicRecording, type MicRecording } from "./audioCapture";
 import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
+import { clearLivecastSnapshot, loadLivecastSnapshot, saveLivecastSnapshot } from "./livecastSnapshot";
 import { DebugPanel } from "./DebugPanel";
 import { LinkPreview } from "./LinkPreview";
+import { FloatingMentionChips, LiveTranscriptPanel, PlayerBarCaptions } from "./LiveTranscriptPanel";
 import { MarketPreview } from "./MarketPreview";
 import { PicksCard } from "./PicksCard";
 import { PicksTracker } from "./PicksTracker";
@@ -132,6 +137,7 @@ const defaultProviderSummary: ActiveProviderSummary = {
   fantasy: "Demo Fantasy",
   sportsData: "Demo Sports Data",
   news: "Demo News",
+  enrichment: "(none)",
   video: "User Video Source",
   model: "Mock Multimodal Model",
   commentary: "Local Commentary",
@@ -140,6 +146,18 @@ const defaultProviderSummary: ActiveProviderSummary = {
 
 const persisted = loadPersistedSettings();
 const listenerId = getOrCreateListenerId();
+// Spotify/YouTube pattern: persist player state so a refresh restores
+// the exact transcript + captions + paused position the listener was
+// looking at, BEFORE any backend talks back. Read here at module
+// scope so every useState lazy initializer below can seed from the
+// same snapshot in a single pass.
+const initialLivecastSnapshot = (() => {
+  if (typeof window === "undefined") return undefined;
+  const match = window.location.pathname.match(/^\/watch\/(.+)$/);
+  if (!match) return undefined;
+  const gameId = decodeURIComponent(match[1]);
+  return loadLivecastSnapshot(gameId);
+})();
 
 function App() {
   const [providerMode, setProviderMode] = useState<"demo" | "sleeper" | "espn">(persisted.providerMode ?? "demo");
@@ -148,7 +166,36 @@ function App() {
   // still flip to "Demo" via the chip toggle for scripted predictable
   // playback during testing.
   const [sportsDataMode, setSportsDataMode] = useState<"demo" | "espn">(persisted.sportsDataMode ?? "espn");
-  const [sportsGameId, setSportsGameId] = useState(persisted.sportsGameId ?? "");
+  // URL takes precedence over localStorage on initial load. If we
+  // arrived via /watch/{gameId} (or a refresh of a watch URL), use
+  // that gameId so the auto-resume effect below picks the right
+  // game even if the listener last played a different one.
+  const [sportsGameId, setSportsGameId] = useState(() => {
+    const path = window.location.pathname;
+    const match = path.match(/^\/watch\/(.+)$/);
+    if (match) return decodeURIComponent(match[1]);
+    return persisted.sportsGameId ?? "";
+  });
+  // One-shot guard so the auto-resume effect doesn't keep
+  // restarting the show as state changes. When a snapshot is
+  // restored we set this true on mount so the global "click anywhere
+  // to resume" listener never arms — the user explicitly hits Play
+  // from the player bar instead, which we already route through
+  // startLivecast with `preserveTranscript: true`.
+  const autoResumeAttemptedRef = useRef(Boolean(initialLivecastSnapshot));
+  // True while the auto-resume listener is armed (page bootstrapped on
+  // /watch/, audio context locked behind a user gesture). Drives the
+  // phase derivation so we stay in the live-audio view instead of
+  // dumping the listener back to discover. Initialised from the URL
+  // so the first paint after a refresh never flashes the home view.
+  const [awaitingResume, setAwaitingResume] = useState(() => {
+    // When a snapshot is restored, isPaused+commentary already pin the
+    // phase to live-audio. Setting awaitingResume=false avoids the
+    // "Tap anywhere to resume" status overriding the more accurate
+    // "Paused — tap play to resume" message the player bar shows.
+    if (initialLivecastSnapshot) return false;
+    return window.location.pathname.startsWith("/watch/");
+  });
   const [sleeperLeagueId, setSleeperLeagueId] = useState(persisted.sleeperLeagueId ?? "");
   const [espnLeagueId, setEspnLeagueId] = useState(persisted.espnLeagueId ?? "");
   const [espnSeason, setEspnSeason] = useState(persisted.espnSeason ?? new Date().getFullYear());
@@ -228,8 +275,37 @@ function App() {
   // the same opaque per-device id the rest of the app uses.
   const [pickEntry, setPickEntry] = useState<PickEntry | undefined>(undefined);
   const [plays, setPlays] = useState<SportsPlay[]>([]);
-  const [commentary, setCommentary] = useState<LivecastCommentary[]>([]);
+  const [commentary, setCommentary] = useState<LivecastCommentary[]>(
+    () => initialLivecastSnapshot?.commentary ?? []
+  );
   const [ttsLatencyByCommentary, setTtsLatencyByCommentary] = useState<Record<string, number>>({});
+  // Per-line audio metadata (wordTimings + mentionCues) accumulated from
+  // TTS chunks. Keyed by `${commentaryId}:${lineIndex}` so the live
+  // transcript panel can pull timings for any rendered turn — past
+  // turns render as static text, the active turn gets karaoke
+  // highlighting + mention chips.
+  const [lineTimings, setLineTimings] = useState<
+    Map<string, { wordTimings?: WordTiming[]; mentionCues?: MentionCue[] }>
+  >(() => new Map(initialLivecastSnapshot?.lineTimings ?? []));
+  // Currently-playing chunk identity + elapsed time inside it. RAF
+  // loop below polls the audio element's currentTime and updates
+  // `elapsedMs`. The live transcript reads (commentaryId, lineIndex,
+  // elapsedMs) to drive word-by-word highlighting.
+  const [activePlayback, setActivePlayback] = useState<{
+    commentaryId: string;
+    lineIndex: number;
+    elapsedMs: number;
+  } | null>(null);
+  // Lines that have actually started playing — keyed by
+  // `${commentaryId}:${lineIndex}`. The TTS chunk for a line may
+  // arrive at the client long before its audio plays (chunks queue
+  // serially behind earlier lines), so just having the chunk doesn't
+  // mean the listener has HEARD it yet. The live transcript only
+  // renders lines that have entered this set, so the user never sees
+  // a line they haven't been audibly served.
+  const [playedLineKeys, setPlayedLineKeys] = useState<Set<string>>(
+    () => new Set(initialLivecastSnapshot?.playedLineKeys ?? [])
+  );
   // ElevenLabs Text-to-Dialogue returns ONE seamless MP3 per turn-set —
   // we don't get per-turn timing on the way out, so progressive reveal
   // would just be guessing. The caption is the full joined transcript;
@@ -270,6 +346,45 @@ function App() {
   const [viewingHome, setViewingHome] = useState(() => !window.location.pathname.startsWith("/watch"));
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioLevels, setAudioLevels] = useState(WAVEFORM_BARS);
+  // Listener-paused state. When true, the currently-playing chunk is
+  // paused (HTMLAudioElement.pause) and new chunks coming off the
+  // queue wait at the gate inside playBase64Audio until the user
+  // resumes. SSE keeps streaming so the show stays live server-side
+  // and we catch up when resumed. Mirrored in a ref so the
+  // playBase64Audio polling loop reads the current value without
+  // re-rendering on every read.
+  // On refresh, always re-open as paused when a snapshot was restored.
+  // Reasons: (a) the audio element + chunks are gone, so any
+  // `isPaused=false` initial state would lie about what's playing,
+  // (b) the AudioContext is locked behind a user gesture anyway, and
+  // (c) Spotify/YouTube show paused on reload regardless of prior
+  // play state — the listener taps Resume to come back. This also
+  // keeps `deriveHuddlePhase`'s `isPaused && commentary>0` rule
+  // active, so a refresh-while-playing lands in live-audio, not
+  // recap.
+  const [isPaused, setIsPaused] = useState(() => Boolean(initialLivecastSnapshot));
+  const isPausedRef = useRef(Boolean(initialLivecastSnapshot));
+  useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+  // Listener volume (0..1). Persisted across reloads so the listener's
+  // last setting sticks. Applied to every new audio element in
+  // playBase64Audio and live to the current element via a ref-driven
+  // effect below.
+  const [volume, setVolumeState] = useState<number>(() => {
+    try {
+      const stored = window.localStorage.getItem("huddle.volume");
+      if (stored !== null) return clampVolume(parseFloat(stored));
+    } catch { /* no-storage env */ }
+    return 1;
+  });
+  const volumeRef = useRef(volume);
+  useEffect(() => {
+    volumeRef.current = volume;
+    if (currentAudioRef.current) {
+      try { currentAudioRef.current.volume = volume; } catch { /* ignore */ }
+    }
+    try { window.localStorage.setItem("huddle.volume", String(volume)); } catch { /* no-storage env */ }
+  }, [volume]);
+  const setVolume = useCallback((next: number) => setVolumeState(clampVolume(next)), []);
   const [formError, setFormError] = useState("");
   const [screenStream, setScreenStream] = useState<MediaStream>();
   const liveSessionRef = useRef<import("./liveSession").LiveSessionHandle | null>(null);
@@ -310,6 +425,35 @@ function App() {
     });
   }, []);
 
+  // RAF loop that polls the currently-playing audio element's
+  // `currentTime` and updates `activePlayback.elapsedMs`. Drives the
+  // live transcript's word-by-word highlighting and mention chip
+  // firing. Only runs while there's an active playback; stops itself
+  // when activePlayback is null so we don't burn frames at idle.
+  useEffect(() => {
+    if (!activePlayback) return;
+    let frame: number | undefined;
+    const tick = () => {
+      const audio = currentAudioRef.current;
+      if (audio) {
+        const elapsedMs = Math.max(0, Math.round(audio.currentTime * 1000));
+        setActivePlayback((current) => {
+          if (!current) return current;
+          // Avoid re-renders when the value hasn't materially moved
+          // (RAF fires faster than the listener perceives word-level
+          // change). 16ms is roughly one frame at 60fps.
+          if (Math.abs(elapsedMs - current.elapsedMs) < 16) return current;
+          return { ...current, elapsedMs };
+        });
+      }
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, [activePlayback?.commentaryId, activePlayback?.lineIndex]);
+
   useEffect(() => {
     const params = new URLSearchParams({
       providerMode,
@@ -322,7 +466,19 @@ function App() {
       .then((response) => response.json())
       .then((payload) => {
         if (payload.fantasy) setFantasy(payload.fantasy);
-        if (payload.game) setGame(withSportPrefixedGameId(payload.game));
+        if (payload.game) {
+          setGame(withSportPrefixedGameId(payload.game));
+          // Server-side providers (ESPN / sportradar / sportsdataio)
+          // already track the last ~8 plays per game in their
+          // `recentPlays` field. Hydrate the play-by-play feed from
+          // that on entry so the listener doesn't see an empty
+          // panel staring at them while waiting for the next live
+          // tick. Newest-first to match the SSE play-message
+          // shape later.
+          if (Array.isArray(payload.game.recentPlays) && payload.game.recentPlays.length > 0) {
+            setPlays([...payload.game.recentPlays].reverse().slice(0, 8));
+          }
+        }
         if (!persisted.group && payload.group?.friends) setGroup(payload.group);
         setHealth(Array.isArray(payload.health) ? payload.health : []);
         setProviders(payload.providers ?? defaultProviderSummary);
@@ -335,6 +491,29 @@ function App() {
     void refreshDiagnostics();
     void refreshModelStack();
   }, []);
+
+  // When we land on a /watch/{gameId} URL with the matching game
+  // already loaded, hold the page in the live-audio phase so the
+  // listener sees their player bar and any restored transcript —
+  // they tap the Play button explicitly to start audio.
+  //
+  // We DON'T arm a global click/keydown listener anymore: a global
+  // listener fires on the same click that brought them into the
+  // view (clicking a game card on discover counts) and on any
+  // incidental click in the live-audio surface, both of which
+  // surprise-start the show. Spotify/YouTube require an explicit
+  // play action; this matches that.
+  useEffect(() => {
+    if (autoResumeAttemptedRef.current) return;
+    if (livecastActive) return;
+    const onWatchRoute = window.location.pathname.startsWith("/watch/");
+    if (!onWatchRoute) return;
+    if (!sportsGameId || !game) return;
+    if (game.gameId !== sportsGameId) return;
+    autoResumeAttemptedRef.current = true;
+    setAwaitingResume(true);
+    setStatus("Tap play to start the show.");
+  }, [game, sportsGameId, livecastActive]);
 
   useEffect(() => {
     savePersistedSettings({
@@ -359,6 +538,50 @@ function App() {
       pastShows
     });
   }, [providerMode, sportsDataMode, sportsGameId, sleeperLeagueId, espnLeagueId, espnSeason, week, cadenceSeconds, videoMode, videoUrl, ttsEnabled, ttsProviderOverride, speechRate, group, customLeagueJson, showAdvanced, profile, profileNudgeDismissed, pastShows]);
+
+  // Spotify/YouTube-style live-show snapshot: persist the transcript +
+  // captions + paused position so a refresh, accidental tab close, or
+  // OS-killed background tab restores the exact view the listener was
+  // on. Debounced 500ms so a flurry of word-timing updates doesn't
+  // hammer localStorage. Saving is a no-op when commentary is empty
+  // (see livecastSnapshot.ts) so we don't wipe a paused show's
+  // snapshot during the brief mid-startup gap before the next turn.
+  useEffect(() => {
+    if (!sportsGameId) return;
+    const handle = window.setTimeout(() => {
+      saveLivecastSnapshot({
+        sportsGameId,
+        commentary,
+        lineTimings,
+        playedLineKeys,
+        isPaused
+      });
+    }, 500);
+    return () => window.clearTimeout(handle);
+  }, [sportsGameId, commentary, lineTimings, playedLineKeys, isPaused]);
+
+  // Synchronous flush right before the tab disappears. The 500ms
+  // debounce above means we can lose the last few seconds of state
+  // to a sudden close (Cmd+W, swipe-away on mobile, OS reclaiming a
+  // backgrounded tab). `pagehide` is the modern, reliable hook for
+  // this — fires for both navigations and unloads, and works on
+  // mobile Safari where `beforeunload` is unreliable. JSON.stringify
+  // of ~50 turns is sub-millisecond; running it on the unload path
+  // is safe.
+  useEffect(() => {
+    const flush = () => {
+      if (!sportsGameId) return;
+      saveLivecastSnapshot({
+        sportsGameId,
+        commentary,
+        lineTimings,
+        playedLineKeys,
+        isPaused
+      });
+    };
+    window.addEventListener("pagehide", flush);
+    return () => window.removeEventListener("pagehide", flush);
+  }, [sportsGameId, commentary, lineTimings, playedLineKeys, isPaused]);
 
   useEffect(() => {
     void refreshSportsGames(sportsDataMode);
@@ -495,9 +718,11 @@ function App() {
         isLive,
         hasVideoSource: showHasStream(videoMode, hasVideoSource),
         commentaryCount: commentary.length,
-        gameStatus: game?.status
+        gameStatus: game?.status,
+        isPaused,
+        awaitingResume
       }),
-    [showPrepared, isLive, videoMode, hasVideoSource, commentary.length, game?.status]
+    [showPrepared, isLive, videoMode, hasVideoSource, commentary.length, game?.status, isPaused, awaitingResume]
   );
   useEffect(() => {
     document.querySelector(".huddle-main")?.scrollTo({ top: 0, behavior: "smooth" });
@@ -734,7 +959,25 @@ function App() {
     // hydration effect above for the rationale.
   }, [huddlePhase, commentary, game, group.listener?.name, listenerStakes, profile]);
 
-  const startLivecast = async (overrides?: { sportsGameId?: string; bypassReadiness?: boolean }) => {
+  const startLivecast = async (overrides?: {
+    sportsGameId?: string;
+    bypassReadiness?: boolean;
+    preserveTranscript?: boolean;
+    /** Reset the listener-paused flag. Defaults to true: an explicit
+     *  Start/Resume tap should always intend audio. Set false on
+     *  transparent reconnects (onSessionLost) — if the listener was
+     *  paused when the session dropped, the reconnect must keep them
+     *  paused, not silently start audio behind their back. */
+    clearPaused?: boolean;
+    /** Discovery-driven slate. When 2+ entries are passed, the
+     *  server engine ranks them against the listener's roster +
+     *  group settings, boots the show on the top entry, and
+     *  auto-pivots to the next when the current game ends. The
+     *  opener acknowledges the slate breadth instead of anchoring
+     *  on a single matchup. Wired to the home/discovery feed's
+     *  primary "Start tonight's show" CTA. */
+    slate?: SportsGameOption[];
+  }) => {
     const effectiveGameId = overrides?.sportsGameId ?? sportsGameId;
     const validation = validateLivecastStart({ providerMode, sleeperLeagueId, espnLeagueId, videoMode, videoUrl });
     if (validation) {
@@ -774,14 +1017,33 @@ function App() {
       frameTimerRef.current = undefined;
     }
     setLivecastActive(true);
+    setAwaitingResume(false);
     setAudioPlaying(false);
     setAudioLevels(WAVEFORM_BARS);
     setStatus("Connecting");
     setPlays([]);
-    setCommentary([]);
+    // Snapshot-restored resume keeps the transcript so the listener
+    // scrolls back into the same show they were reading. A normal
+    // start wipes prior state.
+    if (!overrides?.preserveTranscript) {
+      setCommentary([]);
+      setLineTimings(new Map());
+      setPlayedLineKeys(new Set());
+    }
+    // Unpause unless the caller explicitly asked us not to. Without
+    // this, a snapshot-restored show stays at isPaused=true after the
+    // Play tap; new chunks queue at the pause gate inside
+    // playBase64Audio and audio never starts. The ref is mirrored
+    // synchronously so the very first chunk that arrives doesn't read
+    // the stale value before React commits the state.
+    if (overrides?.clearPaused !== false) {
+      setIsPaused(false);
+      isPausedRef.current = false;
+    }
     setTtsLatencyByCommentary({});
     setPendingAudioCommentaryIds(new Set());
     setLastObservation(undefined);
+    setActivePlayback(null);
     setFrameCaptureStatus("Connecting frame capture");
 
     const effectiveGroup = applyProfileToGroup(group, profile, allLeagues, game?.sport);
@@ -838,7 +1100,12 @@ function App() {
         // Server engine pulls the listener's parlay status per tick
         // and feeds a hostHint into the commentary prompt so the hosts
         // can react to "you're 3-of-4, Mahomes needs 1 more TD."
-        picksListenerId: listenerId
+        picksListenerId: listenerId,
+        // Slate mode wins when 2+ entries are passed — server ranks
+        // them and boots on the top entry. The single-game
+        // sportsGameId above is ignored when slate is in play
+        // (documented on the request type).
+        slate: overrides?.slate && overrides.slate.length >= 2 ? overrides.slate : undefined
       },
       {
         onOpen: () => {
@@ -866,12 +1133,19 @@ function App() {
           // Function instance than the one we just hit. Engines can't
           // migrate, so the only recovery is a fresh start. Bypass
           // pregame readiness so the user doesn't have to re-validate
-          // setup that already passed once.
+          // setup that already passed once. Preserve the transcript —
+          // a transient server-side hop should not yank the listener's
+          // captions/history away mid-reconnect.
           if (livecastSessionRef.current !== sessionId) return;
           setStatus("Reconnecting");
           void startLivecast({
             sportsGameId: effectiveGameId || undefined,
-            bypassReadiness: true
+            bypassReadiness: true,
+            preserveTranscript: true,
+            // Reconnect is transparent — preserve the listener's pause
+            // state. Flipping pause here would silently resume audio
+            // for a paused listener mid-reconnect.
+            clearPaused: false
           });
         },
         onEvent: (message) => {
@@ -881,6 +1155,20 @@ function App() {
         setGame(withSportPrefixedGameId(message.game));
         setHealth(Array.isArray(message.health) ? message.health : []);
         setProviders(message.providers);
+        // Hydrate the play-by-play feed from the engine's existing
+        // `recentPlays` (set by the provider's most-recent fetch).
+        // Without this the panel sits empty until the NEXT tick
+        // produces a play message, even if the game already has
+        // history sitting on the server. Merge with whatever the
+        // bootstrap may have set — newest-first, dedup by id, cap 8.
+        if (Array.isArray(message.game.recentPlays) && message.game.recentPlays.length > 0) {
+          const incoming = [...message.game.recentPlays].reverse();
+          setPlays((current) => {
+            const seen = new Set(current.map((p) => p.id));
+            const fromSnapshot = incoming.filter((p) => !seen.has(p.id));
+            return [...current, ...fromSnapshot].slice(0, 8);
+          });
+        }
       }
       if (message.type === "play") {
         setGame(withSportPrefixedGameId(message.game));
@@ -897,7 +1185,14 @@ function App() {
       }
       if (message.type === "commentary") {
         setLastObservation(message.commentary.observation);
-        setCommentary((current) => [message.commentary, ...current].slice(0, 10));
+        // Cap matches the snapshot trim (livecastSnapshot.ts) so a
+        // restored show has the same backlog as a live one. The old
+        // cap of 10 caused the captions to vanish a minute or two
+        // into a pause: the server keeps generating turns at cadence
+        // and pushes the paused-on line off the array, which leaves
+        // PlayerBarCaptions with no match for `activePlayback` or
+        // `playedLineKeys` → returns null → bar collapses.
+        setCommentary((current) => [message.commentary, ...current].slice(0, 50));
         // Mark this commentary as audio-pending so the card shows a
         // "recording" indicator until the first TTS chunk lands.
         // T2D buffers the whole MP3 before delivery (~2-5s), and
@@ -931,6 +1226,22 @@ function App() {
       if (message.type === "tts") {
         setStatus(message.audio.provider === "mock-tts" ? "Live with browser voice" : "Live with ElevenLabs audio chunks");
         setTtsLatencyByCommentary((current) => ({ ...current, [message.audio.commentaryId]: message.audio.latencyMs }));
+        // Stash audio-synced metadata (word timings + entity cues) so
+        // the live transcript panel can drive karaoke highlighting and
+        // mention chips. Keyed by `${commentaryId}:${lineIndex}` so
+        // past turns stay rendered as static text and the active turn
+        // gets the synced treatment.
+        if (message.audio.lineIndex != null && (message.audio.wordTimings || message.audio.mentionCues)) {
+          const key = `${message.audio.commentaryId}:${message.audio.lineIndex}`;
+          setLineTimings((current) => {
+            const next = new Map(current);
+            next.set(key, {
+              wordTimings: message.audio.wordTimings,
+              mentionCues: message.audio.mentionCues
+            });
+            return next;
+          });
+        }
         // Audio has arrived — clear the "recording" indicator.
         setPendingAudioCommentaryIds((prev) => {
           if (!prev.has(message.audio.commentaryId)) return prev;
@@ -962,21 +1273,53 @@ function App() {
             const oldestKey = clipChunksRef.current.keys().next().value;
             if (oldestKey) clipChunksRef.current.delete(oldestKey);
           }
+          // Snapshot identifiers we need inside the audio callbacks so
+          // the live transcript panel can route to the right turn.
+          const chunkCommentaryId = message.audio.commentaryId;
+          const chunkLineIndex = message.audio.lineIndex;
           audioQueueRef.current = audioQueueRef.current.then(() => {
             if (livecastSessionRef.current !== sessionId) return;
             return playBase64Audio(message.audio.base64Audio!, message.audio.mimeType, {
               audioContext: audioContextRef.current ?? undefined,
               isCancelled: () => livecastSessionRef.current !== sessionId,
+              isPaused: () => isPausedRef.current,
+              getVolume: () => volumeRef.current,
               onAudioStart: (audio) => {
                 if (livecastSessionRef.current !== sessionId) return;
                 currentAudioRef.current = audio;
                 setAudioPlaying(true);
+                if (chunkLineIndex != null) {
+                  setActivePlayback({
+                    commentaryId: chunkCommentaryId,
+                    lineIndex: chunkLineIndex,
+                    elapsedMs: 0
+                  });
+                  // Mark this line as played so the transcript
+                  // panel can now render it. Future lines whose
+                  // chunks arrived but haven't started yet stay
+                  // hidden until their own onAudioStart fires.
+                  setPlayedLineKeys((prev) => {
+                    const key = `${chunkCommentaryId}:${chunkLineIndex}`;
+                    if (prev.has(key)) return prev;
+                    const next = new Set(prev);
+                    next.add(key);
+                    return next;
+                  });
+                }
                 duckAmbientBed();
               },
               onAudioEnd: (audio) => {
                 if (currentAudioRef.current === audio) currentAudioRef.current = null;
                 if (livecastSessionRef.current === sessionId) setAudioPlaying(false);
                 if (livecastSessionRef.current === sessionId) setAudioLevels(WAVEFORM_BARS);
+                // Clear the active line only if it's still us — a
+                // queued next-line onAudioStart may have already
+                // overwritten activePlayback by the time we land here.
+                setActivePlayback((current) =>
+                  current && current.commentaryId === chunkCommentaryId && current.lineIndex === chunkLineIndex
+                    ? null
+                    : current
+                );
                 unduckAmbientBed();
               },
               onAudioLevel: (levels) => {
@@ -1211,6 +1554,31 @@ function App() {
     };
   }, []);
 
+  // Toggle the listener-paused state. Unlike stopLivecast this keeps
+  // the SSE session alive and the audio queue intact — the currently
+  // playing chunk is paused (HTMLAudioElement.pause) and new chunks
+  // wait at the gate in playBase64Audio. Resume just plays the same
+  // element back; the queue chain naturally drains in order from
+  // there. The view stays in `live-audio` phase the whole time.
+  const togglePause = () => {
+    const audio = currentAudioRef.current;
+    setIsPaused((prev) => {
+      const next = !prev;
+      isPausedRef.current = next;
+      if (audio) {
+        if (next) {
+          try { audio.pause(); } catch { /* ignore */ }
+        } else {
+          try {
+            audio.volume = volumeRef.current;
+            void audio.play().catch(() => undefined);
+          } catch { /* ignore */ }
+        }
+      }
+      return next;
+    });
+  };
+
   const stopLivecast = () => {
     livecastSessionRef.current += 1;
     const handle = liveSessionRef.current;
@@ -1243,6 +1611,22 @@ function App() {
     setTtsLatencyByCommentary({});
     setPendingAudioCommentaryIds(new Set());
     setLastObservation(undefined);
+    setLineTimings(new Map());
+    setActivePlayback(null);
+    setPlayedLineKeys(new Set());
+    // Clear paused state so the next show starts unpaused. Without
+    // this a "pause then stop then start" sequence would resume the
+    // new show paused, surprising the listener.
+    setIsPaused(false);
+    isPausedRef.current = false;
+    // Defuse the auto-resume listener so an explicit stop doesn't keep
+    // the view stuck in live-audio waiting for a tap.
+    setAwaitingResume(false);
+    autoResumeAttemptedRef.current = true;
+    // Stop = explicit teardown. Wipe the snapshot so a future visit to
+    // the same /watch/ URL boots fresh instead of resurrecting a show
+    // the listener just chose to end.
+    clearLivecastSnapshot();
     setFrameCaptureStatus("Livecast stopped.");
     setStatus("Stopped");
     setViewingHome(true);
@@ -1250,6 +1634,65 @@ function App() {
       window.history.pushState({ view: "home" }, "", "/");
     }
   };
+
+  // OS-level media controls (lock screen play/pause, AirPods button,
+  // keyboard media keys, Android notification controls). This is the
+  // glue that makes the app feel like Spotify/YouTube rather than a
+  // tab you have to alt-tab back to in order to pause. Browsers only
+  // surface these controls when an HTMLAudioElement has actually
+  // played, so wiring them when livecastActive flips on is the right
+  // moment — any earlier and the OS just ignores the metadata.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const session = navigator.mediaSession;
+    if (!livecastActive && commentary.length === 0) {
+      // Nothing to advertise — clear any stale metadata so the lock
+      // screen doesn't show a ghost entry from a stopped show.
+      try { session.metadata = null; } catch { /* older browsers throw on null */ }
+      try { session.playbackState = "none"; } catch { /* ignore */ }
+      return;
+    }
+    const title = game ? `${game.awayTeam} vs ${game.homeTeam}` : "Huddle Radio";
+    try {
+      session.metadata = new MediaMetadata({
+        title,
+        artist: "Huddle Radio",
+        album: "Live commentary",
+        artwork: [
+          { src: "/huddle/live-player-art.png", sizes: "512x512", type: "image/png" }
+        ]
+      });
+      session.playbackState = isPaused ? "paused" : (livecastActive ? "playing" : "paused");
+    } catch {
+      // Older Safari throws on MediaMetadata construction with some
+      // artwork shapes — failing here just means the OS controls show
+      // a generic title instead of our metadata.
+    }
+    const handlePlay = () => {
+      if (livecastActive) {
+        if (isPaused) togglePause();
+      } else {
+        void startLivecast({ bypassReadiness: true, preserveTranscript: commentary.length > 0 });
+      }
+    };
+    const handlePause = () => {
+      if (livecastActive && !isPaused) togglePause();
+    };
+    const handleStop = () => stopLivecast();
+    try { session.setActionHandler("play", handlePlay); } catch { /* ignore */ }
+    try { session.setActionHandler("pause", handlePause); } catch { /* ignore */ }
+    try { session.setActionHandler("stop", handleStop); } catch { /* ignore */ }
+    return () => {
+      try { session.setActionHandler("play", null); } catch { /* ignore */ }
+      try { session.setActionHandler("pause", null); } catch { /* ignore */ }
+      try { session.setActionHandler("stop", null); } catch { /* ignore */ }
+    };
+    // togglePause / startLivecast / stopLivecast are stable enough —
+    // they read state via refs and React-stable setters. The deps we
+    // DO care about are the ones that change the metadata/handler
+    // routing logic.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livecastActive, isPaused, game?.gameId, game?.awayTeam, game?.homeTeam, commentary.length]);
 
   const prepareDemoRehearsal = () => {
     stopLivecast();
@@ -1286,6 +1729,9 @@ function App() {
     setCommentary([]);
     setTtsLatencyByCommentary({});
     setPendingAudioCommentaryIds(new Set());
+    setLineTimings(new Map());
+    setActivePlayback(null);
+    setPlayedLineKeys(new Set());
     void refreshSportsGames("demo");
     void refreshDiagnostics("demo");
   };
@@ -1558,6 +2004,9 @@ function App() {
     setPlays([]);
     setTtsLatencyByCommentary({});
     setPendingAudioCommentaryIds(new Set());
+    setLineTimings(new Map());
+    setActivePlayback(null);
+    setPlayedLineKeys(new Set());
   };
 
   const openSetup = (pane: SetupPane = setupPane) => {
@@ -1792,6 +2241,9 @@ function App() {
         recapSummary={recapSummary}
         plays={plays}
         commentary={commentary}
+        lineTimings={lineTimings}
+        activePlayback={activePlayback}
+        playedLineKeys={playedLineKeys}
         matchupTotals={matchupTotals}
         mediaIndex={mediaIndex}
         youtubeEmbedUrl={youtubeEmbedUrl}
@@ -1806,6 +2258,10 @@ function App() {
         onPrepareDemo={prepareDemoRehearsal}
         onStart={startLivecast}
         onStop={stopLivecast}
+        onTogglePause={togglePause}
+        isPaused={isPaused}
+        volume={volume}
+        onVolumeChange={setVolume}
         onOpenSettings={() => openSetup("league")}
         onOpenStream={() => openSetup("stream")}
         onOpenFriends={() => openSetup("friends")}
@@ -2685,6 +3141,9 @@ function HuddleExperience({
   recapSummary,
   plays,
   commentary,
+  lineTimings,
+  activePlayback,
+  playedLineKeys,
   matchupTotals,
   mediaIndex,
   youtubeEmbedUrl,
@@ -2697,6 +3156,10 @@ function HuddleExperience({
   onPrepareDemo,
   onStart,
   onStop,
+  onTogglePause,
+  isPaused,
+  volume,
+  onVolumeChange,
   onOpenSettings,
   onOpenStream,
   onOpenFriends,
@@ -2753,6 +3216,9 @@ function HuddleExperience({
   recapSummary: ReturnType<typeof buildRecapSummary>;
   plays: SportsPlay[];
   commentary: LivecastCommentary[];
+  lineTimings: Map<string, { wordTimings?: WordTiming[]; mentionCues?: MentionCue[] }>;
+  activePlayback: { commentaryId: string; lineIndex: number; elapsedMs: number } | null;
+  playedLineKeys: Set<string>;
   matchupTotals: Array<{ id: string; ownerName: string; teamName: string; team?: string; points: number }>;
   mediaIndex: MediaLookupIndex;
   youtubeEmbedUrl?: string;
@@ -2767,6 +3233,10 @@ function HuddleExperience({
   onPrepareDemo: () => void;
   onStart: () => void;
   onStop: () => void;
+  onTogglePause: () => void;
+  isPaused: boolean;
+  volume: number;
+  onVolumeChange: (next: number) => void;
   onOpenSettings: () => void;
   onOpenStream: () => void;
   onOpenFriends: () => void;
@@ -2823,121 +3293,198 @@ function HuddleExperience({
       <HuddleSidebar fantasy={fantasy} allLeagues={allLeagues} group={group} phase={showHome ? "empty" : phase} profile={profile} pastShows={pastShows} matchupTotals={matchupTotals} listenerStakes={listenerStakes} friendMatchups={friendMatchups} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} onOpenFriends={onOpenFriends} onGoHome={onGoHome} onOpenProfile={onOpenProfile} />
       <section className="huddle-main" aria-label="Huddle Radio">
         {!showHome && <HuddleTopBar phase={phase} status={status} roomLabel={roomLabel} game={game} mediaIndex={mediaIndex} onOpenSettings={onOpenSettings} demoMode={demoMode} onGoHome={onGoHome} profile={profile} claimedTeamName={claimedTeamName} providerMode={providerMode} />}
-        {showHome && (
-          <HuddleDiscover
-            setup={emptySetup}
-            readiness={pregameReadiness}
-            demoMode={demoMode}
-            mediaIndex={mediaIndex}
-            onPickAndStart={onPickAndStart}
-            onPickGame={onPickGame}
-            onPrepareDemo={onPrepareDemo}
-            onOpenSetup={onOpenSettings}
-            profile={profile}
-            onOpenProfile={onOpenProfile}
-            showProfileNudge={showProfileNudge}
-            onDismissProfileNudge={onDismissProfileNudge}
-            listenerSpotlights={listenerSpotlights}
-            tonightGlance={tonightGlance}
-          />
-        )}
-        {!showHome && phase === "pregame" && (
-          <HuddlePregame
-            game={game}
-            fantasy={fantasy}
-            hosts={hosts}
-            hostTurns={hostTurns}
-            matchupStory={matchupStory}
-            fantasySpotlight={fantasySpotlight}
-            matchupTotals={matchupTotals}
-            mediaIndex={mediaIndex}
-            onStart={onStart}
-            onOpenStream={onOpenStream}
-            onOpenSettings={onOpenSettings}
-            onBackToDiscover={onGoHome}
-            demoMode={demoMode}
-            readiness={pregameReadiness}
-            listenerStakes={listenerStakes}
-            news={pregameNews}
-            odds={pregameOdds}
-            friendMatchups={friendMatchups}
-            profile={profile}
-            picksListenerId={picksListenerId}
-            pickEntry={pickEntry}
-            onPickEntrySubmitted={onPickEntrySubmitted}
-          />
-        )}
-        {!showHome && phase === "live" && (
-          <HuddleLiveWithStream
-            game={game}
-            hostTurns={hostTurns}
-            fantasySpotlight={fantasySpotlight}
-            matchupTotals={matchupTotals}
-            mediaIndex={mediaIndex}
-            youtubeEmbedUrl={youtubeEmbedUrl}
-            hasVideoSource={hasVideoSource}
-            videoRef={videoRef}
-            onVideoError={onVideoError}
-            onStop={onStop}
-            observation={observation}
-            modelLabel={modelLabel}
-            marketSwing={marketSwing}
-            picksListenerId={picksListenerId}
-            pickEntry={pickEntry}
-          />
-        )}
-        {!showHome && phase === "live-audio" && (
-          <HuddleLiveAudio
-            game={game}
-            fantasy={fantasy}
-            hosts={hosts}
-            hostTurns={hostTurns}
-            plays={plays}
-            fantasySpotlight={fantasySpotlight}
-            matchupTotals={matchupTotals}
-            mediaIndex={mediaIndex}
-            onStop={onStop}
-            listenerStakes={listenerStakes}
-            onNudgeHost={onNudgeHost}
-            onSubmitCue={onSubmitCue}
-            observation={observation}
-            modelLabel={modelLabel}
-            profile={profile}
-            picksListenerId={picksListenerId}
-            pickEntry={pickEntry}
-          />
-        )}
-        {!showHome && phase === "recap" && (
-          <HuddleRecap
-            game={game}
-            hosts={hosts}
-            hostTurns={hostTurns}
-            recapSummary={recapSummary}
-            plays={plays}
-            commentary={commentary}
-            fantasySpotlight={fantasySpotlight}
-            mediaIndex={mediaIndex}
-            onStart={onStart}
-            onExportRecap={onExportRecap}
-            listenerStakes={listenerStakes}
-            listenerRecapHighlight={listenerRecapHighlight}
-            onArchiveClip={onArchiveClip}
-            onGetClipSubtitles={onGetClipSubtitles}
-            profile={profile}
-            picksListenerId={picksListenerId}
-            pickEntry={pickEntry}
-          />
-        )}
+        {/* Phase swaps crossfade with a soft vertical slide instead of
+            jump-cutting. `mode="wait"` lets the outgoing panel finish
+            its exit before the next one starts so we don't see two
+            heavy panels stacked mid-transition. The keyed wrapper is
+            the unit AnimatePresence diffs against — keep keys stable
+            per logical phase. */}
+        <AnimatePresence mode="wait" initial={false}>
+          {showHome ? (
+            <motion.div
+              key="discover"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 30, mass: 0.9 }}
+            >
+              <HuddleDiscover
+                setup={emptySetup}
+                readiness={pregameReadiness}
+                demoMode={demoMode}
+                mediaIndex={mediaIndex}
+                onPickAndStart={onPickAndStart}
+                onPickGame={onPickGame}
+                onPrepareDemo={onPrepareDemo}
+                onOpenSetup={onOpenSettings}
+                profile={profile}
+                onOpenProfile={onOpenProfile}
+                showProfileNudge={showProfileNudge}
+                onDismissProfileNudge={onDismissProfileNudge}
+                listenerSpotlights={listenerSpotlights}
+                tonightGlance={tonightGlance}
+              />
+            </motion.div>
+          ) : phase === "pregame" ? (
+            <motion.div
+              key="pregame"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 30, mass: 0.9 }}
+            >
+              <HuddlePregame
+                game={game}
+                fantasy={fantasy}
+                hosts={hosts}
+                hostTurns={hostTurns}
+                matchupStory={matchupStory}
+                fantasySpotlight={fantasySpotlight}
+                matchupTotals={matchupTotals}
+                mediaIndex={mediaIndex}
+                onStart={onStart}
+                onOpenStream={onOpenStream}
+                onOpenSettings={onOpenSettings}
+                onBackToDiscover={onGoHome}
+                demoMode={demoMode}
+                readiness={pregameReadiness}
+                listenerStakes={listenerStakes}
+                news={pregameNews}
+                odds={pregameOdds}
+                friendMatchups={friendMatchups}
+                profile={profile}
+                picksListenerId={picksListenerId}
+                pickEntry={pickEntry}
+                onPickEntrySubmitted={onPickEntrySubmitted}
+              />
+            </motion.div>
+          ) : phase === "live" ? (
+            <motion.div
+              key="live"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 30, mass: 0.9 }}
+            >
+              <HuddleLiveWithStream
+                game={game}
+                hostTurns={hostTurns}
+                commentary={commentary}
+                lineTimings={lineTimings}
+                activePlayback={activePlayback}
+                playedLineKeys={playedLineKeys}
+                fantasySpotlight={fantasySpotlight}
+                matchupTotals={matchupTotals}
+                mediaIndex={mediaIndex}
+                youtubeEmbedUrl={youtubeEmbedUrl}
+                hasVideoSource={hasVideoSource}
+                videoRef={videoRef}
+                onVideoError={onVideoError}
+                onStop={onStop}
+                observation={observation}
+                modelLabel={modelLabel}
+                marketSwing={marketSwing}
+                picksListenerId={picksListenerId}
+                pickEntry={pickEntry}
+              />
+            </motion.div>
+          ) : phase === "live-audio" ? (
+            <motion.div
+              key="live-audio"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 30, mass: 0.9 }}
+            >
+              <HuddleLiveAudio
+                game={game}
+                fantasy={fantasy}
+                hosts={hosts}
+                hostTurns={hostTurns}
+                commentary={commentary}
+                lineTimings={lineTimings}
+                activePlayback={activePlayback}
+                playedLineKeys={playedLineKeys}
+                plays={plays}
+                fantasySpotlight={fantasySpotlight}
+                matchupTotals={matchupTotals}
+                mediaIndex={mediaIndex}
+                audioPlaying={audioPlaying}
+                audioLevels={audioLevels}
+                isPaused={isPaused}
+                onStop={onStop}
+                listenerStakes={listenerStakes}
+                onNudgeHost={onNudgeHost}
+                onSubmitCue={onSubmitCue}
+                observation={observation}
+                modelLabel={modelLabel}
+                profile={profile}
+                picksListenerId={picksListenerId}
+                pickEntry={pickEntry}
+              />
+            </motion.div>
+          ) : phase === "recap" ? (
+            <motion.div
+              key="recap"
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ type: "spring", stiffness: 280, damping: 30, mass: 0.9 }}
+            >
+              <HuddleRecap
+                game={game}
+                hosts={hosts}
+                hostTurns={hostTurns}
+                recapSummary={recapSummary}
+                plays={plays}
+                commentary={commentary}
+                fantasySpotlight={fantasySpotlight}
+                mediaIndex={mediaIndex}
+                onStart={onStart}
+                onExportRecap={onExportRecap}
+                listenerStakes={listenerStakes}
+                listenerRecapHighlight={listenerRecapHighlight}
+                onArchiveClip={onArchiveClip}
+                onGetClipSubtitles={onGetClipSubtitles}
+                profile={profile}
+                picksListenerId={picksListenerId}
+                pickEntry={pickEntry}
+              />
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </section>
-      {!showHome && (
+      {!showHome && (phase === "live" || phase === "live-audio") && (
+        <FloatingMentionChips
+          commentary={commentary}
+          lineTimings={lineTimings}
+          activePlayback={activePlayback}
+          playedLineKeys={playedLineKeys}
+        />
+      )}
+      {/* Huddle bar is the cross-app "tap to play" affordance. Show it
+          on the discovery feed (showHome=true) AS LONG AS no show is
+          already running — when a show is active, the smaller
+          MiniPlayer takes over so the bar doesn't double up. */}
+      {(!showHome || !livecastActive) && (
         <HuddlePlayerBar
           phase={phase}
           game={game}
           hostTurns={hostTurns}
           audioPlaying={audioPlaying}
           audioLevels={audioLevels}
+          isPaused={isPaused}
+          volume={volume}
+          commentary={commentary}
+          lineTimings={lineTimings}
+          activePlayback={activePlayback}
+          playedLineKeys={playedLineKeys}
+          livecastActive={livecastActive}
+          slatePreview={emptySetup.sportsGames}
           onStart={onStart}
           onStop={onStop}
+          onTogglePause={onTogglePause}
+          onVolumeChange={onVolumeChange}
           onOpenStream={onOpenStream}
         />
       )}
@@ -3022,8 +3569,23 @@ function HuddleSidebar({
         <b>RADIO</b>
       </div>
       <nav className="huddle-nav" aria-label="Huddle navigation">
-        <button className={phase === "empty" ? "active" : ""} onClick={onGoHome}>Home</button>
-        <button onClick={onOpenSettings}>Settings</button>
+        <motion.button
+          className={phase === "empty" ? "active" : ""}
+          onClick={onGoHome}
+          whileHover={{ x: 4 }}
+          whileTap={{ scale: 0.97 }}
+          transition={{ type: "spring", stiffness: 360, damping: 28 }}
+        >
+          Home
+        </motion.button>
+        <motion.button
+          onClick={onOpenSettings}
+          whileHover={{ x: 4 }}
+          whileTap={{ scale: 0.97 }}
+          transition={{ type: "spring", stiffness: 360, damping: 28 }}
+        >
+          Settings
+        </motion.button>
       </nav>
       {profile && (
         <section className="league-room-card">
@@ -4853,6 +5415,10 @@ function shortenForCard(text: string, max: number) {
 function HuddleLiveWithStream({
   game,
   hostTurns,
+  commentary,
+  lineTimings,
+  activePlayback,
+  playedLineKeys,
   fantasySpotlight,
   matchupTotals,
   mediaIndex,
@@ -4869,6 +5435,10 @@ function HuddleLiveWithStream({
 }: {
   game?: SportsGameState;
   hostTurns: HuddleHostTurn[];
+  commentary: LivecastCommentary[];
+  lineTimings: Map<string, { wordTimings?: WordTiming[]; mentionCues?: MentionCue[] }>;
+  activePlayback: { commentaryId: string; lineIndex: number; elapsedMs: number } | null;
+  playedLineKeys: Set<string>;
   fantasySpotlight: ReturnType<typeof buildFantasySpotlight>;
   matchupTotals: Array<{ id: string; ownerName: string; teamName: string; team?: string; points: number }>;
   mediaIndex: MediaLookupIndex;
@@ -4899,7 +5469,12 @@ function HuddleLiveWithStream({
       <aside className="on-air-panel">
         <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
         {pickEntry && <PicksTracker entry={pickEntry} listenerId={picksListenerId} />}
-        <HostTurns turns={hostTurns} />
+        <LiveTranscriptPanel
+          commentary={commentary}
+          lineTimings={lineTimings}
+          activePlayback={activePlayback}
+          playedLineKeys={playedLineKeys}
+        />
         <button className="secondary" onClick={onStop}><span className="icon icon-stop" aria-hidden="true" />Stop show</button>
       </aside>
     </section>
@@ -5055,10 +5630,17 @@ function HuddleLiveAudio({
   fantasy,
   hosts,
   hostTurns,
+  commentary,
+  lineTimings,
+  activePlayback,
+  playedLineKeys,
   plays,
   fantasySpotlight,
   matchupTotals,
   mediaIndex,
+  audioPlaying,
+  audioLevels,
+  isPaused,
   onStop,
   listenerStakes,
   onNudgeHost,
@@ -5073,10 +5655,17 @@ function HuddleLiveAudio({
   fantasy?: FantasyLeagueState;
   hosts: typeof HUDDLE_HOSTS;
   hostTurns: HuddleHostTurn[];
+  commentary: LivecastCommentary[];
+  lineTimings: Map<string, { wordTimings?: WordTiming[]; mentionCues?: MentionCue[] }>;
+  activePlayback: { commentaryId: string; lineIndex: number; elapsedMs: number } | null;
+  playedLineKeys: Set<string>;
   plays: SportsPlay[];
   fantasySpotlight: ReturnType<typeof buildFantasySpotlight>;
   matchupTotals: Array<{ id: string; ownerName: string; teamName: string; team?: string; points: number }>;
   mediaIndex: MediaLookupIndex;
+  audioPlaying: boolean;
+  audioLevels: number[];
+  isPaused: boolean;
   onStop: () => void;
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   onNudgeHost: (hostId: HostId) => void;
@@ -5137,8 +5726,19 @@ function HuddleLiveAudio({
     setQueuedHostId(hostId);
     onNudgeHost(hostId);
   };
+  // Audio-amplitude driven scale for the active host avatar. Mean of
+  // the frequency-bucket levels mapped to 1.0..1.18 — a tasteful pulse
+  // that replaces the bar-waveform we just stripped. Frozen at 1.0
+  // when paused or silent so the avatar reads visibly idle.
+  const livePulse = useMemo(() => {
+    if (!audioPlaying || isPaused) return 1;
+    const sum = audioLevels.reduce((acc, lvl) => acc + lvl, 0);
+    const avg = sum / Math.max(1, audioLevels.length);
+    const normalized = Math.max(0, Math.min(1, (avg - 18) / 60));
+    return 1 + normalized * 0.18;
+  }, [audioPlaying, audioLevels, isPaused]);
   return (
-    <section className="audio-live-layout">
+    <section className="audio-live-layout" data-paused={isPaused ? "true" : "false"}>
       <div className="moment-hero">
         <div className="live-action-backdrop" aria-hidden="true" />
         <div className="live-hero-copy">
@@ -5158,9 +5758,13 @@ function HuddleLiveAudio({
           <div className="live-player-portrait">
             <MediaAvatar src={playerAsset ? undefined : teamLogoUrl} asset={playerAsset ?? teamAsset} label={spotlightPlayer?.name ?? latestPlay?.team ?? "Live"} />
           </div>
-          <div className="voice-orb" aria-hidden="true"><Waveform isPlaying levels={[22, 44, 28, 58, 34, 72, 42, 64, 30, 50, 24]} /></div>
         </div>
-        <div className="live-host-strip" role="group" aria-label="Tap a host to make them speak next">
+        <div
+          className="live-host-strip"
+          role="group"
+          aria-label="Tap a host to make them speak next"
+          style={{ ["--live-pulse" as string]: livePulse.toFixed(3) }}
+        >
           {hosts.map((host) => {
             const isActive = activeHostId === host.id;
             const isQueued = queuedHostId === host.id;
@@ -5171,6 +5775,7 @@ function HuddleLiveAudio({
                 key={host.id}
                 type="button"
                 data-accent={host.accent}
+                data-active={isActive ? "true" : "false"}
                 className={stateClass || undefined}
                 onClick={() => handleNudge(host.id as HostId)}
                 disabled={isActive}
@@ -5186,13 +5791,12 @@ function HuddleLiveAudio({
         </div>
         {onSubmitCue && <CueHostButton onSubmit={onSubmitCue} />}
       </div>
-      <section className="live-conversation">
-        <header>
-          <span className="eyebrow"><span className="icon icon-radio" aria-hidden="true" />Host conversation</span>
-          <button className="secondary compact" onClick={onStop}><span className="icon icon-stop" aria-hidden="true" />Stop show</button>
-        </header>
-        <HostTurns turns={hostTurns} />
-      </section>
+      {/* Play-by-play is the primary feed — live football/basketball
+          updates belong in the main reading column under the hero,
+          not tucked into the right rail with secondary context.
+          The rail keeps tonight's matchup, fantasy impact, picks,
+          and the model-sees panel. */}
+      <RecentHighlights plays={plays} game={game} mediaIndex={mediaIndex} />
       <aside className="audio-live-rail">
         <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
         {pickEntry && <PicksTracker entry={pickEntry} listenerId={picksListenerId} />}
@@ -5210,7 +5814,6 @@ function HuddleLiveAudio({
             {matchupTotals.slice(0, 2).map((roster) => <ScoreRow key={roster.id} roster={roster} mediaIndex={mediaIndex} />)}
           </div>
         </article>
-        <RecentHighlights plays={plays} game={game} mediaIndex={mediaIndex} />
       </aside>
     </section>
   );
@@ -5299,54 +5902,324 @@ function HuddleRecap({
   );
 }
 
-function HuddlePlayerBar({ phase, game, hostTurns, audioPlaying, audioLevels, onStart, onStop, onOpenStream }: { phase: HuddlePhase; game?: SportsGameState; hostTurns: HuddleHostTurn[]; audioPlaying: boolean; audioLevels: number[]; onStart: (opts?: { bypassReadiness?: boolean }) => void; onStop: () => void; onOpenStream: () => void }) {
+/**
+ * Volume slider for the player bar. Shows a speaker icon that
+ * collapses to an inline track on hover/focus. Click the icon to
+ * mute/unmute (round-trips to the previous value). Slider drives the
+ * parent's `onVolumeChange` which writes to `currentAudioRef.volume`
+ * live and persists to localStorage.
+ */
+function VolumeControl({
+  value,
+  onChange,
+  disabled
+}: {
+  value: number;
+  onChange: (next: number) => void;
+  disabled: boolean;
+}) {
+  const lastNonZeroRef = useRef(value > 0 ? value : 0.8);
+  useEffect(() => {
+    if (value > 0) lastNonZeroRef.current = value;
+  }, [value]);
+  const muted = value === 0;
+  const icon = muted ? "icon-volume-mute" : "icon-volume-high";
+  const [open, setOpen] = useState(false);
+  const expanded = open && !disabled;
+  // The slider is an inline child (not absolutely positioned) so the
+  // volume-control's width grows when it appears, which pushes the
+  // parent player bar wider via motion's `layout` chain. The bar
+  // hugs its content, so it springs wider/narrower along with the
+  // slider.
+  return (
+    <motion.div
+      layout
+      className="volume-control"
+      data-muted={muted ? "true" : "false"}
+      data-disabled={disabled ? "true" : "false"}
+      data-open={expanded ? "true" : "false"}
+      onHoverStart={() => setOpen(true)}
+      onHoverEnd={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (!next || !event.currentTarget.contains(next)) setOpen(false);
+      }}
+    >
+      <motion.button
+        layout
+        type="button"
+        className="volume-toggle"
+        onClick={() => onChange(muted ? lastNonZeroRef.current : 0)}
+        aria-label={muted ? "Unmute" : "Mute"}
+        disabled={disabled}
+        whileHover={{ scale: 1.08 }}
+        whileTap={{ scale: 0.92 }}
+      >
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={icon}
+            className={`icon ${icon}`}
+            aria-hidden="true"
+            initial={{ opacity: 0, rotate: -25, scale: 0.7 }}
+            animate={{ opacity: 1, rotate: 0, scale: 1 }}
+            exit={{ opacity: 0, rotate: 25, scale: 0.7 }}
+            transition={{ duration: 0.18 }}
+          />
+        </AnimatePresence>
+      </motion.button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            key="slider"
+            layout
+            className="volume-slider-wrap"
+            initial={{ width: 0, opacity: 0, marginLeft: 0 }}
+            animate={{ width: 110, opacity: 1, marginLeft: 8 }}
+            exit={{ width: 0, opacity: 0, marginLeft: 0 }}
+          >
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={value}
+              onChange={(e) => onChange(Number(e.currentTarget.value))}
+              aria-label="Volume"
+              disabled={disabled}
+              className="volume-slider"
+              style={{ ["--vol" as string]: Math.round(value * 100) }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+}
+
+function HuddlePlayerBar({
+  phase,
+  game,
+  hostTurns,
+  audioPlaying,
+  audioLevels,
+  isPaused,
+  volume,
+  commentary,
+  lineTimings,
+  activePlayback,
+  playedLineKeys,
+  livecastActive,
+  slatePreview,
+  onStart,
+  onStop,
+  onTogglePause,
+  onVolumeChange,
+  onOpenStream
+}: {
+  phase: HuddlePhase;
+  game?: SportsGameState;
+  hostTurns: HuddleHostTurn[];
+  audioPlaying: boolean;
+  audioLevels: number[];
+  isPaused: boolean;
+  volume: number;
+  commentary: LivecastCommentary[];
+  lineTimings: Map<string, { wordTimings?: WordTiming[]; mentionCues?: MentionCue[] }>;
+  activePlayback: { commentaryId: string; lineIndex: number; elapsedMs: number } | null;
+  playedLineKeys: Set<string>;
+  livecastActive: boolean;
+  /** Tonight's loaded games — when 2+ are available and the bar is
+   *  in the empty/home phase, the primary button starts the show in
+   *  slate mode instead of routing through demo. The server engine
+   *  ranks these against the listener's roster and auto-pivots
+   *  across them as games end. */
+  slatePreview?: SportsGameOption[];
+  onStart: (opts?: { bypassReadiness?: boolean; preserveTranscript?: boolean; slate?: SportsGameOption[] }) => void;
+  onStop: () => void;
+  onTogglePause: () => void;
+  onVolumeChange: (next: number) => void;
+  onOpenStream: () => void;
+}) {
   const isLive = phase === "live" || phase === "live-audio";
   const isEmpty = phase === "empty";
   const isPregame = phase === "pregame";
+  // The phase can hold "live-audio" via the paused/awaiting-resume
+  // carry-over even when the SSE session is dead (post-refresh,
+  // post-timeout). In that case the Play button must START a fresh
+  // session that keeps the rendered transcript — calling togglePause
+  // would flip the flag with no audio element to drive.
+  const sessionInactive = isLive && !livecastActive;
+  // The captions block only makes sense when there's something to
+  // show. When isLive is true but we don't actually have any played
+  // lines yet (just-started, post-refresh, paused-pre-first-line),
+  // fall through to the simpler idle status text instead — the play
+  // button is the call to action; a separate "tap play" pill is
+  // visual noise.
+  const hasShowableCaptions = isLive && playedLineKeys.size > 0;
+  // Slate mode is available from the discovery feed when 2+ games
+  // are loaded. The primary button then starts the show in
+  // discovery / slate mode — the server ranks the slate and the
+  // hosts open by surveying the night, not by anchoring on a single
+  // matchup. Falls through to the legacy demo CTA when no real
+  // games are loaded yet.
+  const slateReady = isEmpty && (slatePreview?.length ?? 0) >= 2;
   const playerStatus = isEmpty
-    ? "Connect your league, pick a game, and choose how you watch."
-    : hostTurns[0]?.text ?? "Ready for the first call.";
+    ? slateReady
+      ? `Tap play — surveying tonight's ${slatePreview!.length} games.`
+      : "Connect your league, pick a game, and choose how you watch."
+    : sessionInactive
+      ? "Tap play to start the show."
+      : isLive && isPaused
+        ? "Paused — tap play to resume."
+        : isLive
+          ? "Tuning in…"
+          : hostTurns[0]?.text ?? "Ready for the first call.";
   const showLabel = isEmpty
     ? "Not playing"
     : game ? `${game.awayTeam} vs ${game.homeTeam}` : (isPregame ? "Pregame" : isLive ? "Live show" : "Not playing");
+  // Audio-level driven scale for the active host avatar. Average the
+  // bar levels and map to a 1.0..1.18 range so the pulse stays
+  // tasteful — louder = subtler bigger, never cartoonish. Static
+  // baseline when nothing's playing (no analyser data).
+  const pulseScale = useMemo(() => {
+    if (!audioPlaying) return 1;
+    const sum = audioLevels.reduce((acc, level) => acc + level, 0);
+    const avg = sum / Math.max(1, audioLevels.length);
+    const normalized = Math.max(0, Math.min(1, (avg - 18) / 60));
+    return 1 + normalized * 0.18;
+  }, [audioPlaying, audioLevels]);
+  // Pick the icon for the primary control. Live + paused → play
+  // (resume), live + playing → pause, pregame/empty → play (start).
+  const primaryIcon = isLive && !sessionInactive ? (isPaused ? "icon-play" : "icon-pause") : "icon-play";
+  const primaryLabel = sessionInactive
+    ? "Resume show"
+    : isLive
+      ? (isPaused ? "Resume show" : "Pause show")
+      : isEmpty
+        ? slateReady ? "Start tonight's show" : "Try demo show"
+        : isPregame ? "Start show" : "Play";
+  const handlePrimary = () => {
+    if (sessionInactive) {
+      onStart({ bypassReadiness: true, preserveTranscript: true });
+      return;
+    }
+    if (isLive) {
+      onTogglePause();
+      return;
+    }
+    // Slate-ready: pass tonight's games as the slate so the server
+    // engine boots in discovery mode (top-ranked game first, auto-
+    // pivot at game-end). Plain start otherwise.
+    if (slateReady) {
+      onStart({ bypassReadiness: true, slate: slatePreview });
+    } else {
+      onStart({ bypassReadiness: true });
+    }
+  };
+  // Spring config tuned to feel "gooey" without bouncing too long. A
+  // single source of truth keeps every layout/motion transition in
+  // the bar coherent — when the grid template changes (compact ↔
+  // captions), the show-meta crossfades, the captions slot enters,
+  // the play-button morphs — they all use this same spring.
+  const playerSpring = { type: "spring" as const, stiffness: 320, damping: 32, mass: 0.85 };
   return (
-    <footer className="huddle-player">
-      <div className="player-show">
-        {/* Each host is a focusable pop trigger — hover or keyboard
-            focus reveals a card with name + role + description. Lets
-            us drop the bulky HostStudio from the pregame view while
-            still keeping the personalities discoverable. */}
-        <div className="mini-host-stack">
-          {HUDDLE_HOSTS.map((host) => (
-            <MiniHostPop key={host.id} host={host} />
-          ))}
-        </div>
-        <div>
-          <strong>Huddle Radio</strong>
-          <span>{showLabel}</span>
-        </div>
+    <MotionConfig transition={playerSpring}>
+      {/* Floor: a non-interactive fixed-bottom flexbox row that
+          centers the actual player bar horizontally. The bar itself
+          is `width: max-content` so it hugs its 4 elements; we use
+          a wrapper for centering so the bar's transform isn't
+          consumed by translate(-50%, 0) (motion's layout animations
+          already use transforms — fighting with our own breaks the
+          spring). */}
+      <div className="huddle-player-floor" aria-hidden={false}>
+        <motion.footer
+          layout
+          className="huddle-player"
+          data-paused={isLive && isPaused ? "true" : "false"}
+          data-state={hasShowableCaptions ? "captions" : "compact"}
+        >
+          {/* `player-show` (host stack + "Huddle Radio" + status text)
+              only renders while we're NOT showing captions — once the
+              show is active, the captions area carries the speaker's
+              identity and the static thumbnails / "Tap play" CTA are
+              redundant. AnimatePresence + width: 0/auto springs the
+              bar's width as this slot enters/exits. */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {!hasShowableCaptions && (
+              <motion.div
+                key="player-show"
+                layout
+                className="player-show"
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: "auto" }}
+                exit={{ opacity: 0, width: 0 }}
+                style={{ minWidth: 0, overflow: "hidden" }}
+              >
+                <motion.div
+                  className="mini-host-stack"
+                  layout
+                  data-pulsing={audioPlaying && !isPaused ? "true" : "false"}
+                  style={{ ["--host-pulse" as string]: pulseScale.toFixed(3) }}
+                >
+                  {HUDDLE_HOSTS.map((host) => (
+                    <MiniHostPop key={host.id} host={host} />
+                  ))}
+                </motion.div>
+                <div className="player-show-meta">
+                  <strong>Huddle Radio</strong>
+                  <span>{playerStatus}</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <motion.button
+            layout
+            className="player-main-button"
+            onClick={handlePrimary}
+            aria-label={primaryLabel}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.92 }}
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.span
+                key={primaryIcon}
+                className={`icon ${primaryIcon}`}
+                aria-hidden="true"
+                initial={{ opacity: 0, scale: 0.6 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.6 }}
+                transition={{ duration: 0.16 }}
+              />
+            </AnimatePresence>
+          </motion.button>
+          {/* Captions slot enters / exits with the bar resizing
+              springily around it via the parent's `layout` prop. */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {hasShowableCaptions && (
+              <motion.div
+                key="captions-slot"
+                layout
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: "auto" }}
+                exit={{ opacity: 0, width: 0 }}
+                style={{ minWidth: 0, overflow: "hidden" }}
+              >
+                <PlayerBarCaptions
+                  commentary={commentary}
+                  lineTimings={lineTimings}
+                  activePlayback={activePlayback}
+                  playedLineKeys={playedLineKeys}
+                  livePulse={pulseScale}
+                  isPaused={isPaused}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <VolumeControl value={volume} onChange={onVolumeChange} disabled={!isLive} />
+        </motion.footer>
       </div>
-      <button
-        className="player-main-button"
-        // Bypass the pregame readiness gate: by the time the user
-        // reaches the audio-bar play button they have already chosen a
-        // game (otherwise we wouldn't be in pregame). The fantasy
-        // account requirement is a *soft* prereq for richer commentary,
-        // not a hard block — without bypass the click silently fails.
-        onClick={isLive ? onStop : () => onStart({ bypassReadiness: true })}
-        aria-label={isLive ? "Stop show" : isEmpty ? "Try demo show" : isPregame ? "Start show" : "Play"}
-      >
-        <span className={`icon ${isLive ? "icon-stop" : "icon-play"}`} aria-hidden="true" />
-      </button>
-      <Waveform isPlaying={audioPlaying} levels={audioLevels} />
-      <div className="player-controls">
-        <button className="secondary compact">More calm</button>
-        <button className="secondary compact">More analysis</button>
-        <button className="secondary compact">Roast opponent</button>
-        <button className="secondary compact" onClick={onOpenStream}><span className="icon icon-broadcast" aria-hidden="true" />Stream</button>
-      </div>
-      <p role="status" aria-live="polite">{playerStatus}</p>
-    </footer>
+    </MotionConfig>
   );
 }
 
@@ -5468,7 +6341,7 @@ function MiniHostPop({ host }: { host: import("./huddleViewModel").HuddleHost })
 
   return (
     <>
-      <div
+      <motion.div
         ref={triggerRef}
         className="mini-host-pop"
         tabIndex={0}
@@ -5478,22 +6351,31 @@ function MiniHostPop({ host }: { host: import("./huddleViewModel").HuddleHost })
         onMouseLeave={() => setOpen(false)}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
+        whileHover={{ y: -3, scale: 1.08 }}
+        whileTap={{ scale: 0.95 }}
+        transition={{ type: "spring", stiffness: 380, damping: 22 }}
       >
         <HostAvatar label={host.name} accent={host.accent} size="sm" src={host.avatar} />
-      </div>
-      {showCard && createPortal(
-        <div
-          className="mini-host-card mini-host-card-portal is-open"
-          data-accent={host.accent}
-          aria-hidden="true"
-          style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
-        >
-          <strong>{host.name}</strong>
-          <em>{host.role}</em>
-          <p>{host.description}</p>
-        </div>,
-        document.body
-      )}
+      </motion.div>
+      <AnimatePresence>
+        {showCard && createPortal(
+          <motion.div
+            className="mini-host-card mini-host-card-portal is-open"
+            data-accent={host.accent}
+            aria-hidden="true"
+            style={{ left: `${coords.left}px`, top: `${coords.top}px` }}
+            initial={{ opacity: 0, y: 6, scale: 0.92 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.92 }}
+            transition={{ type: "spring", stiffness: 360, damping: 28 }}
+          >
+            <strong>{host.name}</strong>
+            <em>{host.role}</em>
+            <p>{host.description}</p>
+          </motion.div>,
+          document.body
+        )}
+      </AnimatePresence>
     </>
   );
 }
@@ -6740,6 +7622,14 @@ async function playBase64Audio(
   options: {
     audioContext?: AudioContext;
     isCancelled: () => boolean;
+    /** When this returns true the chunk waits at the gate before
+     *  audio.play() is called — and the currently-playing chunk also
+     *  pauses without finishing its promise, so the next chunk in the
+     *  queue blocks naturally until the user resumes. */
+    isPaused?: () => boolean;
+    /** Read each new audio element's volume from this. Lets the
+     *  player-bar slider control live + future chunks uniformly. */
+    getVolume?: () => number;
     onAudioStart: (audio: HTMLAudioElement) => void;
     onAudioEnd: (audio: HTMLAudioElement) => void;
     onAudioLevel: (levels: number[]) => void;
@@ -6791,6 +7681,21 @@ async function playBase64Audio(
         analyserNode = undefined;
       }
     }
+    // Apply the listener's current volume to this audio element so a
+    // chunk that arrives mid-show inherits the slider's last value.
+    if (options.getVolume) {
+      try { audio.volume = clampVolume(options.getVolume()); } catch { /* ignore */ }
+    }
+    // Wait at the gate while the user has the show paused. We poll
+    // every 100ms — the queue chain is already serialized so the
+    // overhead lives only on the currently-pending chunk.
+    while (options.isPaused?.() && !options.isCancelled()) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    if (options.isCancelled()) {
+      finish(() => undefined);
+      return;
+    }
     options.onAudioStart(audio);
     try {
       await audio.play();
@@ -6809,15 +7714,33 @@ async function playBase64Audio(
         console.warn("[huddle.tts] audio element error", (event as Event & { message?: string }).message ?? "(no detail)");
         finish(resolve);
       }, { once: true });
-      audio.addEventListener("pause", () => finish(resolve), { once: true });
+      // Pause = finish ONLY when the session is being torn down
+      // (stopLivecast called pause + load). A user-initiated pause
+      // (player bar pause button) keeps the audio element alive and
+      // resumable, so we leave the promise pending. The queue chain
+      // behind this chunk naturally blocks until resume + ended.
+      audio.addEventListener("pause", () => {
+        if (options.isCancelled()) finish(resolve);
+      });
     });
   } finally {
     if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame);
     try { sourceNode?.disconnect(); } catch { /* noop */ }
     try { analyserNode?.disconnect(); } catch { /* noop */ }
-    options.onAudioEnd(audio);
+    // `finish()` already calls onAudioEnd and flips `settled`. Only
+    // fire here when the function threw before reaching the await
+    // (e.g. analyser setup blew up). Without the guard onAudioEnd
+    // double-fires on every chunk, which re-runs setActivePlayback
+    // and unduckAmbientBed once per playback.
+    if (!settled) options.onAudioEnd(audio);
     URL.revokeObjectURL(url);
   }
+}
+
+/** Clamp the player-bar volume slider to a valid HTMLAudio range. */
+function clampVolume(value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(1, value));
 }
 
 function toWaveformLevels(frequencyData: Uint8Array, barCount: number) {

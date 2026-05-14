@@ -1,12 +1,10 @@
 import type { CommentaryKind, DialogueLine, ProviderHealth } from "../shared/contracts";
 import {
-  buildCommentaryPayload,
-  buildOpenerSystemPrompt,
-  buildPlaySystemPrompt,
   joinDialogueLines,
   parseDialogueResponse,
   resolveHostPersona,
   sanitizeCommentary,
+  selectCommentaryPrompt,
   type CommentaryDraftInput
 } from "./commentaryPrompts";
 import type { CommentaryProvider } from "./openAICommentaryProvider";
@@ -39,8 +37,7 @@ export class AnthropicCommentaryProvider implements CommentaryProvider {
 
     const persona = resolveHostPersona(leadHostId);
     const kind: CommentaryKind = input.kind ?? "play";
-    const system = kind === "opener" ? buildOpenerSystemPrompt(persona) : buildPlaySystemPrompt(persona);
-    const payload = buildCommentaryPayload(input, persona);
+    const { system, payload } = selectCommentaryPrompt(input, persona, kind);
 
     const response = await this.fetcher(this.endpoint, {
       method: "POST",
@@ -71,7 +68,7 @@ export class AnthropicCommentaryProvider implements CommentaryProvider {
       .map((block) => block.text!)
       .join(" ")
       .trim();
-    const parsed = parseDialogueResponse(raw, leadHostId);
+    const parsed = parseDialogueResponse(raw, leadHostId, input.group.listener.name);
     if (parsed && parsed.length > 0) {
       const joined = joinDialogueLines(parsed);
       const safe = sanitizeCommentary(joined, input.fallbackText);

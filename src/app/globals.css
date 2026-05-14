@@ -7918,7 +7918,11 @@ body:has(.huddle-app) {
 }
 
 .audio-live-rail {
-  grid-row: 1 / span 2;
+  /* Single-row layout in audio-only mode now that captions live in
+     the player bar: hero (col 1) and rail (col 2) sit side-by-side
+     across one grid row. Earlier this spanned two rows to flank the
+     in-show transcript that sat below the hero — that transcript
+     moved into huddle-player, so the second row is gone. */
   grid-column: 2;
 }
 
@@ -13184,14 +13188,18 @@ body {
   transform: none !important;
 }
 
-/* Layout — give the rail enough room and let the hero stretch. */
+/* Layout — give the rail enough room and let the hero stretch.
+   The "plays" cell sits directly under the hero in the main column;
+   the rail spans both rows on the right. (The previous `conv` name
+   was for the live captions panel, which now lives in the player
+   bar — repurposed for the play-by-play feed instead.) */
 .huddle-app.phase-live .audio-live-layout,
 .huddle-app.phase-live-audio .audio-live-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
   grid-template-areas:
     "hero rail"
-    "conv rail";
+    "plays rail";
   gap: var(--hr-space-6);
   align-items: start;
 }
@@ -13201,9 +13209,11 @@ body {
   grid-area: hero;
 }
 
-.huddle-app.phase-live .live-conversation,
-.huddle-app.phase-live-audio .live-conversation {
-  grid-area: conv;
+/* The play-by-play card is the only `<article>` direct-child of
+   the layout (rail's articles are nested inside the aside). */
+.huddle-app.phase-live .audio-live-layout > article,
+.huddle-app.phase-live-audio .audio-live-layout > article {
+  grid-area: plays;
 }
 
 .huddle-app.phase-live .audio-live-rail,
@@ -13215,7 +13225,7 @@ body {
   .huddle-app.phase-live .audio-live-layout,
   .huddle-app.phase-live-audio .audio-live-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "hero" "conv" "rail";
+    grid-template-areas: "hero" "plays" "rail";
   }
 }
 
@@ -18373,4 +18383,1149 @@ body {
   font-size: 0.78rem;
   line-height: 1.45;
   color: var(--hr-text-soft);
+}
+
+/* =====================================================================
+   Live transcript panel — audio-synced replacement for HostTurns.
+
+   Renders all commentary turns as a vertically-scrolling feed. The
+   active turn (whichever audio chunk is playing right now) gets:
+     - speaker avatar with a soft pulsing accent ring
+     - word-by-word "karaoke" treatment: past words dim, the current
+       word is bright + slightly scaled, future words fade
+     - mention chips that drop in when audio crosses each cue's startMs
+   Past turns stay rendered as static text (full opacity) so the
+   listener can scan back. Without timestamps (other TTS providers)
+   the panel degrades to a normal live transcript with the same look.
+   ===================================================================== */
+.live-transcript-card {
+  display: grid;
+  gap: var(--hr-space-3);
+  /* Tall card by design — this IS the cast's primary surface during
+     live. Sized to ~55vh on desktop so a few turns are always in view
+     without crowding the rest of the rail. */
+  min-height: clamp(360px, 55vh, 640px);
+  padding: var(--hr-pad-card);
+}
+
+.live-transcript-card--empty .live-transcript-empty {
+  margin: 0;
+  color: var(--hr-text-soft);
+  font-size: var(--hr-text-md);
+}
+
+.live-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.live-transcript-scroll {
+  display: grid;
+  align-content: start;
+  gap: var(--hr-space-4);
+  overflow-y: auto;
+  /* Subtract eyebrow + padding so the scrollable region fills the
+     card without pushing the eyebrow off the top. */
+  max-height: clamp(320px, 50vh, 580px);
+  padding-right: var(--hr-space-2);
+  scrollbar-width: thin;
+}
+
+.live-transcript-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.live-transcript-scroll::-webkit-scrollbar-thumb {
+  background: var(--hr-line, rgba(255, 255, 255, 0.1));
+  border-radius: var(--hr-radius-pill);
+}
+
+.live-transcript-turn {
+  display: grid;
+  gap: var(--hr-space-3);
+}
+
+/* Producer-context chip row under each commentary turn — surfaces
+   which signals fed the producer's beats + which act of the show
+   the turn belongs to. Quiet by default so it doesn't distract
+   from the dialogue itself. */
+.transcript-producer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding-left: calc(2.4rem + var(--hr-space-3));
+  margin-top: -0.2rem;
+}
+
+.transcript-arc-chip,
+.transcript-source-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  line-height: 1.4;
+  border: 1px solid color-mix(in srgb, var(--hr-text-soft) 22%, transparent);
+  background: color-mix(in srgb, var(--hr-bg-base) 70%, transparent);
+  color: var(--hr-text-soft);
+}
+
+.transcript-arc-chip {
+  /* Arc chip leads the row — slightly stronger so the act of the
+     show reads as the framing label, not just another source. */
+  border-color: color-mix(in srgb, var(--hr-accent) 38%, transparent);
+  color: var(--hr-text);
+  background: color-mix(in srgb, var(--hr-accent) 12%, transparent);
+}
+
+.transcript-source-chip[data-source="enrichment"] {
+  border-color: color-mix(in srgb, #ff6b6b 35%, transparent);
+  color: color-mix(in srgb, #ff8b8b 80%, var(--hr-text));
+}
+.transcript-source-chip[data-source="vision"] {
+  /* Vision color is the model literally watching the game — give it a
+     distinctive eye-themed accent so listeners recognise it as
+     "what the broadcast just showed." */
+  border-color: color-mix(in srgb, #38bdf8 40%, transparent);
+  color: color-mix(in srgb, #7dd3fc 90%, var(--hr-text));
+}
+.transcript-source-chip[data-source="market"] {
+  border-color: color-mix(in srgb, #ffd166 35%, transparent);
+  color: color-mix(in srgb, #ffd166 90%, var(--hr-text));
+}
+.transcript-source-chip[data-source="news"] {
+  border-color: color-mix(in srgb, #66d9ef 35%, transparent);
+  color: color-mix(in srgb, #66d9ef 90%, var(--hr-text));
+}
+.transcript-source-chip[data-source="listener"] {
+  border-color: color-mix(in srgb, #4ade80 35%, transparent);
+  color: color-mix(in srgb, #4ade80 90%, var(--hr-text));
+}
+.transcript-source-chip[data-source="callback"] {
+  border-color: color-mix(in srgb, #c084fc 35%, transparent);
+  color: color-mix(in srgb, #c084fc 90%, var(--hr-text));
+}
+.transcript-source-chip[data-source="banter"] {
+  /* Quietest chip — banter is room-fill, not a take. Muted text +
+     dashed border so it reads as "this is between-the-lines, not
+     a reaction to game state." */
+  border-color: color-mix(in srgb, var(--hr-text-soft) 25%, transparent);
+  border-style: dashed;
+  color: var(--hr-text-soft);
+  font-style: italic;
+}
+.transcript-source-chip[data-source="handoff"] {
+  /* Handoff is the structural pivot between two games — give it a
+     distinctive amber so the listener visually registers "the show
+     just changed channels." Solid border so it doesn't read as
+     low-energy banter. */
+  border-color: color-mix(in srgb, #fb923c 45%, transparent);
+  color: color-mix(in srgb, #fdba74 90%, var(--hr-text));
+}
+
+.live-transcript-line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--hr-space-3);
+  align-items: start;
+  /* Past lines fade to a slightly muted base so the active line
+     "lifts" off the page. Active line uses var(--hr-text). */
+  --transcript-line-text: var(--hr-text-soft);
+}
+
+.live-transcript-line[data-active="true"] {
+  --transcript-line-text: var(--hr-text);
+}
+
+.live-transcript-speaker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 56px;
+}
+
+.live-transcript-speaker strong {
+  font-family: var(--hr-font-mono);
+  font-size: 0.7rem;
+  font-weight: var(--hr-weight-semi);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--hr-text-soft);
+}
+
+.live-transcript-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--hr-radius-pill);
+  overflow: hidden;
+  background: var(--hr-surface);
+  border: 2px solid transparent;
+  color: var(--hr-text);
+  font-weight: var(--hr-weight-black);
+  font-size: 0.95rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.live-transcript-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Accent ring colors per host. The ring shows on the *active*
+   speaker so the listener can immediately see who's talking. */
+.live-transcript-line[data-active="true"] .live-transcript-avatar[data-accent="violet"] {
+  border-color: #b698ff;
+  box-shadow: 0 0 0 4px rgba(155, 108, 255, 0.18);
+}
+.live-transcript-line[data-active="true"] .live-transcript-avatar[data-accent="orange"] {
+  border-color: #ff9b76;
+  box-shadow: 0 0 0 4px rgba(255, 128, 109, 0.18);
+}
+.live-transcript-line[data-active="true"] .live-transcript-avatar[data-accent="gold"] {
+  border-color: #f4c861;
+  box-shadow: 0 0 0 4px rgba(244, 200, 97, 0.18);
+}
+
+@keyframes live-transcript-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+.live-transcript-line[data-active="true"] .live-transcript-avatar {
+  animation: live-transcript-pulse 1.6s ease-in-out infinite;
+}
+
+.live-transcript-text {
+  font-family: var(--hr-font-body);
+  font-size: var(--hr-text-md, 0.95rem);
+  line-height: 1.55;
+  color: var(--transcript-line-text);
+}
+
+.live-transcript-karaoke {
+  /* white-space preservation matters — whitespace tokens are real
+     tokens in wordTimings, so the joined render needs to respect them */
+  white-space: pre-wrap;
+}
+
+.live-transcript-word {
+  transition: color 0.2s ease, text-shadow 0.2s ease, opacity 0.2s ease;
+  color: inherit;
+}
+
+.live-transcript-word[data-state="past"] {
+  color: var(--hr-text-soft);
+  opacity: 0.7;
+}
+
+.live-transcript-word[data-state="current"] {
+  color: var(--hr-text);
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.12);
+  /* Slight emphasis without reflowing — color + glow only. */
+}
+
+.live-transcript-word[data-state="future"] {
+  color: var(--hr-text-soft);
+  opacity: 0.35;
+}
+
+/* Mention chips ------------------------------------------------------ */
+.live-transcript-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  grid-column: 2;
+  margin-top: 0.45rem;
+}
+
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.6rem 0.3rem 0.3rem;
+  background: var(--hr-bg-1);
+  border: 1px solid var(--hr-line, rgba(255, 255, 255, 0.12));
+  border-radius: var(--hr-radius-pill);
+  opacity: 0.55;
+  transform: translateY(0);
+  transition: opacity 0.3s ease, transform 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  font-size: 0.78rem;
+  color: var(--hr-text-soft);
+  max-width: 240px;
+}
+
+.mention-chip[data-hot="true"] {
+  opacity: 1;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  color: var(--hr-text);
+  /* Fresh-mention pulse: a 1.2s grow/shrink to catch the eye. */
+  animation: mention-chip-pop 0.42s ease-out;
+}
+
+@keyframes mention-chip-pop {
+  0% { transform: translateY(6px) scale(0.92); opacity: 0; }
+  60% { transform: translateY(-2px) scale(1.02); opacity: 1; }
+  100% { transform: translateY(-1px) scale(1); }
+}
+
+.mention-chip-thumb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--hr-radius-pill);
+  overflow: hidden;
+  background: var(--hr-surface);
+  flex: 0 0 auto;
+}
+
+.mention-chip-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mention-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--hr-radius-pill);
+  background: var(--hr-surface);
+  color: var(--hr-text-soft);
+  flex: 0 0 auto;
+  font-size: 0.85rem;
+}
+
+.mention-chip-body {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mention-chip-body strong {
+  font-family: var(--hr-font-body);
+  font-size: 0.82rem;
+  font-weight: var(--hr-weight-semi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: inherit;
+}
+
+.mention-chip-body small {
+  font-family: var(--hr-font-mono);
+  font-size: 0.62rem;
+  font-weight: var(--hr-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--hr-text-dim, var(--hr-text-soft));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Entity-type tints — subtle borders that hint at category. */
+.mention-chip[data-entity-type="player"][data-hot="true"] {
+  border-color: rgba(155, 108, 255, 0.55);
+}
+.mention-chip[data-entity-type="team"][data-hot="true"] {
+  border-color: rgba(255, 128, 109, 0.55);
+}
+.mention-chip[data-entity-type="market-source"][data-hot="true"] {
+  border-color: rgba(97, 220, 163, 0.55);
+}
+.mention-chip[data-entity-type="listener-stake"][data-hot="true"] {
+  border-color: rgba(244, 200, 97, 0.55);
+}
+
+/* ------------------------------------------------------------------ */
+/* Pause / Volume / Spotlight captions / Host pulse                    */
+/* ------------------------------------------------------------------ */
+
+/* Player-bar primary button gets a softer scale-in transition for the
+   pause/play state swap. Replaces the harder swap from stop → play. */
+.player-main-button {
+  transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 180ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              background 180ms ease;
+}
+.player-main-button:hover {
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 14px 28px -14px rgba(255, 128, 109, 0.6);
+}
+.player-main-button:active {
+  transform: translateY(0) scale(0.97);
+}
+.player-main-button .icon {
+  transition: transform 160ms ease;
+}
+
+/* Host avatar pulse — driven by `--host-pulse` (player bar) and
+   `--live-pulse` (in-show host strip). Both default to 1.0. */
+.mini-host-stack {
+  --host-pulse: 1;
+  transition: transform 80ms linear;
+}
+.mini-host-stack[data-pulsing="true"] {
+  transform: scale(var(--host-pulse));
+}
+.live-host-strip {
+  --live-pulse: 1;
+}
+.live-host-strip > button[data-active="true"] {
+  transition: transform 80ms linear, box-shadow 220ms ease;
+  transform: scale(var(--live-pulse));
+}
+.live-host-strip > button {
+  transition: transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              box-shadow 220ms ease,
+              border-color 220ms ease;
+}
+.live-host-strip > button:not([disabled]):hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px -16px rgba(155, 108, 255, 0.4);
+}
+
+/* Volume control: speaker icon + horizontal slider. Compact by
+   default; the slider reveals on hover/focus-within so the bar
+   stays clean at rest. */
+.volume-control {
+  display: inline-flex;
+  align-items: center;
+  /* No pill background / border / padding anymore — the toggle is
+     a standalone circle that matches the play button's footprint.
+     The slider-wrap is an inline sibling that grows the bar when
+     opened. */
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+}
+.volume-control[data-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.volume-toggle {
+  /* Matches `.player-main-button` footprint (2.85rem) so the bar's
+     two transport circles read as a pair. Transparent background +
+     muted icon keeps it as the secondary control though — the play
+     button stays the primary white pill. */
+  width: 2.85rem;
+  height: 2.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--huddle-muted, rgba(235, 241, 247, 0.72));
+  cursor: pointer;
+  transition: color 160ms ease, background 200ms ease;
+}
+.volume-toggle:hover { color: #fff; background: rgba(255, 255, 255, 0.12); }
+.volume-control[data-muted="true"] .volume-toggle { color: #ff806d; }
+/* Slider container — INLINE flex sibling of the toggle. As motion
+   springs its width 0 → 110, the parent volume-control (and the
+   bar above it) widens to accommodate, giving the gooey "bar grows
+   to fit the slider" UX. `overflow: hidden` keeps the slider
+   clipped while the wrap is < 110px wide. */
+.volume-slider-wrap {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  height: 22px;
+}
+.volume-slider {
+  appearance: none;
+  background: transparent;
+  width: 110px;
+  flex-shrink: 0;
+  height: 22px;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+}
+.volume-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    rgba(255, 128, 109, 0.85) 0%,
+    rgba(255, 128, 109, 0.85) calc(var(--vol, 100%) * 1%),
+    rgba(255, 255, 255, 0.12) calc(var(--vol, 100%) * 1%),
+    rgba(255, 255, 255, 0.12) 100%
+  );
+}
+.volume-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.volume-slider::-moz-range-progress {
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 128, 109, 0.85);
+}
+.volume-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 0 rgba(255, 128, 109, 0);
+  transition: box-shadow 160ms ease, transform 160ms ease;
+}
+.volume-slider:focus-visible::-webkit-slider-thumb,
+.volume-slider:hover::-webkit-slider-thumb {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35), 0 0 0 5px rgba(255, 128, 109, 0.25);
+  transform: scale(1.08);
+}
+.volume-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* Paused pill in the live-conversation header. Subtle amber chip
+   that reads "Paused" so the listener has visual confirmation. */
+.paused-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(244, 200, 97, 0.12);
+  border: 1px solid rgba(244, 200, 97, 0.3);
+  color: #f4c861;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  animation: pausedPillIn 220ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes pausedPillIn {
+  from { transform: translateY(-2px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* Dim the layout slightly while paused so the whole show reads
+   "on hold." Avatars + active line keep full saturation since
+   that's the resume target. */
+.audio-live-layout[data-paused="true"] .moment-hero,
+.audio-live-layout[data-paused="true"] .audio-live-rail {
+  filter: saturate(0.85) brightness(0.95);
+  transition: filter 320ms ease;
+}
+
+/* ------------------------------------------------------------------ */
+/* Spotlight transcript card                                           */
+/* ------------------------------------------------------------------ */
+
+.live-transcript-card--spotlight {
+  --live-pulse: 1;
+  padding: 1.6rem 1.9rem;
+  background:
+    radial-gradient(circle at 18% 22%, rgba(155, 108, 255, 0.18), transparent 42%),
+    radial-gradient(circle at 82% 78%, rgba(255, 128, 109, 0.14), transparent 42%),
+    rgba(14, 22, 39, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  position: relative;
+}
+.live-transcript-card--spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px) 0 0 / 64px 64px;
+  opacity: 0.28;
+  pointer-events: none;
+}
+.spotlight-stage {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+  gap: 1.6rem;
+  align-items: center;
+  min-height: 200px;
+  position: relative;
+  z-index: 1;
+}
+.spotlight-speaker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.spotlight-speaker strong {
+  font-size: 0.92rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--huddle-muted, rgba(235, 241, 247, 0.72));
+}
+.spotlight-avatar {
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  transition: transform 80ms linear, box-shadow 220ms ease, border-color 220ms ease;
+  font-size: 2.2rem;
+  font-weight: 600;
+}
+.spotlight-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.spotlight-avatar[data-active="true"] {
+  transform: scale(var(--live-pulse));
+  box-shadow: 0 0 0 6px rgba(155, 108, 255, 0.18),
+              0 18px 44px -22px rgba(155, 108, 255, 0.7);
+}
+.spotlight-avatar[data-accent="orange"][data-active="true"] {
+  box-shadow: 0 0 0 6px rgba(255, 128, 109, 0.18),
+              0 18px 44px -22px rgba(255, 128, 109, 0.7);
+  border-color: rgba(255, 128, 109, 0.45);
+}
+.spotlight-avatar[data-accent="gold"][data-active="true"] {
+  box-shadow: 0 0 0 6px rgba(244, 200, 97, 0.18),
+              0 18px 44px -22px rgba(244, 200, 97, 0.7);
+  border-color: rgba(244, 200, 97, 0.45);
+}
+.spotlight-avatar[data-accent="violet"][data-active="true"] {
+  border-color: rgba(155, 108, 255, 0.45);
+}
+.spotlight-captions {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.spotlight-prior-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  color: rgba(235, 241, 247, 0.42);
+  line-height: 1.4;
+  margin: 0;
+  /* Single line only — older lines fall out of view once a new beat
+     lands. Keeps the spotlight feeling focused, not feed-ish. */
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.spotlight-prior-speaker {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  color: rgba(235, 241, 247, 0.52);
+  margin-right: 0.35rem;
+}
+.spotlight-active-line {
+  font-size: clamp(1.4rem, 2.2vw, 2rem);
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  color: rgba(245, 248, 252, 0.96);
+  text-wrap: balance;
+}
+.spotlight-active-line .live-transcript-karaoke {
+  display: block;
+}
+.spotlight-active-line .live-transcript-word[data-state="past"] {
+  color: rgba(235, 241, 247, 0.42);
+}
+.spotlight-active-line .live-transcript-word[data-state="current"] {
+  color: #fff;
+  text-shadow: 0 0 18px rgba(155, 108, 255, 0.35);
+}
+.spotlight-active-line[data-accent="orange"] .live-transcript-word[data-state="current"] {
+  text-shadow: 0 0 18px rgba(255, 128, 109, 0.45);
+}
+.spotlight-active-line[data-accent="gold"] .live-transcript-word[data-state="current"] {
+  text-shadow: 0 0 18px rgba(244, 200, 97, 0.45);
+}
+.spotlight-active-line .live-transcript-word[data-state="future"] {
+  color: rgba(235, 241, 247, 0.72);
+}
+.spotlight-active-line .live-transcript-chips {
+  margin-top: 0.9rem;
+}
+
+@media (max-width: 760px) {
+  .spotlight-stage {
+    grid-template-columns: 1fr;
+    text-align: center;
+  }
+  .spotlight-avatar { width: 92px; height: 92px; font-size: 1.6rem; }
+}
+
+/* ------------------------------------------------------------------ */
+/* Player-bar captions — now-playing strip inside huddle-player        */
+/* ------------------------------------------------------------------ */
+
+/* The bar has FIVE children now (show, button, captions, volume,
+   controls). Override the upstream 4-column grids with an explicit
+   layout where the caption column is the flex slot. The high
+   specificity selector survives the phase-specific overrides above.
+   We also nuke the legacy `grid-template-areas: "show waveform
+   controls main"` from the older 4-area layout — those names placed
+   captions into an `auto`-sized column 2 (because show/main/controls
+   ate cols 1/4/3, leaving the auto col 2 as the first free cell for
+   auto-placement) while the actual `1fr` column (3) was sucked up
+   by the now-empty player-controls slot. With areas off and the
+   grid-area assignments reset to auto, children fall back to
+   DOM-order auto-placement: show / button / captions / volume /
+   controls — which puts captions in the 1fr column where it
+   belongs. */
+/* ------------------------------------------------------------------ */
+/* Hug-content player bar — Spotify mini-player pattern               */
+/* ------------------------------------------------------------------ */
+
+/* Floor: a non-interactive fixed row at the bottom that centers the
+   actual bar horizontally over the main content area. The bar then
+   hugs its own content (max-content) and the floor handles
+   centering. Pointer-events disabled on the floor so it doesn't
+   block clicks on whatever's below. */
+.huddle-app .huddle-player-floor {
+  position: fixed;
+  bottom: 1.25rem;
+  left: 275px;
+  right: 4rem;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: var(--hr-z-overlay);
+}
+@media (max-width: 1180px) {
+  .huddle-app .huddle-player-floor {
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+  }
+}
+
+/* Bar: hugs its 4 children, springs wider/narrower as they
+   appear/disappear or resize. Every previous `.huddle-player`
+   rule (left/right/width/grid) is overridden here via the
+   higher-specificity selector. */
+.huddle-app .huddle-player-floor .huddle-player {
+  position: relative;
+  inset: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  /* `gap` is the space between the 4 elements. `column-gap` is
+     spelled out explicitly to beat any legacy grid rule that set
+     column-gap: 0 — gap shorthand wouldn't override that on its
+     own. */
+  gap: 1rem;
+  column-gap: 1rem;
+  padding: 0.7rem 0.95rem;
+  width: max-content;
+  max-width: 100%;
+  min-height: 0;
+  border-radius: var(--hr-radius-pill, 999px);
+  background: rgba(14, 21, 35, 0.9);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  pointer-events: auto;
+  /* Nuke every legacy grid rule that targeted .huddle-player. */
+  grid-template-columns: none;
+  grid-template-areas: none;
+  grid-template-rows: none;
+  transform: none;
+}
+/* The phase-X rules that set width:auto / max-width:none / weird
+   grid templates need to lose to the floor-scoped rule. Same
+   specificity — winning by source order (this rule comes later). */
+.huddle-app.phase-live-audio .huddle-player-floor .huddle-player,
+.huddle-app.phase-live .huddle-player-floor .huddle-player,
+.huddle-app.phase-pregame .huddle-player-floor .huddle-player,
+.huddle-app.phase-recap .huddle-player-floor .huddle-player,
+.huddle-app.phase-empty .huddle-player-floor .huddle-player {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: max-content;
+  max-width: 100%;
+  min-height: 0;
+  grid-template-columns: none;
+  grid-template-areas: none;
+  transform: none;
+}
+
+.player-captions {
+  --live-pulse: 1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  /* Fixed reading width when captions are present — the bar grows
+     by exactly this amount when a show starts, springs back when it
+     ends. Clamped to 60vw so it doesn't overflow on narrow screens. */
+  width: 480px;
+  max-width: 60vw;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--hr-radius-md, 12px);
+  background: transparent;
+  transition: opacity 220ms ease;
+}
+.player-captions[data-paused="true"] {
+  opacity: 0.55;
+}
+/* `.player-captions--idle` retired: the captions slot is no longer
+   rendered when there are no captions to show. The status text
+   instead lives in `.player-show-meta` so the bar can drop the
+   captions column entirely in the compact data-state. */
+
+.player-captions-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  border: 2px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.95rem;
+  font-weight: 600;
+  flex-shrink: 0;
+  transition: transform 80ms linear, box-shadow 240ms ease, border-color 240ms ease;
+}
+.player-captions-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.player-captions-avatar[data-active="true"] {
+  transform: scale(var(--live-pulse));
+}
+.player-captions-avatar[data-accent="violet"][data-active="true"] {
+  border-color: rgba(155, 108, 255, 0.55);
+  box-shadow: 0 0 0 4px rgba(155, 108, 255, 0.16);
+}
+.player-captions-avatar[data-accent="orange"][data-active="true"] {
+  border-color: rgba(255, 128, 109, 0.55);
+  box-shadow: 0 0 0 4px rgba(255, 128, 109, 0.16);
+}
+.player-captions-avatar[data-accent="gold"][data-active="true"] {
+  border-color: rgba(244, 200, 97, 0.55);
+  box-shadow: 0 0 0 4px rgba(244, 200, 97, 0.16);
+}
+
+/* Caption layout:
+     [avatar] [content: speaker pill + multi-line karaoke scroll]
+   The scroll container shows ~3 lines of wrapped text at once; as
+   audio progresses we scroll vertically so the active word sits
+   ~1/3 from the top, with a fade mask softening the bottom edge so
+   future text peeks through before becoming current. Inspired by
+   Apple Music's lyric view: past lines are dim, current pops in
+   the speaker's accent color, the bottom fades into space. */
+.player-captions {
+  align-self: stretch;
+  align-items: center;
+}
+.player-captions-content {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  min-width: 0;
+  font-size: 1.18rem;
+  line-height: 1.4;
+}
+.player-captions-speaker.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* Frame wraps the scroll container + the two blur overlays.
+   `position: relative` makes the overlays absolute-positionable
+   relative to the frame, so they stay pinned to the visible top
+   and bottom while the karaoke text scrolls underneath. */
+.player-captions-frame {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  isolation: isolate;
+  /* 3D perspective for the tilted-card effect on the captions
+     scroll element below. The captions sit on a plane that
+     leans away from the viewer slightly — past words read as
+     receding into the distance, the active line stays parallel
+     to the screen plane at the rotation pivot. */
+  perspective: 900px;
+  perspective-origin: 50% 50%;
+}
+
+.player-captions-scroll {
+  position: relative;
+  min-width: 0;
+  /* ~3 lines of caption text. Tightened from 5.6rem so the mask's
+     fade zones actually overlap text — at 5.6rem the lead/tail
+     spacers ate the entire fade band and you couldn't see the
+     softening. The active line still targets vertical center. */
+  height: 4.4rem;
+  overflow: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  white-space: normal;
+  word-wrap: break-word;
+  z-index: 0;
+  /* 3D tilt — gives the captions a "leaning back" feel so the
+     centered active line reads as parallel to the screen while
+     text above + below appears to be on a plane receding into
+     the distance. preserve-3d keeps child transforms in 3D. */
+  transform: rotateX(14deg);
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  /* Opacity mask: text fades to transparent at the top and bottom
+     edges of the box so the centered active line gets the focus
+     and adjacent lines softly fall off. Works reliably regardless
+     of backdrop-filter / squircle / transform-animation pipeline
+     quirks. */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 30%,
+    #000 70%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    #000 30%,
+    #000 70%,
+    transparent 100%
+  );
+}
+.player-captions-scroll::-webkit-scrollbar { display: none; }
+
+/* The track is what we actually animate — `translateY` smooths
+   between line positions via the CSS transition below. scrollTop
+   on the parent gets cancelled by rapid retargeting (a new word
+   fires before the smooth scroll resolves); transform on a
+   transitioned element doesn't have that problem. `will-change`
+   keeps it on the GPU layer for smooth animation. */
+.player-captions-track {
+  display: block;
+  will-change: transform;
+  transition: transform 460ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* Keep the track in the same 3D space as its rotated parent so
+     translateY animates along the tilted plane instead of being
+     flattened back to 2D. */
+  transform-style: preserve-3d;
+}
+.player-captions-scroll .live-transcript-karaoke {
+  display: inline;
+}
+
+/* Leading / trailing spacers. Half of (container - one line) so the
+   first AND last lines can land at vertical center without the
+   track clamping at the top/bottom edge. Sized in `em` so they
+   scale with any future font-size change. */
+.player-captions-lead,
+.player-captions-tail {
+  display: block;
+  /* Sized so the first AND last line center vertically in the
+     4.4rem container without scroll clamping. */
+  height: calc((4.4rem - 1.4em) / 2);
+}
+
+/* SOLID-COLOR karaoke. No vertical gradient inside the glyphs, no
+   text-shadow glow — just two color states with a smooth 280ms
+   transition between them. Font weight is `inherit` so glyph
+   metrics never shift between states (no reflow when a word
+   lights up). */
+.player-captions-scroll .live-transcript-word {
+  color: rgba(235, 241, 247, 0.36);
+  font-weight: inherit;
+  transition: color 280ms ease;
+}
+.player-captions-content[data-accent="violet"] .live-transcript-word[data-state="past"],
+.player-captions-content[data-accent="violet"] .live-transcript-word[data-state="current"] {
+  color: #c8b3ff;
+}
+.player-captions-content[data-accent="orange"] .live-transcript-word[data-state="past"],
+.player-captions-content[data-accent="orange"] .live-transcript-word[data-state="current"] {
+  color: #ffb09f;
+}
+.player-captions-content[data-accent="gold"] .live-transcript-word[data-state="past"],
+.player-captions-content[data-accent="gold"] .live-transcript-word[data-state="current"] {
+  color: #f4c861;
+}
+/* Fallback for the no-timings case — single span shows the line in
+   solid muted color. */
+.player-captions-scroll .live-transcript-word.is-current {
+  color: rgba(235, 241, 247, 0.74);
+}
+
+/* Bottom spacer so the last word can still scroll up into the
+   ~1/3-from-top reading position rather than getting pinned at the
+   bottom of the visible box. */
+.player-captions-tail {
+  display: block;
+  height: 2.4rem;
+}
+
+/* Player bar needs to grow vertically in live mode to fit the
+   3-line caption block. The pill-rounded player bar keeps its
+   horizontal sweep but is now ~110px tall when something's playing.
+   Overrides the upstream 60px min-height that was sized for the
+   old single-line waveform. */
+.huddle-app.phase-live-audio .huddle-player,
+.huddle-app.phase-live .huddle-player {
+  min-height: 7rem;
+  align-items: center;
+}
+
+/* Make the captions avatar bigger inside the new taller bar — it
+   now anchors a multi-line block, not a single text line. */
+.huddle-app.phase-live-audio .player-captions-avatar,
+.huddle-app.phase-live .player-captions-avatar {
+  width: 56px;
+  height: 56px;
+  font-size: 1.3rem;
+  border-width: 2px;
+}
+
+/* Idle path (pre-show / between sessions): the captions slot holds
+   the rolling status text. Allow it to wrap to two lines so the
+   instructional copy doesn't get cut. Inherits the avatar + content
+   grid from the base .player-captions rule so the slot footprint
+   matches the live/standby state — the only delta is the dimmer
+   avatar and the muted text. */
+.player-captions--idle .player-captions-text {
+  color: var(--hr-text-muted, rgba(235, 241, 247, 0.62));
+  font-size: 0.92rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+}
+
+/* Standby path (live phase, no captions yet — first chunk warming
+   up, or paused at the very start of a snapshot-restored show).
+   Re-uses the active `.player-captions-frame` wrapper, which has
+   `width: 100%` from its base rule, so the column is filled to the
+   same pixel width as the active state. The inner row matches the
+   4.4rem scroll height so the bar's vertical footprint is identical
+   too. */
+
+/* Smooth the player-bar height + the captions avatar size across
+   phase transitions so the bar grows/shrinks elegantly when a show
+   starts or ends instead of snapping between sizes. */
+.huddle-player {
+  transition: min-height 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.player-captions-avatar {
+  transition:
+    width 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    height 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    font-size 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 320ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 80ms linear,
+    box-shadow 240ms ease,
+    border-color 240ms ease;
+}
+
+/* Narrow viewports: hide the speaker pill and let the karaoke fill
+   the bar. Below ~640px the avatar collapses too. */
+@media (max-width: 900px) {
+  .player-captions-speaker { display: none; }
+}
+@media (max-width: 640px) {
+  .player-captions-avatar { display: none; }
+  .player-captions { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------------------------ */
+/* Floating mention chips — players / news / markets / stake markers   */
+/* ------------------------------------------------------------------ */
+
+/* Sits directly above the player bar. Position is anchored to the
+   bottom of the viewport with the same `left` / `right` offsets the
+   player bar uses, so the chip row visually belongs to the player
+   surface without being inside it (keeps the captions block from
+   getting pushed around when chips flow in and out). */
+.floating-mention-chips {
+  position: fixed;
+  left: 275px;
+  right: 4rem;
+  /* Sit ABOVE the player bar. Bar is min-height 8.2rem and offset
+     1.25rem from the viewport bottom in live phases, so its top is
+     at ~9.45rem. The 0.6rem cushion keeps chips from grazing the
+     bar even when a chip uses its full pill height. */
+  bottom: 10rem;
+  z-index: var(--hr-z-overlay);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  pointer-events: none;
+  align-items: flex-end;
+  justify-content: flex-start;
+}
+.floating-mention-chips > * { pointer-events: auto; }
+.huddle-app.phase-live-audio .floating-mention-chips,
+.huddle-app.phase-live .floating-mention-chips {
+  /* Align with the captions column inside huddle-player. The player
+     bar's grid is "show | button | captions | volume | controls", so
+     the chips ideally start where the captions start. Approximate by
+     pushing the row to the right of the host stack + main button. */
+  padding-left: calc(190px + 56px + 2rem);
+}
+@media (max-width: 760px) {
+  .floating-mention-chips {
+    left: 1rem;
+    right: 1rem;
+    padding-left: 0;
+    bottom: 9.2rem;
+  }
+}
+/* Slide-in animation when a new chip appears — keyed to React's
+   mount/unmount via the existing mention-chip-pop keyframe lived in
+   the prior implementation. We don't have access to that here, so
+   define a fresh one inline. */
+.floating-mention-chips .mention-chip {
+  animation: floatingChipIn 280ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes floatingChipIn {
+  from { transform: translateY(8px) scale(0.94); opacity: 0; }
+  to   { transform: translateY(0)    scale(1);    opacity: 1; }
 }

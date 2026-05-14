@@ -7,6 +7,11 @@ export type VisionPayload = {
   summary?: string;
   evidence?: string[];
   reason?: string;
+  /** Visual color the model noticed worth narrating — bench
+   *  reactions, body language, sideline drama, crowd intensity.
+   *  Empty/absent on most frames (generic shots have no distinctive
+   *  color). The aggregator consumes this via VisionEnrichmentProvider. */
+  color?: string[];
 };
 
 export const VISION_INSTRUCTIONS =
@@ -33,7 +38,9 @@ export function buildVisionTaskPayload(play: SportsPlay): string {
       confidence: "number 0..1",
       summary: "one short sentence",
       evidence: "array of 1-4 visible clues",
-      reason: "short explanation"
+      reason: "short explanation",
+      color:
+        "array of 0-3 SHORT phrases (5-12 words each) describing visible color worth narrating in commentary: bench reactions, body language, sideline drama, crowd intensity, coach demeanor, jersey/fashion details. Skip generic frames — empty array is the correct answer when the shot is a wide field view, scoreboard, or anything without distinctive human moments. Be concrete and visual: 'star player limping back to bench gripping his hamstring' beats 'player looks tired'."
     }
   });
 }
@@ -46,7 +53,10 @@ export function parseVisionPayload(text: string): VisionPayload {
     return {
       ...parsed,
       confidence: clampConfidence(parsed.confidence),
-      evidence: Array.isArray(parsed.evidence) ? parsed.evidence.map(String).slice(0, 4) : []
+      evidence: Array.isArray(parsed.evidence) ? parsed.evidence.map(String).slice(0, 4) : [],
+      color: Array.isArray(parsed.color)
+        ? parsed.color.map(String).map((s) => s.trim()).filter((s) => s.length > 0).slice(0, 3)
+        : []
     };
   } catch {
     return {
@@ -113,7 +123,8 @@ export function buildSuccessfulObservation(
     observedAt: new Date().toISOString(),
     latencyMs: Math.round(performance.now() - start),
     validation,
-    usedFrame: true
+    usedFrame: true,
+    color: payload.color ?? []
   };
 }
 

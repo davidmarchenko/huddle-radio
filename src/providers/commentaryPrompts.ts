@@ -1,4 +1,4 @@
-import type { CommentaryKind, DialogueLine, FantasyRoster, GameOdds, GroupSettings, HostId, ListenerCue, MarketSnapshot, NewsItem, PlayerSeasonStats, SportsPlay, VideoObservation, FantasyImpact, MomentCue } from "../shared/contracts";
+import type { CommentaryKind, DialogueLine, EnrichmentSignal, FantasyRoster, GameOdds, GroupSettings, HostId, ListenerCue, MarketSnapshot, NewsItem, PlayerSeasonStats, SportsPlay, VideoObservation, FantasyImpact, MomentCue } from "../shared/contracts";
 import { HOST_PERSONAS, type HostPersona } from "../shared/hostPersonas";
 
 export type CommentaryDraftInput = {
@@ -58,6 +58,46 @@ export type CommentaryDraftInput = {
    * actual stake without name-dropping every leg.
    */
   pickContext?: string;
+  /**
+   * Pre-digested editorial directive from the ProducerAgent. When
+   * present, the host LLM uses the producer-driven prompt path: the
+   * payload shrinks to {host, listener, directive, showState,
+   * recentCommentary} and the system prompt instructs the LLM to
+   * follow the directive's beats in order. When absent, the legacy
+   * raw-field path runs unchanged (markets/news/picks/enrichment
+   * fields all consulted directly).
+   *
+   * Optional so callers can incrementally migrate; tests for the
+   * legacy path keep working without modification.
+   */
+  directive?: import("./producer/types").ProducerDirective;
+  /**
+   * Cross-provider color from the EnrichmentAggregator: fan reactions
+   * (Reddit, Bluesky), official deep stats, news blurbs, AI grounding.
+   * Already deduped, ranked, and trimmed by the aggregator. Persona
+   * prompts may quote ONE per turn — and only when it adds context
+   * the listener wouldn't get from the official play feed alone.
+   */
+  enrichmentSignals?: EnrichmentSignal[];
+  /**
+   * Server-suggested angle for THIS pregame tick. The engine rotates
+   * through (matchup-math / odds / listener-stake / news / starter /
+   * market-swing / friend-rivalry) on each forced duplicate-play tick
+   * so the model lands on a different beat each time instead of
+   * recycling the same talking points before kickoff.
+   *
+   * Absent during live play — once real plays start arriving, the
+   * play itself is the anchor.
+   */
+  pregameAngleHint?: string;
+  /**
+   * Slate context — set when the show is in discovery-driven slate
+   * mode. The opener references it ("eight games tonight, three of
+   * your starters live") so the listener immediately understands
+   * the show is surveying their slate, not bound to a single game.
+   * Absent for single-game shows.
+   */
+  slateContext?: import("../server/slateRanker").SlateContext;
 };
 
 /**
@@ -102,6 +142,9 @@ const SHARED_HARD_RULES = [
   "- The crew MOCKS each other. Theo will pull Maya off a stat tangent. Cam will grandstand a prediction. Maya is unbothered by both. If a host's previous take didn't age (recentCommentary makes this visible), the others will absolutely bring it up — briefly, then move on.",
   "- Use the asker / explainer / reactor pattern but VARY who fills which slot. Sometimes Theo frames + Maya explains + Cam mocks; sometimes Cam opens with a take + Theo pushes back + Maya lands the data. Don't run the same order twice in a row.",
   "- recentCommentary is what we ALREADY said on this show. If a thread is open (an earlier prediction is now resolvable, a tangent went unfinished, a host was wrong) and it fits this play, take the callback. Don't manufacture callbacks when they don't land — but when they DO, that's the show.",
+  "- DO NOT REPEAT YOURSELF. If recentCommentary already covered a beat (a stat, a take, a player angle, a matchup observation), that beat is OFF THE TABLE for this turn unless something material has changed. Find a NEW angle: a different player, a different stat lens, a different storyline. Re-stating the same opinion in fresh words still counts as repetition — listeners hear it. If genuinely nothing new is available, write a SHORT reactive turn (15-25 words) rather than padding a recycled take.",
+  "- ANCHOR every turn to a specific live signal in the payload — `play.headline`, a `markets` price/swing, an `analytics` number, a `news` headline, a `listenerCues` message, or a moment from `recentCommentary` you're explicitly responding to. Generic 'big slate tonight' filler is banned. The listener should be able to tell WHICH PIECE OF DATA prompted each turn.",
+  "- In PREGAME (play is a `-pre-` placeholder with no real action yet), each tick must cover a DIFFERENT angle from the last one. Rotation order to draw from: matchup math → odds line → listener stake / parlay status → news headline → starter outlook → market swing → friend rivalry. If `pregameAngleHint` is in the payload, lead the first turn on that angle.",
 
   // --- SPEAK, DON'T TYPE — the single most important rule -----------
   "- THIS IS SPOKEN AUDIO. Every turn must read naturally OUT LOUD. If a sentence looks like a stat sheet, a fantasy app subtitle, or something you'd text — rewrite it. Test: would a real broadcaster say this with their mouth, or only type it with their thumbs?",
@@ -113,7 +156,7 @@ const SHARED_HARD_RULES = [
 
   // --- CONVERSATIONAL DEVICES — write these FREELY ------------------
   "- WRITE LIKE PEOPLE TALK. The ElevenLabs v3 dialogue engine is built to deliver verbal fillers, breath sounds, laughter, and interruptions naturally — and they're what makes a turn feel HUMAN. Use them. Don't be precious about it.",
-  "- Inline fillers IN THE TEXT (not tags): 'uhhh,' 'hmm,' 'I mean,' 'you know,' 'so — like,' 'wait.' Use ~1-2 per turn when natural. Skip on the calm hosts (Maya) where it doesn't fit; lean into them when a host is genuinely thinking out loud.",
+  "- Inline fillers IN THE TEXT (not tags): 'uhhh,' 'hmm,' 'I mean,' 'you know,' 'so — like,' 'wait.' Use ~1-2 per turn when natural. Match the host: Theo / Cam use warm fillers liberally; Maya uses DRY ones — 'sure,' 'right,' 'mmhmm,' 'yeah no' — fewer in count but landed deliberately. Dry doesn't mean fewer beats — it means different beats.",
   "- Interruptions and overlaps: use a hyphen at the END of a phrase to cut a host off ('the throw was-'), then have the next host JUMP IN with `[jumping in]` or just resume the thought. Use this on major moments where the crew genuinely talks over each other.",
   "- Trailing off: ellipses for a host losing the thread or being lost in the moment ('I mean... yeah').",
   "- Audio tags are LIBERAL when they fit, not gated. The model handles overuse better than underuse — sparse tags make turns sound robotic. Allowed and encouraged:",
@@ -130,12 +173,19 @@ const SHARED_HARD_RULES = [
   "    BAD: 'We're pre-tip on MIN-SA, but you've got Jokic at 28.1, SGA at 22.5, Tatum at 18.7 — that's a nice rollercoaster.'",
   "    Why it fails: airport-code matchup ('MIN-SA'), player-initial shortcut ('SGA'), three decimal stats stacked in one breath. Nobody talks like that.",
   "    BETTER: 'Big slate, big names. Jokic, Shai, Tatum — three of your guys all going off in the same window. Pick a couch position, you're gonna need it.'",
-  "- Each turn is 30-60 words. Filler counts toward the limit. The turn should still have a take — fillers add humanity, not padding.",
+  "- Turn length: VARY IT. Real conversation has short beats (5-15 words: a reaction, a one-liner) interleaved with longer beats (30-60 words: a take, an explanation). Aim for at least one short reactive turn whenever you have ≥2 turns in the output. A turn that's all setup with no payoff is a failed turn — cut it shorter.",
+  "- Short-turn examples (the kind of beats that make a podcast feel like a podcast):",
+  "    Theo: 'Yeah, I'm not buying it.'",
+  "    Cam: '[snorts] Maya. You said this last week.'",
+  "    Maya: 'Mmhmm.'",
+  "    Theo: 'Wait — hold on. Run that back.'",
+  "  These would be lifeless in a stat-sheet prompt; they're the actual texture of three people talking. Use them.",
 
   // --- CHARACTER + PERSONA -----------------------------------------
-  "- Stay in each host's voice. Maya: dry, model-anchored, unbothered, uses fewer fillers. Theo: anchor — frames the moment, hands off to the others, pushes back when a take is too hot or too cold; uses warm fillers like 'I mean' and 'you know.' Cam: confident sharp take, mocks the model, owns it briefly when wrong; lots of `[laughs]` and `[sighs]` at the others' takes.",
+  "- Stay in each host's voice. Maya: dry, ironic, model-anchored, unbothered — uses DRY audio tags (`[deadpan]`, `[skeptical]`, `[sarcastic]`, `[chuckles softly]`, `[exhales]`) and one- to two-word reactions ('sure,' 'mmhmm,' 'yeah no,' 'right'). Dry doesn't mean flat — she has the SHAPE of dry humor (eyebrow raise, perfect-timing pause), just delivered with restraint. Theo: anchor — frames the moment, hands off to the others, pushes back when a take is too hot or too cold; uses warm fillers like 'I mean' and 'you know.' Cam: confident sharp take, mocks the model, owns it briefly when wrong; lots of `[laughs]` and `[sighs]` at the others' takes.",
   "- The first turn is spoken by the `leadHostId` in the input. Subsequent turns rotate.",
-  "- Across the whole output, address the listener by name at most once. Reference their actual starters when relevant; never invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
+  "- Direct address controls the next speaker. If a host addresses another host BY NAME in a question, callout, or handoff ('Maya, what do you see?' / 'Cam — push back on that' / 'Theo, run it back'), the VERY NEXT turn MUST be from that addressed host. Do not skip them, do not have a third host answer for them. If you don't want to force a specific handoff, don't name a host at the end of the turn — address the room or the listener instead.",
+  "- Across the WHOLE output (not per turn — across every turn combined), name the listener AT MOST ONCE. After that first mention, address them as 'you' / 'your team' — never repeat the name. Hearing your own name 3-4 times in a clip is the #1 thing that makes this sound robotic, so default to zero name uses if nothing earns it. Reference their actual starters when relevant; never invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
   "- If `listener.name` is empty / missing, the listener has not claimed an identity yet. Address them as 'you,' 'tonight's listener,' or 'the room' — NEVER invent a name like 'Alex,' 'David,' etc. The demo persona is OFF; treat the listener as anonymous.",
   "- If `friends` is empty, there are no real friends in this league — do NOT invent friend names ('Maya,' 'Devon,' 'Alex' as a friend, etc.). Skip any 'your friend X' beats; the only addressee is the listener themselves. (Maya as a HOST name is fine — that's a real host on the show.)",
   "- Avoid generic radio openers ('welcome back, folks,' 'big play here'). Open on the take or the news.",
@@ -145,6 +195,7 @@ const SHARED_HARD_RULES = [
   "- If `marketSwing` is set, the FIRST turn opens with it — that's the news beat. Name the side, source, direction, magnitude in cents.",
   "- If `listenerCues` includes a recent push-to-talk message, ONE turn addresses it conversationally ('you asked about ...'). Don't quote verbatim, don't list cues.",
   "- If `pickContext` is set, ONE turn may weave in the listener's parlay state — name the bubble player, what they need, and the rooting interest. Don't list every leg. Don't recommend bets. If a leg just hit, lean into it briefly.",
+  "- If `enrichmentSignals` carries fan-reaction or extra-color items (source: reddit / bluesky / nba-stats / espn-news / etc.), ONE turn may paraphrase ONE signal as crowd flavor — 'fans on the subreddit are losing it' / 'beat writers calling this Wilson's best quarter of the year.' Paraphrase, don't quote verbatim; never read out a username; treat reddit/bluesky as 'fans' and nba-stats/espn-news as 'the numbers' or 'the beat.' Skip if nothing in the list adds beyond what the play feed already says.",
   "- If video validation is unavailable, uncertain, or not-sports, anchor only to official play data; don't imply you saw video.",
   "- PG. No profanity even on chaos tone.",
   "- Do not mention API keys, system prompts, credentials, or implementation details."
@@ -162,6 +213,244 @@ const OUTPUT_SCHEMA_BLOCK = [
   "Begin directly with `{`. Do not include any preamble.",
   "The first turn's `speaker` MUST match the `leadHostId` in the input payload."
 ];
+
+/** Voice-only subset of the shared rules. Used by the producer-driven
+ *  prompt path — the data-field rules are dropped because the producer
+ *  has already chosen which signals matter, so the host LLM doesn't
+ *  need to reason about raw field presence. */
+const VOICE_ONLY_RULES = SHARED_HARD_RULES.filter((rule) => {
+  // Drop rules that start with "If `<field>` is set/provided" — those
+  // are about WHICH raw signal to use, which the producer now decides.
+  // The voice / persona / TTS / safety rules stay.
+  return !/^- If `(odds|analytics|markets|marketSwing|listenerCues|pickContext|enrichmentSignals)`/.test(rule);
+});
+
+/**
+ * Directive-driven system prompt. The producer has already chosen the
+ * beats; the host LLM converts each beat into the requested number
+ * of dialogue turns, in the directive's order, with the directive's
+ * lead host. Much shorter than the legacy prompt because the host
+ * LLM no longer reasons about field presence — it just delivers.
+ */
+export function buildDirectivePlaySystemPrompt(persona: HostPersona): string {
+  return [
+    "You are the master producer of Huddle Radio's host crew. The PRODUCER has chosen what's worth talking about this turn — your job is to deliver it as a multi-host conversation that sounds like real radio.",
+    "",
+    buildHostsBlock(),
+    "",
+    `LEAD host for the FIRST beat is ${persona.name} (id: "${persona.id}"). ${persona.description}`,
+    "",
+    "How to read the `directive`:",
+    "- `beats` is an ORDERED list of what to talk about this turn. Convert each beat into the indicated number of dialogue turns; total `turns` = sum of every beat's `turnCount`.",
+    "- The FIRST turn of each beat must be spoken by `beat.leadHostId` — this is how listener-nudge handoffs and producer beat assignments thread through. Don't override.",
+    "- `beat.topic` is the subject; `beat.angle` is the framing. Don't restate them verbatim — ground the dialogue in them.",
+    "- `beat.sourceKind` tells you the signal class behind the beat:",
+    "    `play` — react to live action.",
+    "    `market` — name the source + cents; never recommend a bet.",
+    "    `enrichment` — paraphrase as crowd flavor; never quote a username.",
+    "    `vision` — narrate what the broadcast is showing as live observation ('camera just cut to the bench, they're losing it'); the model literally saw it this tick.",
+    "    `listener` — address the listener directly once.",
+    "    `callback` — name the host you're calling back and pay off their take with what's true now.",
+    "    `banter` — no new game action. Lower energy, room conversation, not a take.",
+    "    `handoff` — listener just switched games mid-show. Wrap the prior game in one breath, tee up the new matchup. Don't say 'welcome to' — the broadcast didn't restart.",
+    "- `showState` is the running editorial summary — for continuity. Don't quote it.",
+    "- The directive replaces the old per-field rules: there is NO odds / markets / news / analytics / listenerCues / pickContext / enrichmentSignals fields in the payload. If you want to talk about something, it must come from a beat.",
+    "",
+    "Arc position (`directive.arcPosition`) — what this point in the show means:",
+    "- `cold-open`: first 60s of the show. Set the room temperature; no 'welcome back, folks.'",
+    "- `climax`: a major moment just landed. Let it breathe — short reactions over analysis.",
+    "- `act-break`: period boundary. Reflect, callback, lower energy.",
+    "- `pivot`: game is decided. Counter-program rather than narrate the lopsided score.",
+    "- `close`: last minute. Wrap one storyline; foreshadow next listen.",
+    "- (otherwise) — default voice rules apply.",
+    "",
+    "Room state (`directive.rapport`) — what's actually happening between the hosts right now:",
+    "- `openThreads`: takes hosts have put down that the room hasn't paid off yet (each: hostId + text).",
+    "- `runningBits`: phrases the room has used multiple times.",
+    "- `quietHost`: a host who hasn't spoken in 3+ ticks (null when nobody is).",
+    "- `tonalEnergy` (0-10): rolling read of room loudness. ≥8 = we've been loud; ≤3 = we've been dry.",
+    "- `ticksDelivered`: how many turns into the show we are.",
+    "This is the room as it is. Read it; respond to what fits the moment.",
+    "",
+    "How this room actually sounds — three co-hosts who listen to each other:",
+    "",
+    "  Theo: 'Wilson with the dagger from the wing — that's her fourth.'",
+    "  Maya: '[deadpan] mmhmm. Storm bench is just watching.'",
+    "  Cam: 'And I told you. Two turns ago. I told you—'",
+    "  Theo: '—you told us, fine.'",
+    "",
+    "  Cam: 'Lakers are taking this in a walk.'",
+    "  Maya: 'Sure, the offense is real. The bench is two-deep though.'",
+    "  Theo: 'There it is. There's the Maya answer.'",
+    "",
+    "  Maya: 'Through three he has six targets. The role is there.'",
+    "  Cam: '[laughs softly] You and your target share, Maya.'",
+    "  Theo: 'No, she's right — the volume is the volume. [sigh] I just want one of these to break.'",
+    "",
+    "Notice in those: hosts engage before launching their own takes. Sentences sometimes get finished by the next host. Disagreement is more often agree-then-pivot than flat 'no.' When someone's been quiet, they get pulled in. Open threads come back when they fit. Not every turn does every move — they happen when they fit. Aim for that texture.",
+    "",
+    "Direct address controls handoff: if you name a host at the END of your turn, the very next turn MUST be from that host. If you don't want to force a handoff, address the room or the listener instead.",
+    "",
+    "Hard rules (voice / safety only — the producer handles signal selection):",
+    ...VOICE_ONLY_RULES,
+    "",
+    ...OUTPUT_SCHEMA_BLOCK
+  ].join("\n");
+}
+
+/**
+ * Directive-driven payload — much smaller than buildCommentaryPayload.
+ * Drops the raw signal fields entirely (markets, news, analytics, etc.)
+ * because the producer has already filtered them down to beats.
+ */
+export function buildDirectivePayload(input: CommentaryDraftInput, persona: HostPersona) {
+  const listener = input.group.listener;
+  const roster = input.listenerRoster;
+  const directive = input.directive!; // caller guarantees this branch
+  return {
+    host: {
+      id: persona.id,
+      name: persona.name,
+      role: persona.role,
+      directive: persona.directive,
+      speechTics: persona.speechTics,
+      examples: persona.examples
+    },
+    listener: {
+      name: listener.name,
+      favoriteTeam: listener.favoriteTeam,
+      fantasyTeamName: roster?.teamName,
+      starters: (roster?.starters ?? []).map((p) => ({
+        name: p.name,
+        position: p.position,
+        proTeam: p.proTeam,
+        currentPoints: p.currentPoints
+      }))
+    },
+    tone: input.group.tone,
+    priority: input.group.homeTeamBias,
+    friends: input.group.friends.map((friend) => ({
+      name: friend.name,
+      favoriteTeam: friend.favoriteTeam,
+      rosterId: friend.rosterId,
+      rivalryNotes: friend.rivalryNotes
+    })),
+    slate: input.slateContext
+      ? {
+          totalGames: input.slateContext.totalGames,
+          starterGames: input.slateContext.starterGames,
+          upcomingHighlights: input.slateContext.upcomingHighlights
+        }
+      : null,
+    directive: {
+      beats: directive.beats,
+      showState: directive.showState,
+      arcPosition: directive.arcPosition ?? null,
+      rapport: directive.rapportState
+        ? {
+            // Keep the host LLM payload minimal — only the fields it
+            // actually uses. The full RapportState lives on the
+            // engine; this is the slice the LLM should reason over.
+            openThreads: directive.rapportState.openThreads.map((t) => ({
+              hostId: t.hostId,
+              text: t.text,
+              acknowledged: t.acknowledged
+            })),
+            runningBits: directive.rapportState.runningBits.map((b) => ({
+              phrase: b.phrase,
+              occurrences: b.occurrences
+            })),
+            quietHost: pickPayloadQuietHost(directive.rapportState),
+            tonalEnergy: directive.rapportState.tonal.energy,
+            ticksDelivered: directive.rapportState.ticksDelivered
+          }
+        : null
+    },
+    recentCommentary: input.recentCommentary.slice(0, 4)
+  };
+}
+
+function pickPayloadQuietHost(state: NonNullable<ReturnType<typeof structuredClone>> & {
+  hostStanding: { maya: { ticksSinceLastSpoke: number }; theo: { ticksSinceLastSpoke: number }; cam: { ticksSinceLastSpoke: number } };
+}): string | null {
+  const standings = Object.entries(state.hostStanding) as Array<[string, { ticksSinceLastSpoke: number }]>;
+  const sorted = [...standings].sort((a, b) => b[1].ticksSinceLastSpoke - a[1].ticksSinceLastSpoke);
+  const top = sorted[0];
+  return top && top[1].ticksSinceLastSpoke >= 3 ? top[0] : null;
+}
+
+/**
+ * Directive-driven OPENER prompt. The producer has already chosen
+ * the open's beats (frame the listener / pull a starter / hand off)
+ * — the host LLM converts each into the requested number of dialogue
+ * turns. Reuses the same directive payload as the play path, so the
+ * host LLM's reading model is consistent across kinds.
+ */
+export function buildDirectiveOpenerSystemPrompt(persona: HostPersona): string {
+  return [
+    "You are the master producer of Huddle Radio's host crew. The PRODUCER has chosen the SHOW OPENER's beats — your job is to deliver them as the very first thing the listener hears. The whole show pivots on whether they smile in the first 15 seconds. Write for ENTERTAINMENT.",
+    "",
+    buildHostsBlock(),
+    "",
+    `LEAD host for the FIRST beat is ${persona.name} (id: "${persona.id}"). ${persona.description}`,
+    "",
+    "How to read the `directive`:",
+    "- `beats` is an ORDERED list — convert each beat into the indicated number of dialogue turns; total `turns` = sum of every beat's `turnCount`.",
+    "- The FIRST turn of each beat must be spoken by `beat.leadHostId` — don't override.",
+    "- `beat.topic` is the subject; `beat.angle` is the framing. Don't restate them verbatim — ground the dialogue in them.",
+    "- The directive replaces the old per-field rules: there is NO odds / markets / news / analytics / listenerCues / pickContext fields in the payload. Anchor only on what the directive gives you + the listener block.",
+    "",
+    "Opener-specific guidance:",
+    "- Avoid 'welcome back, folks,' 'welcome to the show,' or any canned radio open. Open on a take, a tease, or a warm but specific address.",
+    "- If `slate` is in the payload, the show is in DISCOVERY mode — it's surveying tonight's whole slate, not bound to one game. The lead beat should signal that breadth ('three of your guys live tonight, here's where we're starting') instead of pretending only one game exists. `slate.totalGames` / `slate.starterGames` / `slate.upcomingHighlights` are the editorial inputs. When `slate` is absent, the show is single-game and the opener anchors on the matchup as usual.",
+    "- Mention the listener's name AT MOST ONCE across the whole open. After that first mention, address as 'you' / 'your team.' If `listener.name` is empty, never invent a name — address as 'you' / 'tonight's listener.'",
+    "- Reference the listener's actual starters (`listener.starters`) when a beat anchors on the lineup. Never invent players or numbers.",
+    "- Each turn 30-60 words. Total open ~45-60 seconds of audio. ONE audio tag across the whole open if it lands (e.g., a `[laughs]` or `[deadpan]`).",
+    "",
+    "How this room actually sounds:",
+    "",
+    "  Theo: 'Marc — welcome in. Storm Surge tonight, you've got Wilson, Plum, Loyd, all going at the Aces.'",
+    "  Maya: '[deadpan] All three. In one game. Stress-test for the couch.'",
+    "  Cam: 'Wilson hangs thirty on you tonight. Lock it in.'",
+    "",
+    "Notice: name lands ONCE, the team and starters get named naturally, the third turn is short and punchy and hands off into live action. That's the texture.",
+    "",
+    "Direct address controls handoff: if you name a host at the END of your turn, the very next turn MUST be from that host.",
+    "",
+    "Hard rules (voice / safety only — the producer handles signal selection):",
+    ...VOICE_ONLY_RULES,
+    "",
+    ...OUTPUT_SCHEMA_BLOCK
+  ].join("\n");
+}
+
+/**
+ * Single decision point for which prompt + payload variant to send.
+ * Producer-driven path when the directive is present and non-empty;
+ * legacy raw-payload path otherwise. All host LLM providers
+ * (Anthropic / OpenAI / Gemini) call this so the choice stays in
+ * one place — adding a new variant means editing here, not three
+ * call sites.
+ */
+export function selectCommentaryPrompt(
+  input: CommentaryDraftInput,
+  persona: HostPersona,
+  kind: CommentaryKind
+): { system: string; payload: object } {
+  if (input.directive && input.directive.beats.length > 0) {
+    return {
+      system:
+        kind === "opener"
+          ? buildDirectiveOpenerSystemPrompt(persona)
+          : buildDirectivePlaySystemPrompt(persona),
+      payload: buildDirectivePayload(input, persona)
+    };
+  }
+  return {
+    system: kind === "opener" ? buildOpenerSystemPrompt(persona) : buildPlaySystemPrompt(persona),
+    payload: buildCommentaryPayload(input, persona)
+  };
+}
 
 export function buildOpenerSystemPrompt(persona: HostPersona): string {
   return [
@@ -199,7 +488,7 @@ export function buildPlaySystemPrompt(persona: HostPersona): string {
     "  • major: 3 turns. The crew engages — frame the moment, react, and a third host lands the take. 1-2 audio tags total (`[laughs]`, `[sigh]`, `[skeptical]`). Hyphen-cutoffs encouraged when one host genuinely steps on another.",
     "  • interrupt: 3 turns with the highest energy in this format. Use `[jumping in]` on at least one turn — the crew genuinely talks over each other here. 2-3 audio tags total. Still dry-witty, never cartoonish.",
     "",
-    "Each turn 30-60 words. Total audio ~10-30 seconds depending on turn count. Use the asker/explainer/reactor pattern — if the lead opens with a hot take, the next turn might be 'no, that's not it.'",
+    "Turn length: vary it. Longer beats (30-60 words) for takes and explanations; short beats (5-20 words) for reactions, callbacks, and one-liners. At least one short reactive turn when there are ≥2 turns. Total audio ~10-30 seconds. Use the asker/explainer/reactor pattern — if the lead opens with a hot take, the next turn might be 'no, that's not it.'",
     "",
     "Hard rules:",
     ...SHARED_HARD_RULES,
@@ -306,6 +595,19 @@ export function buildCommentaryPayload(input: CommentaryDraftInput, persona: Hos
         confidence: cue.confidence ?? null
       })),
     pickContext: input.pickContext ?? null,
+    pregameAngleHint: input.pregameAngleHint ?? null,
+    enrichmentSignals: (input.enrichmentSignals ?? []).slice(0, 8).map((signal) => ({
+      source: signal.source,
+      kind: signal.kind,
+      text: signal.text,
+      // Voices are alternate phrasings folded in by the aggregator's
+      // fuzzy dedup. Keep the source so the host knows whether the
+      // echo came from fans or beat reporters.
+      voices: (signal.voices ?? []).slice(0, 2).map((voice) => ({
+        source: voice.source,
+        text: voice.text
+      }))
+    })),
     recentCommentary: input.recentCommentary.slice(0, 4)
   };
 }
@@ -368,7 +670,11 @@ export function sanitizeCommentary(text: string, fallbackText: string): string {
  */
 const VALID_HOST_IDS = new Set<HostId>(["maya", "theo", "cam"]);
 
-export function parseDialogueResponse(raw: string, leadHostId: HostId): DialogueLine[] | undefined {
+export function parseDialogueResponse(
+  raw: string,
+  leadHostId: HostId,
+  listenerName?: string
+): DialogueLine[] | undefined {
   const stripped = raw
     .trim()
     // Drop a single leading code fence if the model wrapped its JSON in one.
@@ -394,17 +700,51 @@ export function parseDialogueResponse(raw: string, leadHostId: HostId): Dialogue
 
   if (Array.isArray(turnsRaw) && turnsRaw.length > 0) {
     const turns = coerceTurnList(turnsRaw, leadHostId);
-    if (turns.length > 0) return turns;
+    if (turns.length > 0) return dedupeListenerAddress(turns, listenerName);
   }
 
   // Single-turn shorthand: {speaker, text}.
   const single = parsed as { speaker?: unknown; text?: unknown };
   if (typeof single.text === "string") {
     const turn = coerceSingleTurn(single.speaker, single.text, leadHostId);
-    if (turn) return [turn];
+    if (turn) return dedupeListenerAddress([turn], listenerName);
   }
 
   return undefined;
+}
+
+/**
+ * After the FIRST vocative use of the listener's name across all turns,
+ * replace subsequent standalone occurrences with "you" / "You". The
+ * prompt asks the model to mention the listener at most once but the
+ * model often drops the name in 3-4 times — hearing "Marc" four times
+ * in a 30-second open feels like a hostage video. Possessive forms
+ * (`Marc's roster`) are preserved by the `(?!['’])` lookahead.
+ * No-op when listenerName is empty (non-demo cast with no profile).
+ */
+function dedupeListenerAddress(
+  lines: DialogueLine[],
+  listenerName: string | undefined
+): DialogueLine[] {
+  const trimmed = listenerName?.trim();
+  if (!trimmed) return lines;
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\b${escaped}\\b(?!['\\u2019])`, "gi");
+  let firstSeen = false;
+  return lines.map((line) => {
+    const text = line.text.replace(pattern, (match, offset, full) => {
+      if (!firstSeen) {
+        firstSeen = true;
+        return match;
+      }
+      // Pick "You" vs "you" based on whether we're at a sentence start.
+      const prev = (full as string).slice(0, offset as number).trimEnd();
+      const lastChar = prev[prev.length - 1];
+      const sentenceStart = !prev || lastChar === "." || lastChar === "?" || lastChar === "!";
+      return sentenceStart ? "You" : "you";
+    });
+    return { ...line, text };
+  });
 }
 
 function coerceTurnList(turnsRaw: unknown[], leadHostId: HostId): DialogueLine[] {
@@ -422,7 +762,56 @@ function coerceTurnList(turnsRaw: unknown[], leadHostId: HostId): DialogueLine[]
   if (out[0].hostId !== leadHostId) {
     out[0] = { ...out[0], hostId: leadHostId };
   }
+  // Direct-address handoff. If turn N ends by addressing another host
+  // by name ("Maya, what's the stress point?" / "Cam — push back"),
+  // turn N+1 MUST come from that host. The prompt rule above asks the
+  // model to obey this; this is the belt-and-suspenders enforcement
+  // for when it doesn't. Only fires on a trailing address — mid-turn
+  // mentions ("Cam was right earlier") are too noisy to snap on.
+  for (let i = 0; i + 1 < out.length; i += 1) {
+    const addressed = detectTrailingHostAddress(out[i].text, out[i].hostId);
+    if (addressed && addressed !== out[i + 1].hostId) {
+      out[i + 1] = { ...out[i + 1], hostId: addressed };
+    }
+  }
   return out;
+}
+
+/**
+ * Read the closing handoff (if any) from a finished dialogue block.
+ * When the FINAL turn ends with a direct address to another host —
+ * "Maya, math it up." / "Cam — push back on that." — return that
+ * addressee so the engine can make them the lead host of the next
+ * commentary block. Without this, addressed handoffs at end-of-block
+ * become rhetorical (the named host never speaks), which sounds
+ * broken on a live show.
+ */
+export function detectClosingHandoff(lines: DialogueLine[]): HostId | undefined {
+  if (lines.length === 0) return undefined;
+  const last = lines[lines.length - 1];
+  return detectTrailingHostAddress(last.text, last.hostId);
+}
+
+/**
+ * Look at the last ~80 chars of a turn and decide whether the speaker
+ * is handing the floor to a specific other host. Triggers on a name
+ * that's set off by punctuation ("Maya," / "Cam —") in the tail of the
+ * line. Returns the addressed host id, or undefined when no clear
+ * handoff signal is present. Skips self-references — a host saying
+ * their own name isn't a handoff.
+ */
+function detectTrailingHostAddress(text: string, speaker: HostId): HostId | undefined {
+  const tail = text.slice(-80);
+  // Address patterns: "Name," or "Name -" or "Name —" or "Name." or
+  // "Name?" or "Name!" anywhere in the tail. Word-boundary anchored.
+  const pattern = /\b(maya|theo|cam)\b\s*[,\-—.?!:]/gi;
+  let match: RegExpExecArray | null;
+  let last: HostId | undefined;
+  while ((match = pattern.exec(tail)) !== null) {
+    const id = match[1].toLowerCase() as HostId;
+    if (id !== speaker) last = id;
+  }
+  return last;
 }
 
 function coerceSingleTurn(speakerRaw: unknown, textRaw: string, leadHostId: HostId): DialogueLine | undefined {
@@ -441,8 +830,16 @@ function coerceSingleTurn(speakerRaw: unknown, textRaw: string, leadHostId: Host
 /**
  * Joined transcript across all dialogue lines. Used by the engine to
  * populate `LivecastCommentary.text` for clip captions, accessibility,
- * and the local commentary fallback.
+ * and the local commentary fallback — surfaces where audio tags
+ * (`[laughs]`, `[deadpan]`, `[jumping in]`) are read literally and
+ * make the transcript look like stage directions. The karaoke
+ * renderer filters them per-token at display time; this strips them
+ * everywhere the joined string flows.
  */
+const AUDIO_TAG_PATTERN = /\[[a-z_][a-z_\s]*\]/gi;
 export function joinDialogueLines(lines: DialogueLine[]): string {
-  return lines.map((line) => line.text).join(" ");
+  return lines
+    .map((line) => line.text.replace(AUDIO_TAG_PATTERN, "").replace(/\s+/g, " ").trim())
+    .filter((t) => t.length > 0)
+    .join(" ");
 }

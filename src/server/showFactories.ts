@@ -21,6 +21,22 @@ import { FishAudioTTSProvider, buildFishHostVoiceMap } from "../providers/fishAu
 import { InworldTtsProvider, buildInworldHostVoiceMap } from "../providers/inworldTtsProvider";
 import type { TTSProvider } from "../shared/contracts";
 import { UserVideoProvider } from "../providers/userVideoProvider";
+import { EnrichmentAggregator } from "../providers/enrichment/aggregator";
+import { RedditGameThreadProvider } from "../providers/enrichment/redditProvider";
+import { BlueskyProvider } from "../providers/enrichment/blueskyProvider";
+import { WikipediaProvider } from "../providers/enrichment/wikipediaProvider";
+import { LocalProducer } from "../providers/producer/localProducer";
+import { AnthropicProducer } from "../providers/producer/anthropicProducer";
+import { ProducerChain } from "../providers/producer/producerChain";
+import type { ProducerAgent } from "../providers/producer/types";
+import { LocalEvaluator } from "./eval/localEvaluator";
+import { AnthropicEvaluator } from "./eval/anthropicEvaluator";
+import { EvalChain } from "./eval/evalChain";
+import type { Evaluator } from "./eval/types";
+import { LocalClaimsExtractor } from "./memory/localExtractor";
+import { getSharedClaimsStore } from "./memory/claimsStore";
+import type { ClaimsExtractor, ClaimsStore } from "./memory/types";
+import { CallbackEnrichmentProvider } from "../providers/enrichment/callbackProvider";
 
 /**
  * Provider factories shared by the Fastify legacy show route and the
@@ -224,7 +240,8 @@ export function createTTSProvider(
         config.INWORLD_API_KEY,
         config.INWORLD_VOICE_ID,
         config.INWORLD_MODEL,
-        buildInworldHostVoiceMap()
+        buildInworldHostVoiceMap(),
+        config.INWORLD_TIMESTAMPS_ENABLED === "true"
       );
     case "mock":
     default:
@@ -248,6 +265,7 @@ export function getActiveProviders(
     fantasy: fantasyProvider,
     sportsData: sportsDataMode === "espn" ? "ESPN Scoreboard" : "Demo Sports Data",
     news: describeNewsStack(),
+    enrichment: describeEnrichmentStack(),
     video: "User Video Source",
     model: modelProviderLabel(),
     commentary: describeCommentaryStack(),
@@ -262,6 +280,91 @@ export function getActiveProviders(
   };
 }
 
+/**
+ * Build the per-show EnrichmentAggregator with whatever free providers
+ * we have configured. Each show owns its own aggregator instance so
+ * the per-provider cache is per-game (the aggregator keys by gameId
+ * internally, but resetting at show start avoids stale cross-show
+ * carryover when the same browser starts a new session).
+ *
+ * Add new providers here as they come online — Bluesky, NBA Stats API,
+ * Wikipedia, Perplexity grounding, etc.
+ */
+export function createEnrichmentAggregator(options: { listenerId?: string } = {}): EnrichmentAggregator {
+  return new EnrichmentAggregator({
+    providers: enrichmentProviderInstances(options.listenerId)
+  });
+}
+
+/** Single source of truth for which enrichment providers are wired,
+ *  shared by the per-show aggregator and the producer-panel label so
+ *  one stays in sync with the other. Add new providers here.
+ *
+ *  CallbackEnrichmentProvider is gated on listenerId — it has nothing
+ *  to surface for an anonymous listener (claims are per-listener). */
+function enrichmentProviderInstances(listenerId?: string) {
+  const providers: Array<RedditGameThreadProvider | BlueskyProvider | WikipediaProvider | CallbackEnrichmentProvider> = [
+    new RedditGameThreadProvider(),
+    new BlueskyProvider(),
+    new WikipediaProvider()
+  ];
+  if (listenerId) {
+    providers.push(new CallbackEnrichmentProvider({ store: getSharedClaimsStore(), listenerId }));
+  }
+  return providers;
+}
+
+/** Build the per-show claims extractor chain. Today: Local only (a
+ *  heuristic regex pass). Future: prepend an LLM-backed extractor
+ *  the same way producer + evaluator do. */
+export function createClaimsExtractor(): ClaimsExtractor {
+  return new LocalClaimsExtractor();
+}
+
+/** Process-wide claims store accessor — exposed so the engine can
+ *  save freshly extracted claims without importing the store
+ *  module directly. Future: swap to a persistent backing store
+ *  behind the same accessor. */
+export function getClaimsStoreSingleton(): ClaimsStore {
+  return getSharedClaimsStore();
+}
+
+export function describeEnrichmentStack(): string {
+  const providers = enrichmentProviderInstances();
+  if (providers.length === 0) return "(none)";
+  return providers.map((p) => p.label).join(", ");
+}
+
+/**
+ * Build the per-show producer chain. AnthropicProducer (Haiku — fast
+ * + cheap) leads when ANTHROPIC_API_KEY is set; LocalProducer always
+ * tail-anchors so a Claude outage falls through cleanly without
+ * blanking the show. Same chain pattern as the host LLM.
+ */
+export function createProducerAgent(): ProducerAgent {
+  const chain: ProducerAgent[] = [];
+  if (config.ANTHROPIC_API_KEY) {
+    chain.push(new AnthropicProducer(config.ANTHROPIC_API_KEY));
+  }
+  chain.push(new LocalProducer());
+  return chain.length === 1 ? chain[0] : new ProducerChain(chain);
+}
+
+/**
+ * Build the per-show synthetic-listener evaluator chain. Same shape
+ * as the producer chain — Anthropic Haiku first when keyed,
+ * LocalEvaluator always tail-anchored so the eval ring buffer never
+ * goes empty when Claude is down.
+ */
+export function createEvaluator(): Evaluator {
+  const chain: Evaluator[] = [];
+  if (config.ANTHROPIC_API_KEY) {
+    chain.push(new AnthropicEvaluator(config.ANTHROPIC_API_KEY));
+  }
+  chain.push(new LocalEvaluator());
+  return chain.length === 1 ? chain[0] : new EvalChain(chain);
+}
+
 export async function getHealth(): Promise<ProviderHealth[]> {
   const providers = [
     new DemoFantasyProvider(),
@@ -274,5 +377,11 @@ export async function getHealth(): Promise<ProviderHealth[]> {
     createCommentaryProvider(),
     createTTSProvider()
   ];
-  return Promise.all(providers.map((provider) => provider.health()));
+  // Enrichment providers are owned by the aggregator (not constructed
+  // here) so failures across them stay isolated. We use a transient
+  // aggregator for the health probe — the per-show aggregator is
+  // built fresh in createEnrichmentAggregator at show start.
+  const enrichmentHealth = await createEnrichmentAggregator().health();
+  const baseHealth = await Promise.all(providers.map((provider) => provider.health()));
+  return [...baseHealth, ...enrichmentHealth];
 }

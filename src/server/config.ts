@@ -65,6 +65,16 @@ const EnvSchema = z.object({
   INWORLD_VOICE_ID_THEO: z.string().optional(),
   INWORLD_VOICE_ID_CAM: z.string().optional(),
   INWORLD_MODEL: z.string().default("inworld-tts-2"),
+  /**
+   * When "true" (default), Inworld requests come with `timestampType: "WORD"`
+   * so the client can render the audio-synced live transcript with
+   * karaoke highlighting + mention chips. Set to "false" to skip the
+   * alignment pass — Inworld returns audio faster (saves the
+   * timestamp-computation overhead) but the live transcript falls
+   * back to a static non-karaoke view. Useful when chasing
+   * speaker-to-speaker pauses caused by per-turn synth latency.
+   */
+  INWORLD_TIMESTAMPS_ENABLED: z.enum(["true", "false"]).default("true"),
   ESPN_SWID: z.string().optional(),
   ESPN_S2: z.string().optional(),
   // Yahoo Fantasy OAuth. Yahoo requires HTTPS callback URLs even for

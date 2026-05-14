@@ -7,6 +7,7 @@ const providers = {
   fantasy: "Demo Fantasy",
   sportsData: "ESPN Scoreboard",
   news: "Demo News",
+  enrichment: "Reddit Game Threads",
   video: "User Video Source",
   model: "OpenAI Vision gpt-5.2",
   commentary: "OpenAI gpt-5.2",

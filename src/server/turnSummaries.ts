@@ -36,6 +36,28 @@ export type TurnSummary = {
   errorReason?: string;
   /** ISO timestamp at the start of the turn. */
   startedAt: string;
+  /** How many enrichment signals (Reddit, Bluesky, …) the producer
+   *  passed to the host prompt for this turn. 0 means either no
+   *  providers fired or every signal was deduped/filtered out — both
+   *  worth distinguishing from "the feature is broken." */
+  enrichmentSignalCount?: number;
+  /** Distinct sources that contributed at least one signal — sorted
+   *  for stable diff. Helps answer "is Reddit ever firing?" from the
+   *  diagnostics endpoint without parsing logs. */
+  enrichmentSources?: string[];
+  /** Producer agent id that emitted the directive for this turn.
+   *  Suffixed with `:error` when the producer threw and the engine
+   *  fell back to the legacy raw-field host prompt. */
+  producer?: string;
+  /** Ordered `sourceKind` of every beat the producer emitted —
+   *  ["market", "enrichment", "play"] etc. Lets us answer "did the
+   *  producer ever lead with an enrichment beat?" from logs. */
+  producerBeats?: string[];
+  /** Show-arc position the planner was in for this tick (cold-open /
+   *  build / mid-show / climax / act-break / pivot / close). Lets us
+   *  answer "what fraction of the show happened in pivot mode?"
+   *  without joining external tables. */
+  arcPosition?: string;
 };
 
 const BUFFER_LIMIT = 100;

@@ -134,4 +134,154 @@ describe("ShowEngine", () => {
     const b = createEngine();
     expect(a.id).not.toEqual(b.id);
   });
+
+  describe("slate mode", () => {
+    it("ranks the slate and boots the show on the top entry", async () => {
+      const engine = createEngine();
+      // A 2-game slate where the listener's favorite team (KC) is in
+      // the SECOND entry — the ranker should reorder so KC@DET wins
+      // even though BUF@CIN was passed first.
+      void engine.start({
+        ...baseRequest,
+        sportsGameId: undefined,
+        group: {
+          ...baseRequest.group,
+          listener: { ...baseRequest.group.listener, favoriteTeam: "KC" }
+        },
+        slate: [
+          {
+            id: "demo-buf-cin",
+            label: "Bills at Bengals",
+            shortName: "BUF @ CIN",
+            sport: "nfl",
+            awayTeam: "BUF",
+            homeTeam: "CIN",
+            score: { away: 0, home: 0 },
+            status: "scheduled",
+            detail: "Tonight"
+          },
+          {
+            id: "demo-kc-det",
+            label: "Chiefs at Lions",
+            shortName: "KC @ DET",
+            sport: "nfl",
+            awayTeam: "KC",
+            homeTeam: "DET",
+            score: { away: 0, home: 0 },
+            status: "scheduled",
+            detail: "Tonight"
+          }
+        ]
+      });
+      const events = await collectEvents(engine, { count: 1, timeoutMs: 8000 });
+      const snapshot = events.find(
+        (e): e is Extract<ClientServerEvent, { type: "snapshot" }> => e.type === "snapshot"
+      );
+      expect(snapshot).toBeDefined();
+      // The boot game is the top-ranked entry — KC@DET, not BUF@CIN.
+      expect(snapshot!.game.gameId).toBe("demo-kc-det");
+    });
+
+    it("falls through to single-game mode when the slate has fewer than 2 entries", async () => {
+      const engine = createEngine();
+      // A 1-entry "slate" is just a single game — engine should
+      // ignore the slate and honor `sportsGameId`.
+      void engine.start({
+        ...baseRequest,
+        slate: [
+          {
+            id: "demo-buf-cin",
+            label: "Bills at Bengals",
+            shortName: "BUF @ CIN",
+            sport: "nfl",
+            awayTeam: "BUF",
+            homeTeam: "CIN",
+            score: { away: 0, home: 0 },
+            status: "scheduled",
+            detail: "Tonight"
+          }
+        ]
+      });
+      const events = await collectEvents(engine, { count: 1, timeoutMs: 8000 });
+      const snapshot = events.find(
+        (e): e is Extract<ClientServerEvent, { type: "snapshot" }> => e.type === "snapshot"
+      );
+      // sportsGameId from baseRequest is "demo-kc-det" — that wins
+      // because the 1-entry slate doesn't trigger slate mode.
+      expect(snapshot!.game.gameId).toBe("demo-kc-det");
+    });
+  });
+
+  describe("switchGame", () => {
+    it("no-ops when the engine hasn't started yet", () => {
+      const engine = createEngine();
+      // Pre-start switchGame is a no-op — there's no broadcast to
+      // switch yet, the listener should set the game via start().
+      expect(() => {
+        engine.switchGame({ video: { mode: "stream-url", url: "" } });
+      }).not.toThrow();
+      // Nothing is queued because switchGame bailed before pushing
+      // the status event.
+      expect(engine.pendingEventCount()).toBe(0);
+    });
+
+    it("no-ops after stop()", () => {
+      const engine = createEngine();
+      engine.stop();
+      engine.switchGame({ video: { mode: "stream-url", url: "" } });
+      expect(engine.pendingEventCount()).toBe(0);
+    });
+
+    it("queues a status event signalling the pivot when called mid-show", async () => {
+      const engine = createEngine();
+      void engine.start(baseRequest);
+      // Drain through the opener so the engine is in the tick loop.
+      await collectEvents(engine, { count: 2, timeoutMs: 8000 });
+      engine.switchGame({
+        sportsGameId: "demo-buf-cin",
+        video: { mode: "stream-url", url: "" },
+        toSummaryHint: "the late game"
+      });
+      const events = await collectEvents(engine, { count: 1, timeoutMs: 2000 });
+      const status = events.find(
+        (e): e is Extract<ClientServerEvent, { type: "status" }> => e.type === "status"
+      );
+      expect(status).toBeDefined();
+      expect(status!.message).toContain("the late game");
+    });
+
+    it(
+      "a handoff commentary lands after switchGame is called mid-show",
+      async () => {
+        const engine = createEngine();
+        void engine.start(baseRequest);
+        // Drain through opener + the first tick (which fires
+        // synchronously inside start()) so we're solidly inside the
+        // tick loop before triggering the switch.
+        await collectEvents(engine, { count: 5, timeoutMs: 12000 });
+        engine.switchGame({
+          sportsGameId: "demo-buf-cin",
+          video: { mode: "stream-url", url: "" },
+          toSummaryHint: "Bills at Bengals"
+        });
+        // Collect a healthy window of post-switch events. The
+        // handoff fires at the top of the NEXT scheduled tick —
+        // with 3s cadence we want enough budget for that tick to
+        // run plus the producer + commentary draft.
+        const events = await collectEvents(engine, { count: 25, timeoutMs: 15000 });
+        const handoff = events.find(
+          (e): e is Extract<ClientServerEvent, { type: "commentary" }> =>
+            e.type === "commentary" && (e.commentary.producerBeats ?? []).includes("handoff")
+        );
+        expect(handoff).toBeDefined();
+        // act-break is the arc framing for a structural transition
+        // — not a close, not a fresh open.
+        expect(handoff!.commentary.arcPosition).toBe("act-break");
+      },
+      // Tick cadence + producer + commentary = comfortably under 20s,
+      // but the default 5s vitest timeout is too tight. Bump for this
+      // single integration test only.
+      20000
+    );
+  });
 });

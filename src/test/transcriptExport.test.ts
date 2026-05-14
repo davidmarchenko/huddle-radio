@@ -43,6 +43,7 @@ describe("buildTranscriptExport", () => {
         fantasy: "Demo Fantasy",
         sportsData: "Demo Sports Data",
         news: "Demo News",
+        enrichment: "(none)",
         video: "User Video Source",
         model: "Mock Model",
         commentary: "Local Commentary",

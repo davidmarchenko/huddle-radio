@@ -522,9 +522,15 @@ const LivecastRequestSchema = z.object({
     .default({ mode: "stream-url" }),
   group: z
     .object({
+      // listener.name can be empty when the listener hasn't claimed an
+      // identity yet (no profile, non-demo cast). `sanitizeCommentaryGroup`
+      // intentionally clears it so prompts fall back to "you" / "tonight's
+      // listener" instead of inventing a name. friends.length=0 has the
+      // same origin — no connected league means no real friends to
+      // reference. Schema needs to accept both.
       listener: z
         .object({
-          name: z.string().min(1),
+          name: z.string(),
           rosterId: z.string().optional(),
           favoriteTeam: z.string().optional()
         })
@@ -541,7 +547,6 @@ const LivecastRequestSchema = z.object({
             rivalryNotes: z.string().optional()
           })
         )
-        .min(1)
     })
     .default(defaultGroup)
 });

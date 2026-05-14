@@ -45,6 +45,36 @@ describe("huddle view model", () => {
     expect(deriveHuddlePhase({ showPrepared: true, isLive: false, hasVideoSource: false, commentaryCount: 1 })).toBe("recap");
   });
 
+  it("keeps a paused show in the live-audio phase even after the SSE session has dropped", () => {
+    // Listener pauses, the SSE session times out and flips isLive=false,
+    // but commentary is already on screen. Without this carry-over the
+    // player bar swaps out for the recap view and the captions vanish.
+    expect(
+      deriveHuddlePhase({
+        showPrepared: true,
+        isLive: false,
+        hasVideoSource: false,
+        commentaryCount: 4,
+        isPaused: true
+      })
+    ).toBe("live-audio");
+  });
+
+  it("holds live-audio while the page waits for the first user gesture to wake the audio context", () => {
+    // Listener refreshes on /watch/{gameId}. We arm the resume listener
+    // and want the page to stay in live-audio so phase=empty doesn't
+    // dump them back to discover.
+    expect(
+      deriveHuddlePhase({
+        showPrepared: false,
+        isLive: false,
+        hasVideoSource: false,
+        commentaryCount: 0,
+        awaitingResume: true
+      })
+    ).toBe("live-audio");
+  });
+
   it("builds setup steps that explain demo and stream paths", () => {
     const steps = buildSetupSteps({ providerMode: "demo", sportsDataMode: "demo", hasVideoSource: false, friendCount: 2 });
     expect(steps).toHaveLength(4);

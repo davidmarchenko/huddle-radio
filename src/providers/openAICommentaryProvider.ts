@@ -1,13 +1,11 @@
 import OpenAI from "openai";
 import type { CommentaryKind, DialogueLine, HostId, ProviderHealth } from "../shared/contracts";
 import {
-  buildCommentaryPayload,
-  buildOpenerSystemPrompt,
-  buildPlaySystemPrompt,
   joinDialogueLines,
   parseDialogueResponse,
   resolveHostPersona,
   sanitizeCommentary,
+  selectCommentaryPrompt,
   type CommentaryDraftInput
 } from "./commentaryPrompts";
 
@@ -43,7 +41,15 @@ export class LocalCommentaryProvider implements CommentaryProvider {
   id = "local-commentary";
 
   async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
-    const leadHostId = input.hostId ?? "theo";
+    // Honor the producer's editorial choice when present — the chain
+    // already paid the producer cost; throwing the directive away
+    // here would mean the show lurches back to "ignore the room"
+    // mode every time the LLM stack falls all the way through. Pull
+    // the lead host + topic from the first beat and seed the local
+    // template off them.
+    const directive = input.directive;
+    const directiveLeadHost = directive?.beats[0]?.leadHostId;
+    const leadHostId = directiveLeadHost ?? input.hostId ?? "theo";
     const lines = buildLocalDialogue(input, leadHostId);
     if (lines.length === 0) {
       return fallbackDialogue(input.fallbackText, leadHostId);
@@ -101,7 +107,17 @@ function buildLocalDialogue(input: CommentaryDraftInput, leadHostId: HostId): Di
   // Play turn: lead host gets the substance (call + color + landing) as
   // ONE full thought. Peer adds a second turn only when there's a
   // genuinely meaningful market swing or listener cue worth a paragraph.
-  const call = describePlay(input);
+  // When a producer directive is present AND the first beat is NOT a
+  // play beat (i.e. the producer chose to lead with a callback,
+  // pivot, market, etc.), anchor the lead on the producer's topic.
+  // For play beats, describePlay is richer than the producer's
+  // generic topic — keep the play substance.
+  const directiveBeat = input.directive?.beats[0];
+  const useDirectiveTopic =
+    directiveBeat?.topic && directiveBeat.sourceKind !== "play";
+  const call = useDirectiveTopic
+    ? clip(directiveBeat!.topic)
+    : describePlay(input);
   const color = pickColorLine(input);
   const reactor = pickReactor(input, listenerName);
   const leadParagraph = [call, color, reactor].filter(Boolean).join(" ");
@@ -226,16 +242,17 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
     // lines (opener) or 3-5 short lines (play) plus JSON scaffolding
     // round-trips at ~500-700 tokens. Still well under the response
     // ceiling and keeps latency tight at flash-TTS pace.
+    const { system, payload } = selectCommentaryPrompt(input, persona, kind);
     const response = await this.client.responses.create({
       model: this.model,
       max_output_tokens: kind === "opener" ? 700 : 500,
       reasoning: this.model.startsWith("gpt-5") ? { effort: this.reasoningEffort } : undefined,
-      instructions: kind === "opener" ? buildOpenerSystemPrompt(persona) : buildPlaySystemPrompt(persona),
-      input: JSON.stringify(buildCommentaryPayload(input, persona))
+      instructions: system,
+      input: JSON.stringify(payload)
     });
 
     const raw = response.output_text.trim();
-    const parsed = parseDialogueResponse(raw, leadHostId);
+    const parsed = parseDialogueResponse(raw, leadHostId, input.group.listener.name);
     if (parsed && parsed.length > 0) {
       // Final guard on the joined transcript so the credential filter
       // still catches anything slipped past the per-line sanitizer.

@@ -1,4 +1,4 @@
-import type { HostId, ProviderHealth, TTSAudioChunk, TTSProvider } from "../shared/contracts";
+import type { HostId, ProviderHealth, TTSAudioChunk, TTSProvider, WordTiming } from "../shared/contracts";
 import { config } from "../server/config";
 
 /**
@@ -33,7 +33,11 @@ export class InworldTtsProvider implements TTSProvider {
     /** Per-host voice overrides. Each entry is an Inworld `voiceId` from
      *  their voice library. Falls back to `defaultVoiceId` when a host
      *  has no override configured. */
-    private readonly hostVoiceMap: InworldHostVoiceMap = {}
+    private readonly hostVoiceMap: InworldHostVoiceMap = {},
+    /** When false, skips `timestampType: "WORD"` on requests. Trades
+     *  the audio-synced live transcript for faster TTS responses —
+     *  Inworld doesn't have to compute word + phoneme alignments. */
+    private readonly timestampsEnabled: boolean = true
   ) {}
 
   private resolveVoiceId(hostId?: HostId): string {
@@ -80,14 +84,25 @@ export class InworldTtsProvider implements TTSProvider {
       // we needed deterministic enterprise voice; for an entertaining
       // sports show, CREATIVE is the right default.
       deliveryMode: "CREATIVE",
-      temperature: 1.0
+      temperature: 1.0,
+      // Word-level alignment fires the audio-synced live transcript
+      // panel on the client. The streaming endpoint + ASYNC transport
+      // strategy is what makes this affordable: audio bytes flow back
+      // as fast as the model produces them, and alignment is computed
+      // in parallel and arrives in a trailing message. Total server
+      // wait drops from (audio_time + alignment_time) to
+      // max(audio_time, alignment_time) — which is what closed the
+      // audible speaker-to-speaker gap.
+      ...(this.timestampsEnabled
+        ? { timestampType: "WORD", timestampTransportStrategy: "ASYNC" }
+        : {})
     });
 
     const MAX_ATTEMPTS = 3;
     let response: Response | undefined;
     let lastDetail = "";
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      response = await fetch("https://api.inworld.ai/tts/v1/voice", {
+      response = await fetch("https://api.inworld.ai/tts/v1/voice:stream", {
         method: "POST",
         headers: {
           // Inworld uses Basic auth where the API key IS the basic
@@ -98,7 +113,7 @@ export class InworldTtsProvider implements TTSProvider {
         },
         body
       });
-      if (response.ok) break;
+      if (response.ok && response.body) break;
       if (response.status !== 429 && response.status < 500) {
         let detail = `HTTP ${response.status}`;
         try {
@@ -116,27 +131,57 @@ export class InworldTtsProvider implements TTSProvider {
       if (attempt === MAX_ATTEMPTS - 1) break;
       await new Promise<void>((resolve) => setTimeout(resolve, retryAfterMs));
     }
-    if (!response || !response.ok) {
+    if (!response || !response.ok || !response.body) {
       throw new Error(
         `Inworld TTS failed: HTTP ${response?.status ?? "unknown"}${lastDetail ? `: ${lastDetail}` : ""}`
       );
     }
 
-    // Inworld returns JSON with audioContent as a base64 string (NOT
-    // raw bytes like ElevenLabs HTTP). The audioContent is already
-    // base64 — no double-encoding needed.
-    const payload = (await response.json()) as { audioContent?: string };
-    if (!payload.audioContent) {
-      throw new Error("Inworld TTS returned no audioContent.");
+    // The streaming endpoint returns a series of JSON objects (NOT
+    // NDJSON — they're concatenated without newline separators). Each
+    // frame is `{ result?: { audioContent?, timestampInfo? }, error? }`.
+    // We accumulate audio bytes from every result.audioContent and
+    // capture the trailing timestampInfo (ASYNC strategy delivers it
+    // after the last audio frame). One MP3 buffer + one wordTimings
+    // array → one TTSAudioChunk, so the rest of the engine and client
+    // need no changes.
+    const audioParts: Buffer[] = [];
+    let lastTimingPayload: InworldTtsResponse["timestampInfo"] | undefined;
+    let frameError: unknown;
+    for await (const frame of parseConcatenatedJsonStream(response.body)) {
+      if ((frame as { error?: unknown }).error) {
+        frameError = (frame as { error: unknown }).error;
+        break;
+      }
+      const result = (frame as { result?: InworldStreamResult }).result;
+      if (!result) continue;
+      if (result.audioContent) {
+        audioParts.push(Buffer.from(result.audioContent, "base64"));
+      }
+      if (result.timestampInfo) {
+        lastTimingPayload = mergeTimestampInfo(lastTimingPayload, result.timestampInfo);
+      }
     }
+    if (frameError) {
+      const detail = typeof frameError === "string"
+        ? frameError
+        : (frameError as { message?: string }).message ?? JSON.stringify(frameError).slice(0, 200);
+      throw new Error(`Inworld TTS stream error: ${detail}`);
+    }
+    if (audioParts.length === 0) {
+      throw new Error("Inworld TTS stream returned no audioContent.");
+    }
+    const combined = Buffer.concat(audioParts);
+    const wordTimings = parseInworldWordTimings({ timestampInfo: lastTimingPayload });
     yield {
       id: crypto.randomUUID(),
       commentaryId: input.commentaryId,
       provider: this.id,
       mimeType: "audio/mpeg",
-      base64Audio: payload.audioContent,
+      base64Audio: combined.toString("base64"),
       isFinal: true,
-      latencyMs: Math.round(performance.now() - start)
+      latencyMs: Math.round(performance.now() - start),
+      wordTimings: wordTimings.length > 0 ? wordTimings : undefined
     };
   }
 
@@ -152,6 +197,148 @@ export class InworldTtsProvider implements TTSProvider {
         : "Set INWORLD_API_KEY and TTS_PROVIDER=inworld to enable."
     };
   }
+}
+
+/**
+ * Inworld streaming TTS frame shape. The streaming endpoint wraps the
+ * payload in a `result` envelope and may emit many of these — audio
+ * frames first, a trailing timestamp frame last (with ASYNC strategy).
+ */
+type InworldStreamResult = {
+  audioContent?: string;
+  timestampInfo?: {
+    wordAlignment?: {
+      words?: string[];
+      wordStartTimeSeconds?: number[];
+      wordEndTimeSeconds?: number[];
+    };
+  };
+};
+
+/**
+ * Legacy alias used by `parseInworldWordTimings` — preserves the older
+ * non-stream call signature so the helper works for both the streaming
+ * envelope's `timestampInfo` (extracted) and any future non-stream code
+ * path that hands in a full response object.
+ */
+type InworldTtsResponse = {
+  audioContent?: string;
+  timestampInfo?: InworldStreamResult["timestampInfo"];
+};
+
+/**
+ * Merge two `timestampInfo` payloads. ASYNC delivery for short turns
+ * collapses to a single trailing frame in practice, but Inworld is
+ * free to split alignment across multiple frames — so we concatenate
+ * the parallel arrays rather than overwriting. Missing arrays from
+ * either side are tolerated.
+ */
+function mergeTimestampInfo(
+  prev: InworldStreamResult["timestampInfo"] | undefined,
+  next: NonNullable<InworldStreamResult["timestampInfo"]>
+): InworldStreamResult["timestampInfo"] {
+  if (!prev) return next;
+  const prevAlign = prev.wordAlignment ?? {};
+  const nextAlign = next.wordAlignment ?? {};
+  return {
+    wordAlignment: {
+      words: [...(prevAlign.words ?? []), ...(nextAlign.words ?? [])],
+      wordStartTimeSeconds: [
+        ...(prevAlign.wordStartTimeSeconds ?? []),
+        ...(nextAlign.wordStartTimeSeconds ?? [])
+      ],
+      wordEndTimeSeconds: [
+        ...(prevAlign.wordEndTimeSeconds ?? []),
+        ...(nextAlign.wordEndTimeSeconds ?? [])
+      ]
+    }
+  };
+}
+
+/**
+ * Parse a stream of concatenated JSON objects. Inworld's docs are
+ * explicit that the streaming response is NOT NDJSON — frames are
+ * just back-to-back JSON, no separator. We brace-count at the top
+ * level (ignoring braces inside strings) and yield each balanced
+ * object as it completes. Buffer is trimmed on every emit so memory
+ * stays bounded even for long synthesis runs.
+ */
+async function* parseConcatenatedJsonStream(
+  body: ReadableStream<Uint8Array>
+): AsyncGenerator<unknown> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let pos = 0;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  let objStart = -1;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      while (pos < buf.length) {
+        const ch = buf[pos];
+        if (esc) {
+          esc = false;
+        } else if (inStr) {
+          if (ch === "\\") esc = true;
+          else if (ch === '"') inStr = false;
+        } else if (ch === '"') {
+          inStr = true;
+        } else if (ch === "{") {
+          if (depth === 0) objStart = pos;
+          depth += 1;
+        } else if (ch === "}") {
+          depth -= 1;
+          if (depth === 0 && objStart >= 0) {
+            const slice = buf.slice(objStart, pos + 1);
+            try {
+              yield JSON.parse(slice) as unknown;
+            } catch {
+              /* malformed frame — drop and keep scanning */
+            }
+            buf = buf.slice(pos + 1);
+            pos = -1;
+            objStart = -1;
+          }
+        }
+        pos += 1;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Convert Inworld's parallel-arrays alignment format to our
+ * canonical WordTiming[] (ms-based). Drops entries where any field
+ * is missing or malformed — better to lose one word's timing than to
+ * inject NaN into the client's render loop.
+ */
+function parseInworldWordTimings(payload: InworldTtsResponse): WordTiming[] {
+  const alignment = payload.timestampInfo?.wordAlignment;
+  if (!alignment) return [];
+  const words = alignment.words ?? [];
+  const starts = alignment.wordStartTimeSeconds ?? [];
+  const ends = alignment.wordEndTimeSeconds ?? [];
+  const out: WordTiming[] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const text = words[i];
+    const startSec = starts[i];
+    const endSec = ends[i];
+    if (typeof text !== "string" || typeof startSec !== "number" || typeof endSec !== "number") continue;
+    if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) continue;
+    out.push({
+      text,
+      startMs: Math.round(startSec * 1000),
+      endMs: Math.round(endSec * 1000)
+    });
+  }
+  return out;
 }
 
 /**

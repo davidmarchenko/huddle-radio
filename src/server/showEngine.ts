@@ -4,10 +4,16 @@ import type {
   GameOdds,
   HostId,
   ListenerCue,
+  LivecastCommentary,
   LivecastRequest,
   PlayerSeasonStats,
+  SportsGameOption,
+  SportsGameState,
+  SportsPlay,
   TTSAudioChunk,
   VideoFrameSnapshot,
+  VideoObservation,
+  VideoSourceConfig,
   MarketSnapshot
 } from "../shared/contracts";
 import { createLivecastCommentary, createListenerOpener } from "../engine/livecastEngine";
@@ -26,22 +32,34 @@ import { UserVideoProvider } from "../providers/userVideoProvider";
 import { demoGameIdToSport } from "../providers/demoSportsDataProvider";
 import { config } from "./config";
 import { fetchMarketSnapshots, pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "./marketsProvider";
-import { detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
+import { detectClosingHandoff, detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
 import { computeEntryStatus, getEntry } from "./picksStore";
 import { fetchLiveStats } from "./picksLiveStats";
+import { extractMentionCues } from "./mentionCues";
 import { redactSecret } from "./redactSecret";
 import {
+  createClaimsExtractor,
+  createEnrichmentAggregator,
+  createEvaluator,
   createFantasyProvider,
+  createProducerAgent,
   createSportsDataProvider,
   createModelProvider,
   buildHostVoiceMap,
   createTTSProvider,
   deriveSportsLabelMode,
   getActiveProviders,
+  getClaimsStoreSingleton,
   getHealth,
   resolveSportsSource
 } from "./showFactories";
+import { getRecentEvalSnapshot, recordEvaluation } from "./eval/evalStore";
+import { ShowArcPlanner } from "./showArc/planner";
+import { OutcomeResolver } from "./memory/outcomeResolver";
+import { RapportTracker } from "./rapport/tracker";
+import { extractVisionSignals } from "../providers/enrichment/visionExtractor";
 import { AsyncEventQueue } from "./asyncEventQueue";
+import { rankSlate, summarizeSlate, type SlateContext } from "./slateRanker";
 
 /**
  * Transport-agnostic live-show engine. Owns the per-show state
@@ -108,6 +126,40 @@ export type ShowEngineLogger = {
  * gets the listener audio. The fallback path is logged so operators
  * can see when the entertainment path is degrading.
  */
+/**
+ * Run mention-cue extraction against a TTS chunk's wordTimings if
+ * present, and return the chunk with `mentionCues` attached. The
+ * client uses these to fire audio-synced entity chips in the live
+ * transcript panel. No-op when the provider didn't return timings
+ * (ElevenLabs flash, Fish, mock).
+ */
+function enrichChunkWithMentionCues(
+  chunk: TTSAudioChunk,
+  lines: DialogueLine[],
+  context: {
+    starters?: import("../shared/contracts").FantasyPlayer[];
+    game?: import("../shared/contracts").SportsGameState;
+    markets?: MarketSnapshot[];
+    listenerName?: string;
+  }
+): TTSAudioChunk {
+  if (!chunk.wordTimings || chunk.wordTimings.length === 0) return chunk;
+  if (chunk.lineIndex == null) return chunk;
+  const line = lines[chunk.lineIndex];
+  if (!line) return chunk;
+  const cues = extractMentionCues({
+    text: line.text,
+    wordTimings: chunk.wordTimings,
+    lineIndex: chunk.lineIndex,
+    starters: context.starters,
+    game: context.game,
+    markets: context.markets,
+    listenerName: context.listenerName
+  });
+  if (cues.length === 0) return chunk;
+  return { ...chunk, mentionCues: cues };
+}
+
 async function* selectTTSStrategy(
   lines: DialogueLine[],
   commentaryId: string,
@@ -261,6 +313,41 @@ const NOOP_LOGGER: ShowEngineLogger = {
   error: () => undefined
 };
 
+/**
+ * Input for `ShowEngine.switchGame()`. The listener wants to follow a
+ * different game without ending the broadcast — engine swaps the play
+ * feed underneath, fires a producer-driven handoff turn, and
+ * preserves all per-show state (rapport, claims, recentCommentary,
+ * eval ring, arc planner). `toSummaryHint` is optional copy the
+ * client may pass when it knows the new matchup ahead of the
+ * sportsProvider fetch.
+ */
+export type GameSwitchInput = {
+  sportsGameId?: string;
+  video: VideoSourceConfig;
+  latestFrame?: VideoFrameSnapshot;
+  toSummaryHint?: string;
+};
+
+/** One-line prose summary of a game state for the handoff producer
+ *  payload. Picks the most-readable shape based on game status:
+ *  scheduled → matchup names; live → score line; final → final score
+ *  with the winner first. */
+function formatGameSummary(state: SportsGameState): string {
+  const score = state.currentPlay?.score;
+  if (state.status === "final" && score) {
+    const home = score.home ?? 0;
+    const away = score.away ?? 0;
+    const winner = home >= away ? state.homeTeam : state.awayTeam;
+    const loser = home >= away ? state.awayTeam : state.homeTeam;
+    return `${winner} ${Math.max(home, away)}, ${loser} ${Math.min(home, away)} — final`;
+  }
+  if (state.status === "live" && score) {
+    return `${state.awayTeam} ${score.away ?? 0}, ${state.homeTeam} ${score.home ?? 0} — ${state.currentPlay?.quarter ?? "live"}`;
+  }
+  return `${state.awayTeam} at ${state.homeTeam}`;
+}
+
 export class ShowEngine {
   readonly id: string;
 
@@ -284,9 +371,24 @@ export class ShowEngine {
   private lastSeenPlayId?: string;
   /** Consecutive ticks where the play id was unchanged. Capped — past the cap we force a turn so a pre-game game doesn't go silent forever. */
   private duplicatePlayCount = 0;
+  /** Rotates per pregame tick so each forced turn anchors on a different angle (matchup math → odds → listener stake → ...) instead of recycling the same talking points. */
+  private pregameAngleIndex = 0;
   /** Session id assigned by the route handler post-construction. Stamped on turn summaries
    *  so the diagnostics endpoint can group by show. Empty until setSessionId fires. */
   private sessionId = "";
+  /** Set by `switchGame()`; consumed at the top of the next tick by
+   *  the closure-scope `consumePendingSwitch()`. Single-slot — a
+   *  rapid double-switch overwrites the first; the listener only
+   *  hears one handoff into the freshest target game. */
+  private pendingGameSwitch?: GameSwitchInput;
+  /** Discovery-driven slate: ordered remaining games to walk after
+   *  the current one ends. Engine auto-pivots to the next entry at
+   *  game-end. Empty in single-game mode. */
+  private slateQueue: SportsGameOption[] = [];
+  /** Snapshot of the slate at show start — what the opener uses to
+   *  surface breadth ("eight games tonight, three of your guys
+   *  live"). Undefined in single-game mode. */
+  private slateContext?: SlateContext;
 
   constructor(options: { id?: string; logger?: ShowEngineLogger } = {}) {
     this.id = options.id ?? `show-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -319,6 +421,28 @@ export class ShowEngine {
     this.queue.push({ type: "status", message: `Up next: ${hostId}`, level: "info" });
   }
 
+  /**
+   * Switch the show to a different game without ending the broadcast.
+   * Engine fires a producer-driven handoff turn at the top of the
+   * next tick, then rebuilds the play feed against the new gameId.
+   * Per-show state (rapport, claims, recentCommentary, eval ring)
+   * carries forward — this is a continuous broadcast, not a re-open.
+   *
+   * No-ops when the engine hasn't started yet, has been stopped, or
+   * the requested gameId matches the current one. Idempotent under
+   * back-to-back calls — the latest input wins, the listener hears
+   * one handoff into the freshest target game.
+   */
+  switchGame(input: GameSwitchInput): void {
+    if (this.stopped || !this.started) return;
+    this.pendingGameSwitch = input;
+    this.queue.push({
+      type: "status",
+      message: `Pivoting to ${input.toSummaryHint ?? "the next game"}`,
+      level: "info"
+    });
+  }
+
   pushCue(cue: ListenerCue): void {
     if (this.stopped) return;
     // Cap the queue so a chatty listener can't bloat the prompt
@@ -348,11 +472,54 @@ export class ShowEngine {
     this.started = true;
     incrementCounter("showsStarted");
 
+    // Discovery-driven SLATE MODE. When the request carries 2+
+    // candidate games, rank them against the listener's roster +
+    // group settings; the top entry becomes the boot game, the rest
+    // queue up for auto-pivot at game-end. A 1-entry slate is just a
+    // single game and falls through to the legacy single-game path.
+    const slateCandidates = request.slate ?? [];
+    if (slateCandidates.length >= 2) {
+      // Pull the listener's roster from any matchup in the custom
+      // league so the ranker can boost starter-anchored games. The
+      // ranker degrades gracefully when this is absent — slate still
+      // ranks by liveness + marquee + favorite-team.
+      const listenerRoster = request.customLeague?.matchups
+        .flatMap((m) => m.rosters)
+        .find((r) => r.id === request.group.listener.rosterId);
+      const ranked = rankSlate({
+        candidates: slateCandidates,
+        group: request.group,
+        listenerRoster
+      });
+      // Top entry boots the show; remaining entries queue for
+      // auto-pivot. Mutating the request's sportsGameId here is
+      // intentional — every downstream provider derives from it,
+      // and lifting it onto the closure would mean reworking the
+      // whole tick path against a different identity. Slate wins
+      // over any caller-provided `sportsGameId` (documented).
+      request.sportsGameId = ranked[0].game.id;
+      this.slateQueue = ranked.slice(1).map((entry) => entry.game);
+      const starterTeams = new Set(
+        (listenerRoster?.starters ?? []).map((s) => s.proTeam.toUpperCase())
+      );
+      this.slateContext = summarizeSlate(ranked, { listenerStarterTeams: starterTeams });
+      this.logger.info(
+        {
+          ranked: ranked.map((r) => ({ id: r.game.id, score: r.score, reasons: r.reasons.map((x) => x.kind) })),
+          bootGame: ranked[0].game.id,
+          remainingSlateLength: this.slateQueue.length
+        },
+        "Slate mode: ranked and booted"
+      );
+    }
+
     // Sports backend is derived from the gameId prefix — see
     // resolveSportsSource. The old separate `sportsDataMode` request
     // field used to drive this and silently fell through to KC@DET when
     // the two disagreed; that whole class of bug is gone now.
-    const sportsProvider = createSportsDataProvider(request.sportsGameId);
+    // `let`-bound — switchGame() rebuilds against the new gameId
+    // mid-show without restarting the broadcast.
+    let sportsProvider = createSportsDataProvider(request.sportsGameId);
     // Derive the sport from the gameId (nfl-..., mlb-..., demo-..., etc.)
     // so the demo fantasy provider returns a sport-matched bundled league
     // instead of always defaulting to NFL. Without this, picking an MLB
@@ -367,6 +534,53 @@ export class ShowEngine {
           : undefined;
     const fantasyProvider = createFantasyProvider(request.providerMode, request.customLeague, sportHint);
     const newsProvider = createNewsProvider();
+    // Per-show enrichment aggregator. Owns its own per-provider cache
+    // so a paused show's stale Reddit thread doesn't leak into the
+    // next session. Failures are isolated inside the aggregator —
+    // the tick path treats a missing/empty result as "no color this
+    // turn" and continues, exactly like the markets / picks paths.
+    const enrichmentAggregator = createEnrichmentAggregator({ listenerId: request.picksListenerId });
+    // Per-show ProducerAgent. Sits between the raw signal payload and
+    // the host LLM: digests every field into 1-3 prioritized "beats"
+    // and a running showState so the host prompt stays focused. When
+    // it fails, the engine drops back to the legacy raw-payload path
+    // (host LLM still works, just without the editorial layer).
+    const producerAgent = createProducerAgent();
+    let priorShowState = "";
+    // Snapshot of the most recent gameState in human-prose form. The
+    // game-pivot helper reads this to fill the "fromSummary" of the
+    // handoff beat ("Storm 78, Aces 71 — final"). Updated on every
+    // tick that fetches a fresh gameState.
+    let lastGameSummary: string | undefined;
+    // Per-show synthetic-listener evaluator. Runs fire-and-forget
+    // AFTER each turn ships, so its latency never reaches the listener.
+    // Its output lands in the eval ring buffer for diagnostics + A/B.
+    const evaluator = createEvaluator();
+    // Per-show claims extractor + the process-wide claims store.
+    // Extractor runs fire-and-forget per turn; extracted claims get
+    // persisted to the shared store keyed by listenerId. Future
+    // shows for the same listener pick them up via the
+    // CallbackEnrichmentProvider already wired into the aggregator.
+    const claimsExtractor = createClaimsExtractor();
+    const claimsStore = getClaimsStoreSingleton();
+    // Outcome resolver — fires once per show after the game flips to
+    // final, grades pending claims, updates outcomes in the store.
+    // Guarded by `hasResolvedClaims` so a long final-state tail
+    // (which keeps emitting `status === "final"` ticks) doesn't
+    // re-grade on every tick.
+    const outcomeResolver = new OutcomeResolver(claimsStore);
+    let hasResolvedClaims = false;
+    // Per-show rapport tracker — owns RapportState (open threads,
+    // running bits, host standing, tonal temperature) and updates
+    // it after every turn ships. Producer + host LLM both read its
+    // snapshot to make the show feel like an ongoing conversation
+    // rather than independent reactions.
+    const rapportTracker = new RapportTracker();
+    // Per-show arc planner. Stateful — tracks how long the show has
+    // been running, how many climactic moments we've seen, whether
+    // we've already pivoted off a blowout. Producer reads its
+    // ArcDirective each tick as the highest-level dramatic frame.
+    const arcPlanner = new ShowArcPlanner();
     const modelProvider = createModelProvider();
 
     // Budget-aware commentary/TTS: when caps are exceeded, swap to
@@ -560,7 +774,16 @@ export class ShowEngine {
             usedFrame: false
           }
         });
-        const openerLines = await commentaryProvider.draft({
+        // Producer step for the opener. Same shape as the per-tick
+        // producer call, but with `openerMode: true` — the producer
+        // emits opener-specific beats (frame the listener / pull a
+        // starter / hand off into live action) instead of the play
+        // cascade. When it succeeds, the directive replaces the raw
+        // opener prompt with the focused directive prompt; when it
+        // throws, we drop the directive and the host LLM falls back
+        // to the legacy opener path so a producer outage never blanks
+        // the show's first 30 seconds.
+        const openerDraftInput = {
           play: opener.play,
           observation: opener.observation,
           impacts: [],
@@ -570,16 +793,54 @@ export class ShowEngine {
           recentCommentary: [],
           hostId: opener.hostId,
           listenerRoster,
-          kind: "opener",
-          priorContext: request.priorContext,
           odds,
           analytics,
+          slateContext: this.slateContext,
           fallbackText: opener.text
+        };
+        let openerDirective: Awaited<ReturnType<typeof producerAgent.produce>> | undefined;
+        try {
+          openerDirective = await producerAgent.produce({
+            draft: openerDraftInput,
+            priorShowState: "",
+            openerMode: true
+          });
+          openerSummary.producer =
+            "lastProducerId" in producerAgent && typeof producerAgent.lastProducerId === "string" && producerAgent.lastProducerId
+              ? producerAgent.lastProducerId
+              : producerAgent.id;
+          openerSummary.producerBeats = openerDirective.beats.map((b) => b.sourceKind);
+        } catch (error) {
+          this.logger.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            "Producer failed for opener — falling back to legacy opener prompt"
+          );
+          openerSummary.producer = `${producerAgent.id}:error`;
+        }
+        const openerLines = await commentaryProvider.draft({
+          ...openerDraftInput,
+          kind: "opener",
+          priorContext: request.priorContext,
+          directive: openerDirective
         });
         opener.lines = openerLines;
         opener.text = joinDialogueLines(openerLines);
         opener.hostId = openerLines[0].hostId;
+        // Surface producer beats on the opener commentary so the
+        // transcript chips render the same way they do for tick
+        // commentary. Absent when the producer threw and we fell
+        // back to the legacy opener prompt.
+        opener.producerBeats = openerDirective?.beats.map((b) => b.sourceKind);
         opener.latency.endToEndMs = Math.round(performance.now() - openerStarted);
+        // Closing-handoff carry-forward. If the opener ends with a
+        // host addressing another by name ("Maya, math it up."), the
+        // next tick's lead is forced to that host so the addressed
+        // handoff actually gets answered. Without this, rhetorical
+        // handoffs strand across block boundaries.
+        const openerHandoff = detectClosingHandoff(openerLines);
+        if (openerHandoff) {
+          this.pendingNextHostId = openerHandoff;
+        }
         this.recentCommentary = [opener.text];
         this.recentHostIds = [opener.hostId];
         this.budget.recordCommentary(opener.text);
@@ -622,7 +883,13 @@ export class ShowEngine {
           )) {
             if (this.stopped) break;
             opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
-            this.queue.push({ type: "tts", audio });
+            const enriched = enrichChunkWithMentionCues(audio, openerLines, {
+              starters: listenerRoster?.starters,
+              game,
+              markets: undefined,
+              listenerName: request.group.listener?.name
+            });
+            this.queue.push({ type: "tts", audio: enriched });
             openerSummary.ttsChunks = (openerSummary.ttsChunks ?? 0) + 1;
           }
           openerSummary.ttsFirstByteMs = opener.latency.ttsFirstAudioMs;
@@ -651,11 +918,223 @@ export class ShowEngine {
           ttsFirstByteMs: openerSummary.ttsFirstByteMs,
           totalMs: openerSummary.totalMs ?? 0,
           errorReason: openerSummary.errorReason,
-          startedAt: openerSummary.startedAt ?? openerStartedIso
+          startedAt: openerSummary.startedAt ?? openerStartedIso,
+          producer: openerSummary.producer,
+          producerBeats: openerSummary.producerBeats
         });
       }
 
+      // Game-pivot consumer. switchGame() (public method) sets
+      // `this.pendingGameSwitch`; this helper drains it at the top
+      // of every tick. When a switch is pending it:
+      //   1. Captures from/to game summaries (prior gameState for
+      //      "from", new gameState for "to").
+      //   2. Drafts ONE producer-driven handoff turn — the lead host
+      //      bridges out of the prior game and tees up the new one.
+      //   3. TTS-streams the handoff turn so the listener actually
+      //      hears the transition before tick fetches resume.
+      //   4. Rebuilds `sportsProvider` against the new gameId and
+      //      resets per-game state so the next tick fetches against
+      //      the new game.
+      // Per-show state (rapport, claims, recentCommentary, eval ring,
+      // arc planner) is intentionally PRESERVED — the broadcast is
+      // continuous, only the play feed underneath has changed.
+      const consumePendingSwitch = async (): Promise<void> => {
+        const pending = this.pendingGameSwitch;
+        if (!pending) return;
+        this.pendingGameSwitch = undefined;
+        const pivotStarted = performance.now();
+        const pivotStartedIso = new Date().toISOString();
+        let pivotSummary: Partial<TurnSummary> = {
+          kind: "play",
+          sessionId: this.sessionId,
+          engineId: this.id,
+          leadHostId: "theo",
+          finalHostIds: [],
+          lineCount: 0,
+          commentaryProvider: "(unknown)",
+          ttsEnabled: request.ttsEnabled,
+          ttsProvider: config.RESOLVED_TTS_PROVIDER,
+          ttsChunks: 0,
+          startedAt: pivotStartedIso
+        };
+        // Build the from/to context BEFORE we swap providers — the
+        // "from" summary is the game we're leaving (lastGameSummary
+        // captured during prior ticks), the "to" summary is fetched
+        // off the new sportsProvider.
+        const fromSummary = lastGameSummary ?? "the previous game we were watching";
+        request.sportsGameId = pending.sportsGameId;
+        request.video = pending.video;
+        if (pending.latestFrame) request.latestFrame = pending.latestFrame;
+        sportsProvider = createSportsDataProvider(pending.sportsGameId);
+        // Reset per-game state — different game has different play ids,
+        // different markets, different pregame angle rotation.
+        this.lastSeenPlayId = undefined;
+        this.duplicatePlayCount = 0;
+        this.pregameAngleIndex = 0;
+        this.lastMarketsForSwing = [];
+        hasResolvedClaims = false;
+        let toSummary = pending.toSummaryHint;
+        let newGameStateForPivot: SportsGameState | undefined;
+        try {
+          newGameStateForPivot = await sportsProvider.getGameState();
+          toSummary = `${newGameStateForPivot.awayTeam} at ${newGameStateForPivot.homeTeam}${
+            newGameStateForPivot.status === "live" ? " — already underway" : newGameStateForPivot.status === "scheduled" ? " — about to tip" : ""
+          }`;
+        } catch (error) {
+          this.logger.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            "Game-pivot: failed to fetch new gameState — falling back to hint"
+          );
+        }
+        const finalToSummary = toSummary ?? "the next game on the slate";
+
+        // Draft the handoff via the same producer + commentary chain
+        // the opener and tick paths use — handoffs benefit from the
+        // same fallbacks (LLM producer → local producer; LLM host →
+        // local host) so a vendor outage never blanks the pivot.
+        const pivotPlay: SportsPlay = newGameStateForPivot?.currentPlay ?? {
+          id: `pivot-${Date.now()}`,
+          type: "other",
+          excitement: 1,
+          clock: "—",
+          quarter: "Pivot",
+          possession: "—",
+          headline: `Pivot to ${finalToSummary}`,
+          description: "Mid-show handoff",
+          playerIds: [],
+          team: newGameStateForPivot?.homeTeam ?? "—",
+          score: newGameStateForPivot?.currentPlay?.score ?? { away: 0, home: 0 },
+          occurredAt: new Date().toISOString()
+        };
+        const pivotObservation: VideoObservation = {
+          id: `pivot-obs-${Date.now()}`,
+          source: "stream-url",
+          summary: "Mid-show pivot",
+          confidence: 1,
+          observedAt: new Date().toISOString(),
+          latencyMs: 0,
+          usedFrame: false
+        };
+        const pivotDraftInput = {
+          play: pivotPlay,
+          observation: pivotObservation,
+          impacts: [],
+          moment: { priority: "notable" as const, headline: "Game pivot", summary: "switch", reasons: ["game-pivot"], targetFriendIds: [], score: 1 },
+          group: request.group,
+          news: [],
+          recentCommentary: this.recentCommentary,
+          listenerRoster: rosterForListener(fantasy, request.group.listener.rosterId),
+          fallbackText: `Alright — that's it for ${fromSummary}. Over to ${finalToSummary}.`
+        };
+        let pivotDirective: Awaited<ReturnType<typeof producerAgent.produce>> | undefined;
+        try {
+          pivotDirective = await producerAgent.produce({
+            draft: pivotDraftInput,
+            priorShowState,
+            gamePivotMode: { fromSummary, toSummary: finalToSummary },
+            rapportState: rapportTracker.state()
+          });
+          priorShowState = pivotDirective.showState;
+          pivotSummary.producer =
+            "lastProducerId" in producerAgent && typeof producerAgent.lastProducerId === "string" && producerAgent.lastProducerId
+              ? producerAgent.lastProducerId
+              : producerAgent.id;
+          pivotSummary.producerBeats = pivotDirective.beats.map((b) => b.sourceKind);
+        } catch (error) {
+          this.logger.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            "Game-pivot producer failed — falling back to legacy host prompt"
+          );
+          pivotSummary.producer = `${producerAgent.id}:error`;
+        }
+        let pivotLines: DialogueLine[];
+        try {
+          pivotLines = await commentaryProvider.draft({
+            ...pivotDraftInput,
+            kind: "play",
+            directive: pivotDirective
+          });
+        } catch (error) {
+          this.logger.warn(
+            { err: error instanceof Error ? error.message : String(error) },
+            "Game-pivot commentary draft failed — using local fallback line"
+          );
+          pivotLines = [{ hostId: "theo", text: pivotDraftInput.fallbackText }];
+          pivotSummary.errorReason = `pivot-draft-failed: ${error instanceof Error ? error.message.slice(0, 120) : "unknown"}`;
+        }
+        const pivotCommentary: LivecastCommentary = {
+          id: crypto.randomUUID(),
+          kind: "play",
+          hostId: pivotLines[0]?.hostId ?? "theo",
+          text: joinDialogueLines(pivotLines),
+          lines: pivotLines,
+          fantasyImpacts: [],
+          moment: pivotDraftInput.moment,
+          observation: pivotObservation,
+          play: pivotPlay,
+          createdAt: new Date().toISOString(),
+          latency: { videoIngestMs: 0, modelResponseMs: 0, textGenerationMs: Math.round(performance.now() - pivotStarted), endToEndMs: 0 },
+          producerBeats: pivotDirective?.beats.map((b) => b.sourceKind),
+          arcPosition: "act-break"
+        };
+        // Carry-forward of recentCommentary so the next tick's producer
+        // sees the pivot turn as part of the conversation history.
+        this.recentCommentary = [pivotCommentary.text, ...this.recentCommentary].slice(0, 5);
+        this.recentHostIds = [pivotCommentary.hostId, ...this.recentHostIds].slice(0, 4);
+        this.budget.recordCommentary(pivotCommentary.text);
+        this.queue.push({ type: "commentary", commentary: pivotCommentary });
+        this.lastCommentaryAtMs = Date.now();
+        // The handoff itself often ends with a forward-looking address
+        // ("Maya, what's the storyline here?"); honour the carry-forward
+        // so the next tick lands on the addressed host.
+        const pivotHandoffHost = detectClosingHandoff(pivotLines);
+        if (pivotHandoffHost) {
+          this.pendingNextHostId = pivotHandoffHost;
+        }
+        if (request.ttsEnabled && !this.budget.shouldDegradeTts()) {
+          this.budget.recordTts(pivotCommentary.text);
+          for await (const audio of selectTTSStrategy(
+            pivotLines,
+            pivotCommentary.id,
+            ttsProvider,
+            () => this.stopped,
+            this.logger
+          )) {
+            if (this.stopped) break;
+            pivotCommentary.latency.ttsFirstAudioMs ??= audio.latencyMs;
+            const enriched = enrichChunkWithMentionCues(audio, pivotLines, {
+              starters: pivotDraftInput.listenerRoster?.starters,
+              game: newGameStateForPivot,
+              markets: undefined,
+              listenerName: request.group.listener?.name
+            });
+            this.queue.push({ type: "tts", audio: enriched });
+            pivotSummary.ttsChunks = (pivotSummary.ttsChunks ?? 0) + 1;
+          }
+          pivotSummary.ttsFirstByteMs = pivotCommentary.latency.ttsFirstAudioMs;
+        }
+        pivotCommentary.latency.endToEndMs = Math.round(performance.now() - pivotStarted);
+        pivotSummary.turnId = pivotCommentary.id;
+        pivotSummary.leadHostId = pivotCommentary.hostId;
+        pivotSummary.finalHostIds = pivotLines.map((l) => l.hostId);
+        pivotSummary.lineCount = pivotLines.length;
+        pivotSummary.commentaryProvider = commentaryProviderLabel();
+        pivotSummary.totalMs = Math.round(performance.now() - pivotStarted);
+        pivotSummary.arcPosition = "act-break";
+        recordTurn(buildTickSummary(pivotSummary, pivotStartedIso));
+        this.logger.info(
+          { fromSummary, toSummary: finalToSummary, newGameId: pending.sportsGameId },
+          "Game-pivot complete"
+        );
+      };
+
       const tick = async () => {
+        if (this.stopped) return;
+        // Drain a pending game switch BEFORE any per-tick fetches —
+        // the swap rebuilds sportsProvider and resets per-game state,
+        // so subsequent fetches use the new game.
+        await consumePendingSwitch();
         if (this.stopped) return;
         const startedAt = performance.now();
         const startedAtIso = new Date().toISOString();
@@ -681,12 +1160,92 @@ export class ShowEngine {
             sportsProvider.nextPlay(),
             sportsProvider.getGameState()
           ]);
+          // Capture the human-prose game state for the next pivot's
+          // "fromSummary" — the listener may switch games at any
+          // tick boundary, and the producer needs a concrete handle
+          // on what we're leaving behind.
+          lastGameSummary = formatGameSummary(gameState);
+          // Game-end transition: when status flips to "final" for the
+          // first time, fire the outcome resolver in the background.
+          // Must come after the gameState fetch but before any other
+          // tick work — same pattern as a side-effect side-channel.
+          if (
+            gameState.status === "final" &&
+            !hasResolvedClaims &&
+            request.picksListenerId
+          ) {
+            hasResolvedClaims = true;
+            outcomeResolver
+              .resolve({
+                listenerId: request.picksListenerId,
+                gameId: gameState.gameId,
+                sport: gameState.sport
+              })
+              .then((counts) => {
+                this.logger.info(
+                  { ...counts, gameId: gameState.gameId, listenerId: request.picksListenerId },
+                  "Outcome resolution complete"
+                );
+              })
+              .catch((error) => {
+                this.logger.warn(
+                  { err: error instanceof Error ? error.message : String(error) },
+                  "Outcome resolver failed"
+                );
+              });
+          }
+          // Slate-mode auto-pivot: when the current game just flipped
+          // to `final` AND we have a queued slate alternative, queue
+          // a switch into the next ranked game. The pivot fires at
+          // the top of the NEXT tick via the same consumer the
+          // public switchGame() uses — listener hears one continuous
+          // broadcast across the night, not a series of restarts.
+          if (
+            gameState.status === "final" &&
+            this.slateQueue.length > 0 &&
+            !this.pendingGameSwitch
+          ) {
+            const next = this.slateQueue.shift()!;
+            this.logger.info(
+              { fromGameId: gameState.gameId, toGameId: next.id, remainingSlate: this.slateQueue.length },
+              "Slate mode: auto-pivoting at game-end"
+            );
+            this.switchGame({
+              sportsGameId: next.id,
+              video: request.video,
+              toSummaryHint: `${next.awayTeam} at ${next.homeTeam}`
+            });
+          }
           const matchupTeams = [gameState.awayTeam, gameState.homeTeam, play.team]
             .filter((team): team is string => Boolean(team));
+          // Observation needs to complete BEFORE the aggregator runs
+          // so vision color (extracted from observation.color[]) can
+          // be fed into the aggregator's dedup pipeline alongside
+          // fan/stat/wiki signals. News fetches in parallel since it
+          // doesn't depend on observation.
           const [observation, news] = await Promise.all([
             modelProvider.observe({ video: request.video, play, frame: this.latestFrame }),
             newsProvider.getLatest({ playerIds: play.playerIds, teams: matchupTeams, sport: gameState.sport })
           ]);
+          const visionSignals = extractVisionSignals(observation, gameState);
+          const enrichmentSignals = await enrichmentAggregator
+            .gather({
+              game: gameState,
+              activePlayId: play.id,
+              deadlineMs: 1_500,
+              additionalSignals: visionSignals
+            })
+            .catch((error) => {
+              this.logger.warn(
+                { err: error instanceof Error ? error.message : String(error) },
+                "Enrichment gather failed — proceeding without crowd color"
+              );
+              return [];
+            });
+          tickSummary.enrichmentSignalCount = enrichmentSignals.length;
+          tickSummary.enrichmentSources = Array.from(
+            new Set(enrichmentSignals.map((s) => s.source))
+          ).sort();
           this.queue.push({ type: "play", play, game: gameState });
           this.queue.push({ type: "observation", observation });
 
@@ -812,20 +1371,38 @@ export class ShowEngine {
           // (odds, markets, news, lineup outlook). Repetitive is
           // better than mute.
           const MAX_DUPLICATE_SKIPS = 4;
+          /** Every Nth duplicate emits a banter beat instead of skipping.
+           *  N=2 means: skip the 1st duplicate, banter on the 2nd, skip
+           *  the 3rd, banter on the 4th. Keeps the silence broken without
+           *  yelling over the listener every tick. */
+          const BANTER_EVERY_N_DUPLICATES = 2;
           const hasUserSignal = cuesForTurn.length > 0 || !!swingForTurn;
           const isDuplicate = play.id === this.lastSeenPlayId;
-          if (isDuplicate && !hasUserSignal && this.duplicatePlayCount < MAX_DUPLICATE_SKIPS) {
+          let banterMode = false;
+          if (isDuplicate && !hasUserSignal) {
             this.duplicatePlayCount += 1;
-            this.logger.info(
-              { playId: play.id, type: play.type, duplicates: this.duplicatePlayCount },
-              "Skipping duplicate play (no new game state since last tick)"
-            );
-            return;
+            const shouldBanter =
+              this.duplicatePlayCount % BANTER_EVERY_N_DUPLICATES === 0 &&
+              this.duplicatePlayCount < MAX_DUPLICATE_SKIPS;
+            if (shouldBanter) {
+              banterMode = true;
+              this.logger.info(
+                { playId: play.id, duplicates: this.duplicatePlayCount },
+                "Filling duplicate-play silence with a banter beat"
+              );
+            } else if (this.duplicatePlayCount < MAX_DUPLICATE_SKIPS) {
+              this.logger.info(
+                { playId: play.id, type: play.type, duplicates: this.duplicatePlayCount },
+                "Skipping duplicate play (no new game state since last tick)"
+              );
+              return;
+            }
+            // Past the cap: fall through to a normal forced turn.
           }
           if (!isDuplicate) {
             this.lastSeenPlayId = play.id;
             this.duplicatePlayCount = 0;
-          } else {
+          } else if (!banterMode) {
             // Forced through after the cap — keep counting so the
             // next true play change still resets cleanly, but log
             // that we punched through.
@@ -847,8 +1424,36 @@ export class ShowEngine {
           // engine only stays quiet when there's literally no new
           // game state to react to.
 
+          // Pregame angle rotation: each forced duplicate-play tick
+          // gets a fresh angle hint so hosts don't loop the same
+          // pre-tip talking points. We only emit a hint while the
+          // play id is the placeholder `-pre-` form — once real
+          // plays land, the play itself is the anchor.
+          const isPregamePlaceholder = /-pre-/.test(play.id);
+          const PREGAME_ANGLES = [
+            "matchup math: how the teams' core strengths collide on this slate.",
+            "Vegas line and total: what the book is saying about this game.",
+            "the listener's personal stake — their lineup, their parlay, their bubble player.",
+            "a specific news headline from the feed (injury, lineup, weather, narrative).",
+            "starter outlook: ONE of the listener's actual starters and what they need tonight.",
+            "a market swing or sharp price: what bettors moved on, and why.",
+            "the friend-room angle: who in the league has the most at stake."
+          ];
+          let pregameAngleHint: string | undefined;
+          if (isPregamePlaceholder) {
+            pregameAngleHint = PREGAME_ANGLES[this.pregameAngleIndex % PREGAME_ANGLES.length];
+            this.pregameAngleIndex += 1;
+          } else {
+            // Reset rotation so the next pregame stretch (e.g. halftime
+            // placeholder) starts fresh rather than mid-cycle.
+            this.pregameAngleIndex = 0;
+          }
+
           const textStart = performance.now();
-          const dialogueLines = await commentaryProvider.draft({
+          // The draft input is the same shape whether the producer
+          // runs or not — the producer just decides whether to add a
+          // `directive` so the host LLM uses the focused prompt path.
+          const draftInput = {
             play,
             observation,
             impacts: commentary.fantasyImpacts,
@@ -864,11 +1469,74 @@ export class ShowEngine {
             markets: marketsForTurn.length > 0 ? marketsForTurn : undefined,
             marketSwing: swingForTurn,
             pickContext: pickContextForTurn,
+            pregameAngleHint,
+            enrichmentSignals,
             fallbackText: commentary.text
+          };
+          // Producer step. Runs synchronously before the host LLM —
+          // when it succeeds, the directive replaces all the raw
+          // fields in the host prompt; when it throws, we drop the
+          // directive and the host LLM falls back to the legacy
+          // raw-field path (so a producer outage never blanks the show).
+          // Pull rolling eval snapshot once and feed it to BOTH
+          // the arc planner (pacing override on a stayTuned slump)
+          // and the producer (corrective beat selection on low
+          // specificity / friction / callbacks). Cheap — synchronous
+          // read of an in-memory ring buffer.
+          const evalSnapshot = getRecentEvalSnapshot(6);
+          // Advance the arc planner with this tick's game state +
+          // moment so its directive reflects the new dramatic
+          // position before the producer reads it.
+          const arcDirective = arcPlanner.tick({ game: gameState, moment: commentary.moment, evalSnapshot });
+          tickSummary.arcPosition = arcDirective.position;
+          const rapportSnapshot = rapportTracker.state();
+          let directive: Awaited<ReturnType<typeof producerAgent.produce>> | undefined;
+          try {
+            directive = await producerAgent.produce({
+              draft: draftInput,
+              priorShowState,
+              arcDirective,
+              evalSnapshot,
+              rapportState: rapportSnapshot,
+              banterMode
+            });
+            priorShowState = directive.showState;
+            // Prefer the chain's per-call resolution (the LLM
+            // producer that actually answered) over the surface
+            // chain id — without this, every turn looks like
+            // "producer-chain" and we can't tell whether Haiku ever
+            // ran vs always falling through to local.
+            tickSummary.producer =
+              "lastProducerId" in producerAgent && typeof producerAgent.lastProducerId === "string" && producerAgent.lastProducerId
+                ? producerAgent.lastProducerId
+                : producerAgent.id;
+            tickSummary.producerBeats = directive.beats.map((b) => b.sourceKind);
+          } catch (error) {
+            this.logger.warn(
+              { err: error instanceof Error ? error.message : String(error) },
+              "Producer failed — falling back to raw-field host prompt"
+            );
+            tickSummary.producer = `${producerAgent.id}:error`;
+          }
+          const dialogueLines = await commentaryProvider.draft({
+            ...draftInput,
+            directive
           });
           commentary.lines = dialogueLines;
           commentary.text = joinDialogueLines(dialogueLines);
           commentary.hostId = dialogueLines[0].hostId;
+          // Surface producer + arc context to the client so the
+          // transcript can render source chips + an act marker.
+          commentary.producerBeats = directive?.beats.map((b) => b.sourceKind);
+          commentary.arcPosition = arcDirective.position;
+          // Closing-handoff carry-forward (see opener path above).
+          // Setting pendingNextHostId here overrides the deterministic
+          // selectHost rotation for the NEXT tick only — the host
+          // addressed in the final turn becomes the next lead.
+          const tickHandoff = detectClosingHandoff(dialogueLines);
+          if (tickHandoff) {
+            this.pendingNextHostId = tickHandoff;
+          }
           commentary.latency.textGenerationMs = Math.round(performance.now() - textStart);
           commentary.latency.endToEndMs = Math.round(performance.now() - startedAt);
           tickSummary.turnId = commentary.id;
@@ -898,6 +1566,86 @@ export class ShowEngine {
             });
           }
           this.recentCommentary = [commentary.text, ...this.recentCommentary].slice(0, 5);
+          // Fire-and-forget eval. Doesn't await — adds zero latency
+          // to the listener-facing tick. Failures are isolated; the
+          // eval ring buffer just won't get an entry for this turn.
+          const evalInput = {
+            turnId: commentary.id,
+            text: commentary.text,
+            recentCommentary: [...this.recentCommentary].slice(1, 5), // exclude this turn
+            momentContext: commentary.moment?.headline ?? play.headline ?? "live play",
+            availableSources: Array.from(
+              new Set([
+                ...(enrichmentSignals.length > 0 ? enrichmentSignals.map((s) => s.source) : []),
+                ...(news.length > 0 ? ["news"] : []),
+                ...(marketsForTurn.length > 0 ? ["markets"] : []),
+                ...(cuesForTurn.length > 0 ? ["listener"] : []),
+                "play"
+              ])
+            )
+          };
+          evaluator
+            .evaluate(evalInput)
+            .then((judgement) => recordEvaluation(judgement))
+            .catch((error) => {
+              this.logger.warn(
+                { err: error instanceof Error ? error.message : String(error), turnId: commentary.id },
+                "Evaluator failed for turn"
+              );
+            });
+          // Cross-show memory: extract claims from this turn,
+          // attribute them to the listener, and persist for future
+          // shows to pull as callback signals. Only fires when we
+          // know who the listener is — claims for an anonymous
+          // session would be unattributable.
+          let extractedClaims: Awaited<ReturnType<typeof claimsExtractor.extract>> = [];
+          if (request.picksListenerId) {
+            try {
+              extractedClaims = await claimsExtractor.extract({
+                listenerId: request.picksListenerId,
+                hostId: commentary.hostId,
+                text: commentary.text,
+                playPlayerIds: play.playerIds,
+                teams: matchupTeams,
+                sourceShowId: this.id,
+                capturedAt: new Date().toISOString()
+              });
+            } catch (error) {
+              this.logger.warn(
+                { err: error instanceof Error ? error.message : String(error), turnId: commentary.id },
+                "Claims extractor failed for turn"
+              );
+            }
+            // Persist asynchronously — don't block the rapport
+            // tracker update or the next tick's setup on Upstash
+            // latency. Sequential awaits inside the promise so we
+            // don't race on the single-key-per-listener layout.
+            void (async () => {
+              try {
+                for (const claim of extractedClaims) await claimsStore.save(claim);
+              } catch (error) {
+                this.logger.warn(
+                  { err: error instanceof Error ? error.message : String(error) },
+                  "Claims store save failed"
+                );
+              }
+            })();
+          }
+          // Update the rapport tracker for THIS turn — runs whether
+          // or not we have a listener id. Feeds extracted claims (when
+          // present) into newThreads so the next tick's producer can
+          // reach for them as callbacks within the same show.
+          rapportTracker.update({
+            turnId: commentary.id,
+            leadHostId: commentary.hostId,
+            dialogue: commentary.lines,
+            shippedAt: new Date().toISOString(),
+            newThreads: extractedClaims.map((c) => ({
+              id: c.id,
+              text: c.text,
+              hostId: c.hostId
+            }))
+          });
           this.recentHostIds = [...this.recentHostIds, commentary.hostId].slice(-5);
           this.queue.push({ type: "commentary", commentary });
           this.lastCommentaryAtMs = Date.now();
@@ -933,7 +1681,13 @@ export class ShowEngine {
             )) {
               if (this.stopped) break;
               commentary.latency.ttsFirstAudioMs ??= audio.latencyMs;
-              this.queue.push({ type: "tts", audio });
+              const enriched = enrichChunkWithMentionCues(audio, commentary.lines, {
+                starters: rosterForListener(fantasy, request.group.listener.rosterId)?.starters,
+                game,
+                markets: marketsForTurn,
+                listenerName: request.group.listener?.name
+              });
+              this.queue.push({ type: "tts", audio: enriched });
               tickSummary.ttsChunks = (tickSummary.ttsChunks ?? 0) + 1;
             }
             tickSummary.ttsFirstByteMs = commentary.latency.ttsFirstAudioMs;

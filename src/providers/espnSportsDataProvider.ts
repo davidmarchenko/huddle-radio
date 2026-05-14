@@ -45,6 +45,26 @@ type EspnStatus = {
   };
 };
 
+type EspnSummary = {
+  plays?: EspnSummaryPlay[];
+  drives?: { previous?: Array<{ plays?: EspnSummaryPlay[] }> };
+};
+
+type EspnSummaryPlay = {
+  id?: string;
+  text?: string;
+  type?: { text?: string };
+  scoringPlay?: boolean;
+  period?: { number?: number };
+  clock?: { displayValue?: string };
+  team?: { abbreviation?: string; id?: string };
+  start?: { team?: { abbreviation?: string } };
+  awayScore?: number;
+  homeScore?: number;
+  wallclock?: string;
+  athletesInvolved?: Array<{ id?: string | number; displayName?: string }>;
+};
+
 type EspnCompetition = {
   id?: string;
   status?: EspnStatus;
@@ -104,6 +124,18 @@ export class EspnSportsDataProvider implements SportsDataProvider {
 
   async getGameState(): Promise<SportsGameState> {
     const event = await this.getPrimaryEvent();
+    // Seed `recentPlays` from ESPN's per-event summary endpoint so a
+    // listener entering a game in progress sees actual history
+    // (e.g. last 8 baskets, last 8 plays of a drive) instead of an
+    // empty feed waiting on the next cadence tick. We do this once
+    // per provider instance — `nextPlay` keeps the array fresh from
+    // there. Best-effort: failure (404, network blip, unknown shape)
+    // just leaves the array empty and we degrade to "wait for next
+    // tick" as before.
+    if (this.recentPlays.length === 0) {
+      const seed = await this.fetchHistoryPlays(event);
+      if (seed.length > 0) this.recentPlays = seed;
+    }
     return this.normalizeGameState(event);
   }
 
@@ -112,6 +144,74 @@ export class EspnSportsDataProvider implements SportsDataProvider {
     const play = this.normalizePlay(event);
     this.recentPlays = [play, ...this.recentPlays.filter((item) => item.id !== play.id)].slice(0, 8).reverse();
     return play;
+  }
+
+  /**
+   * Hit ESPN's `summary?event=<id>` endpoint to pull the game's
+   * actual play log, then map the last few entries to our
+   * `SportsPlay` shape. ESPN returns `plays` (basketball, soccer,
+   * hockey) or nests them under `drives.previous[].plays` (football)
+   * — we handle the flat case here and fall back to empty for
+   * football for now (drives parsing would need its own pass).
+   */
+  private async fetchHistoryPlays(event: EspnEvent): Promise<SportsPlay[]> {
+    try {
+      const summaryUrl = `${this.baseUrl.replace(/\/scoreboard$/, "/summary")}?event=${encodeURIComponent(event.id)}`;
+      const response = await this.fetcher(summaryUrl);
+      if (!response.ok) return [];
+      const summary = (await response.json()) as EspnSummary;
+      const flat = Array.isArray(summary.plays) ? summary.plays : [];
+      const fromDrives = Array.isArray(summary.drives?.previous)
+        ? summary.drives.previous.flatMap((drive) => Array.isArray(drive?.plays) ? drive.plays : [])
+        : [];
+      const rawPlays = flat.length > 0 ? flat : fromDrives;
+      if (rawPlays.length === 0) return [];
+      const competition = event.competitions?.[0];
+      const away = competition?.competitors?.find((c) => c.homeAway === "away");
+      const home = competition?.competitors?.find((c) => c.homeAway === "home");
+      // ESPN orders plays oldest-first; take the last 8 (most recent)
+      // and KEEP them in chronological order so the client (which
+      // expects newest-first via .reverse() on the bootstrap path)
+      // gets a consistent shape.
+      const recent = rawPlays.slice(-8);
+      return recent.map((play, index) => this.normalizeSummaryPlay(play, event, away, home, index));
+    } catch {
+      return [];
+    }
+  }
+
+  private normalizeSummaryPlay(
+    play: EspnSummaryPlay,
+    event: EspnEvent,
+    away: NonNullable<EspnCompetition["competitors"]>[number] | undefined,
+    home: NonNullable<EspnCompetition["competitors"]>[number] | undefined,
+    fallbackIndex: number
+  ): SportsPlay {
+    const description = play.text ?? "Live update.";
+    const period = play.period?.number ?? 0;
+    const clock = play.clock?.displayValue ?? "0:00";
+    const teamAbbr = play.team?.abbreviation ?? play.start?.team?.abbreviation ?? "";
+    const playerIds = (play.athletesInvolved ?? [])
+      .map((athlete) => athlete?.id)
+      .filter((id): id is string | number => id !== undefined && id !== null && id !== "")
+      .map((id) => this.resolver.resolve({ provider: "espn", externalId: id, sport: this.sport }));
+    return {
+      id: play.id ? `espn-${event.id}-history-${play.id}` : `espn-${event.id}-history-${fallbackIndex}`,
+      type: playType(play.type?.text ?? description),
+      excitement: play.scoringPlay ? 4 : 2,
+      clock,
+      quarter: period > 0 ? `Q${period}` : "",
+      possession: teamAbbr || away?.team?.abbreviation || "",
+      headline: play.type?.text ?? "Play",
+      description,
+      playerIds,
+      team: teamAbbr || away?.team?.abbreviation || "",
+      score: {
+        away: Number(play.awayScore ?? away?.score ?? 0),
+        home: Number(play.homeScore ?? home?.score ?? 0)
+      },
+      occurredAt: play.wallclock ?? new Date().toISOString()
+    };
   }
 
   async health(): Promise<ProviderHealth> {

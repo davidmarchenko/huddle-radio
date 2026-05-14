@@ -137,11 +137,16 @@ describe("POST /api/live/stream", () => {
     expect(response.status).toBe(400);
   });
 
-  it("rejects a LivecastRequest that fails schema validation (missing friends)", async () => {
+  it("rejects a LivecastRequest that fails schema validation (malformed friend)", async () => {
+    // Empty `friends` and `listener.name` are valid by design — non-demo
+    // casts where the user has no fantasy profile send neutral
+    // placeholders, and sanitizeCommentaryGroup strips them on the
+    // client. So the negative case is a friend object that's missing
+    // its required fields (id/name/favoriteTeam are still `.min(1)`).
     const response = await streamPost(
       jsonRequest("http://test.local/api/live/stream", {
         ...validRequestBody,
-        group: { ...validRequestBody.group, friends: [] }
+        group: { ...validRequestBody.group, friends: [{ id: "" }] }
       })
     );
     expect(response.status).toBe(400);

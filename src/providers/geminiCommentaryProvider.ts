@@ -1,12 +1,10 @@
 import type { CommentaryKind, DialogueLine, ProviderHealth } from "../shared/contracts";
 import {
-  buildCommentaryPayload,
-  buildOpenerSystemPrompt,
-  buildPlaySystemPrompt,
   joinDialogueLines,
   parseDialogueResponse,
   resolveHostPersona,
   sanitizeCommentary,
+  selectCommentaryPrompt,
   type CommentaryDraftInput
 } from "./commentaryPrompts";
 import type { CommentaryProvider } from "./openAICommentaryProvider";
@@ -41,8 +39,7 @@ export class GeminiCommentaryProvider implements CommentaryProvider {
 
     const persona = resolveHostPersona(leadHostId);
     const kind: CommentaryKind = input.kind ?? "play";
-    const system = kind === "opener" ? buildOpenerSystemPrompt(persona) : buildPlaySystemPrompt(persona);
-    const payload = buildCommentaryPayload(input, persona);
+    const { system, payload } = selectCommentaryPrompt(input, persona, kind);
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 
@@ -75,7 +72,7 @@ export class GeminiCommentaryProvider implements CommentaryProvider {
       .map((part) => part.text ?? "")
       .join(" ")
       .trim();
-    const parsed = parseDialogueResponse(raw, leadHostId);
+    const parsed = parseDialogueResponse(raw, leadHostId, input.group.listener.name);
     if (parsed && parsed.length > 0) {
       const joined = joinDialogueLines(parsed);
       const safe = sanitizeCommentary(joined, input.fallbackText);

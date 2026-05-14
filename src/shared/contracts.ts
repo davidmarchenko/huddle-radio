@@ -91,6 +91,58 @@ export type SportsPlay = {
 export type SportLeague = "nfl" | "nba" | "wnba" | "mlb" | "nhl" | "ncaaf" | "ncaab" | "soccer" | "other";
 
 /**
+ * A free-form signal from a non-play-by-play source — fan reactions
+ * (Reddit, Bluesky), beat-reporter posts, deeper stats from sport-
+ * specific official APIs, contextual blurbs (Wikipedia, AI search
+ * grounding). The aggregator dedupes across sources, ranks by
+ * importance, and surfaces a top-N to the commentary prompt so the
+ * AI hosts can weave in colour the official scoreboard doesn't carry.
+ *
+ * `kind` lets the prompt builder bucket signals (the model is told
+ * "here are 3 reactions and 2 stats, sample for colour"). `source`
+ * stays as a string union we extend per provider — the aggregator
+ * uses it for trust-ranking when it has to pick between two near-
+ * duplicate items. `score` is a 0..1 importance from the provider's
+ * point of view (engagement, recency, etc.) and gets re-weighted by
+ * the aggregator with recency + active-play affinity.
+ */
+export type EnrichmentSignal = {
+  id: string;
+  source:
+    | "reddit"
+    | "bluesky"
+    | "nba-stats"
+    | "mlb-stats"
+    | "nhl-stats"
+    | "espn-news"
+    | "wiki"
+    | "perplexity"
+    /** Cross-show callback — claim a host made in a prior show that
+     *  matches the current play's player or team. Surfaced by the
+     *  CallbackEnrichmentProvider out of the per-listener claims store. */
+    | "callback"
+    /** Visual color the model saw in the current frame — bench
+     *  reactions, body language, sideline drama, crowd intensity.
+     *  Emitted by the VisionEnrichmentProvider from the per-tick
+     *  VideoObservation. The model is the source of truth, so trust
+     *  is high — second only to official stat APIs. */
+    | "vision";
+  kind: "reaction" | "play-detail" | "context" | "news" | "stat";
+  text: string;
+  score: number;
+  occurredAt: string;
+  refs?: {
+    playerId?: string;
+    teamId?: string;
+    playId?: string;
+  };
+  /** When the aggregator merges near-duplicates from different sources,
+   *  the lower-trust voices fold in here so the prompt can quote them
+   *  ("ESPN: …; Reddit also lit up: …"). Empty on first-source items. */
+  voices?: Array<{ source: EnrichmentSignal["source"]; text: string }>;
+};
+
+/**
  * Prediction-market snapshot. One per outcome (a single yes/no
  * contract). Aggregated from Kalshi + Polymarket; the source field
  * tells the consumer which exchange this came from so the UI can
@@ -238,6 +290,14 @@ export type VideoObservation = {
   latencyMs: number;
   validation?: StreamValidation;
   usedFrame?: boolean;
+  /** Visible color worth narrating that the play feed can't tell us:
+   *  bench reactions, body language, sideline drama, crowd intensity,
+   *  fashion. Empty array when the frame is generic (no distinctive
+   *  color visible) — the right answer most ticks. The model fills
+   *  this when prompted; the VisionEnrichmentProvider consumes it
+   *  and emits each entry as an EnrichmentSignal so the producer
+   *  can pick visual color as a beat. */
+  color?: string[];
 };
 
 export type FantasyImpact = {
@@ -305,6 +365,20 @@ export type LivecastRequest = {
    * Mahomes needing 1 more TD" naturally during the show.
    */
   picksListenerId?: string;
+  /**
+   * Discovery-driven slate mode. When set with 2+ entries, the
+   * engine ranks these candidates against the listener's roster +
+   * group settings, picks the top entry as the opening game, and
+   * auto-pivots to the next ranked entry whenever the current game
+   * flips to `final`. The opener acknowledges the slate breadth
+   * instead of anchoring on a single matchup. Mutually informative
+   * with `sportsGameId` — passing both is allowed; slate wins,
+   * `sportsGameId` is ignored.
+   *
+   * Empty / single-entry arrays fall through to the legacy
+   * single-game path (a 1-game "slate" is just a single game).
+   */
+  slate?: SportsGameOption[];
 };
 
 /**
@@ -324,6 +398,9 @@ export type ActiveProviderSummary = {
   fantasy: string;
   sportsData: string;
   news: string;
+  /** Comma-joined list of active enrichment providers (Reddit, Bluesky, …)
+   *  or "(none)" when no providers are configured. */
+  enrichment: string;
   video: string;
   model: string;
   commentary: string;
@@ -423,6 +500,47 @@ export type LivecastCommentary = {
   play: SportsPlay;
   createdAt: string;
   latency: LatencyMetrics;
+  /** Audio-synced entity mentions for the live transcript panel.
+   *  Server-extracted at TTS time from the turn text + wordTimings:
+   *  when the audio passes a cue's `startMs`, the client surfaces a
+   *  small chip (player headshot, market price, listener stake) for
+   *  ~3-4 seconds. One entry per mention per turn. */
+  mentionCues?: MentionCue[];
+  /** Source kinds the producer's beats drew on for this turn —
+   *  ["enrichment", "market", "play"] etc. Surfaced in the
+   *  transcript so listeners can see which signals informed the
+   *  hosts. Empty / absent when the producer wasn't used (legacy
+   *  raw-input path) or the show is in a fallback state. */
+  producerBeats?: string[];
+  /** Show-arc position when this turn fired (cold-open / climax /
+   *  pivot / etc.). Surfaces in the transcript as an act-marker. */
+  arcPosition?: string;
+};
+
+/**
+ * Entity mention surfaced in the live transcript panel. Each cue is a
+ * single moment in a turn's audio where a tracked entity is named.
+ * The client uses `lineIndex` + `startMs` (relative to that line's
+ * audio start) to time the chip's appearance.
+ */
+export type MentionCue = {
+  id: string;
+  /** Which line (turn) of the commentary this mention occurs in. */
+  lineIndex: number;
+  /** Start time within the line's audio (ms). */
+  startMs: number;
+  /** What kind of entity this is — drives which chip variant the client renders. */
+  entityType: "player" | "team" | "market-source" | "listener-stake";
+  /** Stable id for the entity. Player id, team abbreviation, market source name, or "self". */
+  entityId: string;
+  /** Display label — player name, team short name, etc. */
+  label: string;
+  /** Optional small accessory (price in cents for markets, stat line for players). */
+  detail?: string;
+  /** Optional image URL — player headshot or team logo. */
+  imageUrl?: string;
+  /** Optional brand color (hex without #) for chip accent. */
+  accentColor?: string;
 };
 
 export type LatencyMetrics = {
@@ -431,6 +549,30 @@ export type LatencyMetrics = {
   textGenerationMs: number;
   ttsFirstAudioMs?: number;
   endToEndMs: number;
+};
+
+/**
+ * Word-level audio timing for the live transcript. Each entry is one
+ * token (word, punctuation, or whitespace) with its millisecond start
+ * and end relative to the start of THIS chunk's audio. The client uses
+ * these to paint a karaoke-style transcript (current word emphasized,
+ * past dimmed) and to fire mention chips when the audio crosses a
+ * specific word's startMs.
+ *
+ * Providers that don't return timestamps (ElevenLabs flash, Fish, mock)
+ * simply omit `wordTimings` and the client falls back to a non-synced
+ * transcript treatment.
+ */
+export type WordTiming = {
+  /** The exact token as it appears in the synthesized text. May be a
+   *  word, a punctuation mark, or whitespace. Preserved verbatim so
+   *  client-side rendering can rebuild the original string by joining
+   *  in order. */
+  text: string;
+  /** Start of this token within the chunk's audio (ms, 0-based). */
+  startMs: number;
+  /** End of this token within the chunk's audio (ms). */
+  endMs: number;
 };
 
 export type TTSAudioChunk = {
@@ -450,6 +592,16 @@ export type TTSAudioChunk = {
   /** Host speaking this turn. Mirrors DialogueLine.hostId so the client
    *  doesn't need to cross-reference the commentary object when rendering. */
   lineHostId?: HostId;
+  /** Per-word timings for the audio in this chunk. When present the
+   *  client renders an audio-synced "live transcript" panel; when
+   *  absent (provider doesn't support it) the client falls back to a
+   *  static transcript. See WordTiming. */
+  wordTimings?: WordTiming[];
+  /** Entity mentions found in the corresponding line's text and timed
+   *  via wordTimings. Server-extracted at TTS time and attached to
+   *  the audio chunk so the client can fire mention chips as the
+   *  audio crosses each cue's startMs. */
+  mentionCues?: MentionCue[];
 };
 
 export type ClientServerEvent =
