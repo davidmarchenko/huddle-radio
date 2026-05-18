@@ -6543,6 +6543,23 @@ function HuddlePlayerBar({
               </motion.div>
             )}
           </AnimatePresence>
+          {/* Add stream — only shown during a live audio show. Lets
+              the listener swap from audio-only to a video stream
+              without having to stop the show, navigate home, pick
+              the game again from pregame, and re-start. The pregame
+              view also exposes this CTA in its button row; the bar
+              version is the equivalent affordance for mid-show. */}
+          {isLive && livecastActive && (
+            <button
+              type="button"
+              className="player-add-stream-btn"
+              onClick={onOpenStream}
+              aria-label="Add stream"
+            >
+              <span className="icon icon-plus" aria-hidden="true" />
+              <span className="player-add-stream-label">Add stream</span>
+            </button>
+          )}
           <VolumeControl value={volume} onChange={onVolumeChange} disabled={!isLive} />
         </motion.footer>
       </div>

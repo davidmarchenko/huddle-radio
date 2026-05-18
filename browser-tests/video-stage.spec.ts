@@ -28,9 +28,12 @@ async function startSampleAndOpenStreamSetup(page: import("@playwright/test").Pa
   // — the Stream button on the player bar isn't reliably present
   // until the show is mounted.
   await expect(page.getByRole("button", { name: /stop show/i }).first()).toBeVisible({ timeout: 30_000 });
-  // The audio-live player bar exposes a "Stream" button that opens
-  // the producer drawer with the Stream pane already selected.
-  await page.getByRole("button", { name: /^stream$/i }).first().click();
+  // The audio-live player bar exposes an "Add stream" button that
+  // opens the producer drawer with the Stream pane already selected,
+  // so the listener can swap from audio-only to a video source mid-
+  // show without ending the cast. The button used to be named just
+  // "Stream"; the regex covers both forms.
+  await page.getByRole("button", { name: /add stream|^stream$/i }).first().click();
 }
 
 test("typing a video URL flips the live UI from audio-only to the video stage", async ({ page }) => {

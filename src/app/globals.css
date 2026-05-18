@@ -19571,6 +19571,33 @@ body {
   display: none;
 }
 
+/* Add stream button in the bar — mirrors the cue-host pill so the
+   bar's two utility actions read as a related cluster (push-to-talk
+   on the left of captions, swap-source on the right). */
+.player-add-stream-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hr-text) 18%, transparent);
+  background: color-mix(in srgb, var(--hr-text) 4%, var(--hr-surface));
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color var(--hr-motion-base) var(--hr-ease-standard),
+    background var(--hr-motion-base) var(--hr-ease-standard),
+    transform var(--hr-motion-fast) var(--hr-ease-standard);
+}
+.player-add-stream-btn:hover {
+  border-color: color-mix(in srgb, var(--hr-text) 35%, transparent);
+  transform: translateY(-1px);
+}
+
 .player-captions {
   --live-pulse: 1;
   display: grid;

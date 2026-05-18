@@ -502,7 +502,14 @@ const LivecastRequestSchema = z.object({
   espnLeagueId: z.string().trim().optional(),
   espnSeason: z.number().int().min(2018).max(2100).optional(),
   week: z.number().int().min(1).max(22).optional(),
-  cadenceMs: z.number().int().min(3000).max(15000).default(5000),
+  // Cadence cap must cover the UI's tick-rate slider (10s-45s in
+  // main.tsx) plus headroom — the default listener cadence is 25s
+  // (= 25000 ms). The old cap of 15000 silently 400'd every demo
+  // show start for 6 days; client default of 25000 was outside the
+  // window. Lift to 60000 so the slider's full range fits with a
+  // buffer for power users who customize past the slider via
+  // persistence.
+  cadenceMs: z.number().int().min(3000).max(60000).default(5000),
   customLeague: z.custom<FantasyLeagueState>((value) => validateFantasyLeagueShape(value)).optional(),
   ttsEnabled: z.boolean().default(true),
   // Optional runtime override of the TTS provider. "auto" / omitted ==
