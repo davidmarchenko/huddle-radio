@@ -69,23 +69,30 @@ async function collectEvents(
 }
 
 describe("ShowEngine", () => {
-  it("emits snapshot then opener commentary as the first two events", async () => {
+  it("emits snapshot then opener commentary as the first events", async () => {
     const engine = createEngine();
     void engine.start(baseRequest);
-    const events = await collectEvents(engine, { count: 2 });
+    // Bumped count from 2 → 3 because the engine now emits a
+    // placeholder `observation` event right after the snapshot so
+    // NemotronSeesPanel can render its warming-up stub before the
+    // vision provider's first real frame. The opener commentary
+    // still arrives next, regardless of the placeholder.
+    const events = await collectEvents(engine, { count: 3 });
     expect(events[0]?.type).toBe("snapshot");
-    expect(events[1]?.type).toBe("commentary");
-    if (events[1]?.type === "commentary") {
-      // The opener is always Theo's turn per the engine convention.
-      expect(events[1].commentary.kind).toBe("opener");
-    }
+    const commentary = events.find(
+      (e): e is Extract<ClientServerEvent, { type: "commentary" }> => e.type === "commentary"
+    );
+    expect(commentary).toBeDefined();
+    // The opener is always Theo's turn per the engine convention.
+    expect(commentary!.commentary.kind).toBe("opener");
   });
 
   it("acks queued cues on the next tick with cueIds matching the pending queue", async () => {
     const engine = createEngine();
     void engine.start(baseRequest);
     // Wait for the opener so we know the engine reached the tick loop.
-    await collectEvents(engine, { count: 2, timeoutMs: 8000 });
+    // Three events: snapshot → placeholder observation → opener.
+    await collectEvents(engine, { count: 3, timeoutMs: 8000 });
     engine.pushCue({ id: "cue-A", text: "First question", capturedAt: new Date().toISOString() });
     engine.pushCue({ id: "cue-B", text: "Second question", capturedAt: new Date().toISOString() });
     const events = await collectEvents(engine, { count: 6, timeoutMs: 12000 });

@@ -167,13 +167,19 @@ describe("POST /api/live/stream", () => {
     const response = await streamPost(jsonRequest("http://test.local/api/live/stream", validRequestBody));
     expect(response.status).toBe(200);
     const drainer = drainerFor(response);
-    // Drain the session-ready handshake plus the next 2 events.
-    const events = await drainer.next(3, 8000);
+    // Drain enough to cover the session-ready, snapshot, the
+    // placeholder observation (lets NemotronSeesPanel mount as
+    // "warming up" before the first real vision frame), and the
+    // opener commentary turn.
+    const events = await drainer.next(4, 8000);
     expect(events[0]?.type).toBe("session-ready");
     // The snapshot (fantasy + game + health + providers).
     expect(events[1]?.type).toBe("snapshot");
-    // The opener commentary turn.
-    expect(events[2]?.type).toBe("commentary");
+    // Order of the next two is engine-internal — assert presence
+    // rather than position so a future reordering doesn't break us.
+    const types = events.slice(2).map((e) => e?.type);
+    expect(types).toContain("observation");
+    expect(types).toContain("commentary");
     await drainer.close();
   });
 });

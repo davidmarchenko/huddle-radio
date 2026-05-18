@@ -673,6 +673,36 @@ export class ShowEngine {
         providers: getActiveProviders(request.customLeague, request.providerMode, deriveSportsLabelMode(request.sportsGameId))
       });
 
+      // Synthetic placeholder observation. The NemotronSeesPanel
+      // returns null until the first VideoObservation arrives — in
+      // mock-provider mode that may not happen for tens of seconds
+      // (or at all, if no upstream vision provider is wired). The
+      // listener stares at a missing rail card during that gap.
+      // Emit an "unavailable" observation immediately so the panel
+      // mounts in a "Waiting on a usable frame" stub, then real
+      // observations overwrite it as they arrive. NemotronSeesPanel
+      // already special-cases `validation?.status === "unavailable"`
+      // for the warming-up headline, so no client-side change needed.
+      this.queue.push({
+        type: "observation",
+        observation: {
+          id: `obs-placeholder-${Date.now()}`,
+          source: "stream-url",
+          summary: "Vision provider warming up — first frame pending.",
+          confidence: 0,
+          observedAt: new Date().toISOString(),
+          latencyMs: 0,
+          usedFrame: false,
+          validation: {
+            status: "unavailable",
+            confidence: 0,
+            evidence: [],
+            reason: "Pre-first-tick placeholder — waiting on a usable frame.",
+            validatedAt: new Date().toISOString()
+          }
+        }
+      });
+
       // Fetch the Vegas line once at show start. Lines move on the
       // order of minutes, so refetching every tick would burn the free
       // tier. `undefined` is the no-op happy path when no key is set.

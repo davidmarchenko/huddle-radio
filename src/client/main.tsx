@@ -6104,6 +6104,15 @@ function HuddleLiveAudio({
         {odds && <OddsCard odds={odds} />}
         <MarketsBoardCard game={game} />
         {news && news.length > 0 && <NewsStorylineCard news={news} extras={[]} />}
+        {/* Stop show — mirrors the HuddleLiveWithStream rail. Audio-
+            live used to have no way to end the session from the live
+            view itself; the listener had to navigate home and use the
+            MiniPlayer's stop. That's a real UX gap, AND it broke the
+            browser-smoke spec that asserts on Stop show after the
+            audio-only sample CTA. */}
+        <button className="secondary" onClick={onStop}>
+          <span className="icon icon-stop" aria-hidden="true" />Stop show
+        </button>
       </aside>
     </section>
   );
