@@ -31,7 +31,7 @@ export function normalizeValidationPlay(value: unknown): SportsPlay {
     type: "other",
     excitement: 1,
     clock: "n/a",
-    quarter: "Validation",
+    period: { number: 0, kind: "quarter", shortDetail: "Validation" },
     possession: "n/a",
     headline: "Manual stream validation",
     description: "Manual frame validation outside a live play tick.",

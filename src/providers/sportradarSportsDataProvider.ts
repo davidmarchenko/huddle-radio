@@ -1,4 +1,5 @@
 import type { ProviderHealth, SportLeague, SportsDataProvider, SportsGameState, SportsPlay } from "../shared/contracts";
+import { periodFromNumber } from "../shared/period";
 import { getDefaultPlayerIdResolver, type PlayerIdResolver } from "../server/playerIdResolver";
 
 type Fetcher = typeof fetch;
@@ -107,7 +108,7 @@ export class SportradarSportsDataProvider implements SportsDataProvider {
         type: "other",
         excitement: 1,
         clock: summary.clock ?? "0:00",
-        quarter: summary.quarter ? `Q${summary.quarter}` : "Pregame",
+        period: periodFromNumber(Number(summary.quarter) || 0, this.sport, { shortDetail: summary.quarter ? undefined : "Pregame" }),
         possession: summary.summary?.home?.alias ?? "HOME",
         headline: "Sportradar status update",
         description: "Pregame status — awaiting first snap.",
@@ -154,7 +155,10 @@ export class SportradarSportsDataProvider implements SportsDataProvider {
       type: playTypeFromSportradar(event.type, description),
       excitement: event.scoring_play ? 4 : 2,
       clock: event.clock ?? summary.clock ?? "0:00",
-      quarter: event.quarter ? `Q${event.quarter}` : summary.quarter ? `Q${summary.quarter}` : "NFL",
+      period: periodFromNumber(
+        Number(event.quarter ?? summary.quarter) || 0,
+        this.sport
+      ),
       possession: summary.summary?.home?.alias ?? "HOME",
       headline: event.type ? toTitleCase(event.type) : "Sportradar event",
       description,

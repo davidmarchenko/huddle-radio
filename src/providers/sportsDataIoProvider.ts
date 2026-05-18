@@ -1,4 +1,5 @@
 import type { ProviderHealth, SportLeague, SportsDataProvider, SportsGameState, SportsPlay } from "../shared/contracts";
+import { periodFromNumber } from "../shared/period";
 import { getDefaultPlayerIdResolver, type PlayerIdResolver } from "../server/playerIdResolver";
 
 type Fetcher = typeof fetch;
@@ -108,7 +109,11 @@ export class SportsDataIoProvider implements SportsDataProvider {
       type: playTypeFromText(`${last.Type ?? ""} ${description}`),
       excitement: 2,
       clock: last.TimeRemainingDisplay ?? "0:00",
-      quarter: last.QuarterName ?? "NFL",
+      period: periodFromNumber(
+        Number((last.QuarterName ?? "").replace(/\D+/g, "")) || 0,
+        this.sport,
+        { shortDetail: last.QuarterName ?? undefined }
+      ),
       possession: last.Team ?? last.HomeTeam ?? "HOME",
       headline: last.Type ?? "SportsDataIO event",
       description,

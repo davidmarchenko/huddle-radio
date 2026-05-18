@@ -219,7 +219,7 @@ describe("buildCommentaryText", () => {
         type: "other",
         excitement: 5,
         clock: "0:14",
-        quarter: "Q4",
+        period: { number: 4, kind: "quarter" },
         possession: "DEN",
         headline: "Jokić step-back three",
         description: "...",

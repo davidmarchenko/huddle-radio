@@ -13,7 +13,7 @@ const baseInput: CommentaryDraftInput = {
     type: "pass",
     excitement: 3,
     clock: "0:00",
-    quarter: "Q1",
+    period: { number: 1, kind: "quarter" },
     possession: "KC",
     headline: "test",
     description: "test",

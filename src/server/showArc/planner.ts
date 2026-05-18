@@ -167,24 +167,30 @@ export class ShowArcPlanner {
 function isCloseToFinal(game: SportsGameState): boolean {
   if (game.status === "final") return true;
   const clock = (game.currentPlay?.clock ?? "").toLowerCase();
-  const quarter = (game.currentPlay?.quarter ?? "").toLowerCase();
-  // Accept "Q4 1:30" / "4Q 0:45" / "OT 0:30" etc. Heuristic — the
-  // engine doesn't strictly normalise clock strings across leagues,
-  // so we look for the recognisable "small minutes left in the
-  // last period" pattern.
-  if (/^(q4|q5|4q|ot|2ot)/i.test(quarter)) {
-    const m = clock.match(/(\d+):(\d+)/);
-    if (m) {
-      const minutes = Number(m[1]);
-      return minutes <= 2;
-    }
-  }
-  return false;
+  const period = game.currentPlay?.period;
+  if (!period) return false;
+  // "Last period" depends on sport: 4 for quarter-based, 3 for
+  // hockey, 9 for baseball, 2 for soccer halves. Anything past those
+  // (OT) also qualifies. Structured period info removes the
+  // string-regex guesswork the old version had to do.
+  const regulationLastPeriod =
+    period.kind === "period" ? 3 : period.kind === "inning" ? 9 : period.kind === "half" ? 2 : 4;
+  if (period.number < regulationLastPeriod) return false;
+  const m = clock.match(/(\d+):(\d+)/);
+  if (!m) return false;
+  const minutes = Number(m[1]);
+  return minutes <= 2;
 }
 
 function isLateGame(game: SportsGameState): boolean {
-  const quarter = (game.currentPlay?.quarter ?? "").toLowerCase();
-  return /q3|q4|3q|4q|ot/i.test(quarter);
+  const period = game.currentPlay?.period;
+  if (!period) return false;
+  // "Late game" = second half of regulation onwards. Quarter-based:
+  // Q3 or later. Hockey: P2 or later (only 3 total). Baseball: 5th
+  // inning or later. Soccer: H2.
+  const lateThreshold =
+    period.kind === "period" ? 2 : period.kind === "inning" ? 5 : period.kind === "half" ? 2 : 3;
+  return period.number >= lateThreshold;
 }
 
 function isQuarterBoundary(game: SportsGameState): boolean {

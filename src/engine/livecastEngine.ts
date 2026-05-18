@@ -9,6 +9,7 @@ import type {
   SportsPlay,
   VideoObservation
 } from "../shared/contracts";
+import { formatPeriodLabel } from "../shared/period";
 import { selectHost } from "../shared/hostPersonas";
 import { rankFantasyImpacts } from "./fantasyImpact";
 
@@ -134,7 +135,11 @@ function syntheticOpenerPlay(): SportsPlay {
     type: "other",
     excitement: 1,
     clock: "—",
-    quarter: "Open",
+    // Synthetic opener has no real period; carry "Open" as the
+    // shortDetail so the formatter renders the cue verbatim. Kind
+    // defaults to "quarter" since the engine doesn't know the sport
+    // at synth time.
+    period: { number: 0, kind: "quarter", shortDetail: "Open" },
     possession: "—",
     headline: "Show open",
     description: "Welcome to Huddle Radio.",
@@ -173,7 +178,7 @@ export function buildCommentaryText(input: {
   const bias = biasLine(input.group.homeTeamBias, input.play.team, input.group.friends);
   const momentLead = moment.priority === "interrupt" ? `Interrupt-worthy: ${moment.headline}.` : moment.priority === "major" ? `${moment.headline}.` : "";
 
-  return `${tonePrefix} ${momentLead} ${input.play.quarter}, ${input.play.clock}: ${input.play.headline}. ${eventLead} ${impactText} ${extraImpacts ? `${extraImpacts}.` : ""} ${observation} ${bias}${friendNeedle}${newsHook}`
+  return `${tonePrefix} ${momentLead} ${formatPeriodLabel(input.play.period)}, ${input.play.clock}: ${input.play.headline}. ${eventLead} ${impactText} ${extraImpacts ? `${extraImpacts}.` : ""} ${observation} ${bias}${friendNeedle}${newsHook}`
     .replace(/\s+/g, " ")
     .slice(0, 520);
 }

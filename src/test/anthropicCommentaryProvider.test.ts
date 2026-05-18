@@ -8,7 +8,7 @@ const input: CommentaryDraftInput = {
     type: "pass",
     excitement: 3,
     clock: "0:00",
-    quarter: "Q1",
+    period: { number: 1, kind: "quarter" },
     possession: "KC",
     headline: "Mahomes connects with Kelce",
     description: "Mahomes pass complete to Kelce.",

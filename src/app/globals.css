@@ -6759,8 +6759,9 @@ body:has(.huddle-app.phase-empty)::after,
 }
 
 .phase-live-audio .highlight-list {
-  max-height: 260px;
-  overflow: auto;
+  /* Hug content — see the parity rule in the phase-live block below.
+     A second rule existed here pre-rework; keeping it neutralised so
+     a future cascade tweak can't quietly reintroduce a fixed height. */
   padding-right: 0.25rem;
 }
 
@@ -11825,6 +11826,7 @@ body {
 
 /* Show / state */
 .icon-broadcast { --icon-src: url("/icons/ui/broadcast.svg"); --icon-src-filled: url("/icons/ui/filled/broadcast.svg"); }
+.icon-newspaper { --icon-src: url("/icons/ui/newspaper.svg"); }
 .icon-podcast   { --icon-src: url("/icons/ui/podcast.svg"); }
 .icon-headphones{ --icon-src: url("/icons/ui/headphones.svg"); }
 
@@ -13160,11 +13162,14 @@ body {
   background: var(--hr-bg-1) !important;
 }
 
-/* Highlight list (Recent highlights) — neutral, no transform shenanigans. */
+/* Highlight list (Recent highlights) — neutral, no transform shenanigans.
+   No fixed max-height: the card hugs however many plays the engine
+   has actually delivered. With the server hydrating at most 8 recent
+   plays on first paint and the WebSocket trimming to 8 thereafter,
+   the list can't blow out the layout. Scrollbars only show up when
+   the user resizes their viewport to tiny heights. */
 .huddle-app.phase-live .highlight-list,
 .huddle-app.phase-live-audio .highlight-list {
-  max-height: 320px;
-  overflow: auto;
   display: grid;
   gap: var(--hr-space-2);
   padding-right: var(--hr-space-1);
@@ -13193,39 +13198,34 @@ body {
    the rail spans both rows on the right. (The previous `conv` name
    was for the live captions panel, which now lives in the player
    bar — repurposed for the play-by-play feed instead.) */
+/* Two-column layout: main column (hero + play-by-play stacked via
+   flex) and the rail next to it. Previously this used a 2-row grid
+   with the rail spanning both rows — but a tall rail (markets +
+   news + odds + matchup + impact) would stretch the rows unevenly
+   and leave empty whitespace below `moment-hero` before
+   `RecentHighlights`. Flex inside the main column keeps the gap
+   between moment-hero and the play-by-play card constant regardless
+   of how tall the rail grows. */
 .huddle-app.phase-live .audio-live-layout,
 .huddle-app.phase-live-audio .audio-live-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-  grid-template-areas:
-    "hero rail"
-    "plays rail";
   gap: var(--hr-space-6);
   align-items: start;
 }
 
-.huddle-app.phase-live .moment-hero,
-.huddle-app.phase-live-audio .moment-hero {
-  grid-area: hero;
-}
-
-/* The play-by-play card is the only `<article>` direct-child of
-   the layout (rail's articles are nested inside the aside). */
-.huddle-app.phase-live .audio-live-layout > article,
-.huddle-app.phase-live-audio .audio-live-layout > article {
-  grid-area: plays;
-}
-
-.huddle-app.phase-live .audio-live-rail,
-.huddle-app.phase-live-audio .audio-live-rail {
-  grid-area: rail;
+.huddle-app.phase-live .audio-live-main,
+.huddle-app.phase-live-audio .audio-live-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hr-space-6);
+  min-width: 0;
 }
 
 @media (max-width: 1180px) {
   .huddle-app.phase-live .audio-live-layout,
   .huddle-app.phase-live-audio .audio-live-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "hero" "plays" "rail";
   }
 }
 
@@ -15127,6 +15127,176 @@ body {
   --icon-size: 0.9rem;
   background-color: var(--hr-gold-soft);
   flex-shrink: 0;
+}
+
+/* Editorial chips: inline data attached to the card, NOT stickers.
+   No backgrounds, no borders — the chip reads as part of the card's
+   meta layer. A dot-divider visually separates chips so the row
+   tracks like real broadcast lower-third graphics. */
+.huddle-app .game-card-signals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.32rem 0.55rem;
+  padding: 0 var(--hr-space-1);
+  margin-top: 0.32rem;
+}
+
+.huddle-app .game-card-signals > .game-card-chip + .game-card-chip::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--hr-text-muted) 60%, transparent);
+  margin-right: 0.45rem;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.huddle-app .game-card-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.005em;
+  color: var(--hr-text-soft);
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.2;
+}
+
+.huddle-app .game-card-chip-icon {
+  --icon-size: 0.78rem;
+  flex-shrink: 0;
+  /* Default tint matches surrounding text; per-kind rules override. */
+  background-color: currentColor;
+  opacity: 0.78;
+}
+
+.huddle-app .game-card-chip-arrow {
+  --icon-size: 0.72rem;
+  flex-shrink: 0;
+  background-color: currentColor;
+}
+
+/* Source logos render as actual <img>. The official Kalshi /
+   Polymarket brand kits ship wordmarks (white fill, transparent
+   background) — they're wider than tall. Height-driven sizing with
+   auto width keeps each wordmark readable without squishing the
+   brand. The wordmarks are designed to read AS the brand name, so
+   no separate text label is needed beside them. */
+.huddle-app .game-card-chip-logo {
+  height: 0.78rem;
+  width: auto;
+  /* Cap width so a stray oversized asset can't blow out a card. */
+  max-width: 4.5rem;
+  object-fit: contain;
+  flex-shrink: 0;
+  opacity: 0.92;
+  display: block;
+}
+/* Polymarket's wordmark is denser than Kalshi's — pull the height up
+   a hair so the two brands feel roughly equal-weight in the row. */
+.huddle-app .game-card-chip-logo[data-source="polymarket"] {
+  height: 0.82rem;
+}
+
+.huddle-app .game-card-chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--hr-weight-semibold, 600);
+  color: var(--hr-text);
+}
+
+.huddle-app .game-card-chip-headline {
+  /* News headlines need more room — but capped so a long headline
+     can't blow out the card width. Slightly lighter than other
+     labels because the icon + brevity already telegraph "news." */
+  max-width: 22ch;
+  font-weight: var(--hr-weight-medium, 500);
+  color: var(--hr-text-soft);
+}
+
+.huddle-app .game-card-chip-value {
+  font-family: var(--hr-font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  color: var(--hr-text);
+  font-weight: var(--hr-weight-semibold, 600);
+  flex-shrink: 0;
+}
+
+/* Market chips: the source LOGO is the visual identity; arrow icon
+   tints by direction so "warming" reads warm and "cooling" reads cool
+   without coloring the whole chip. */
+.huddle-app .game-card-chip--market-warming .game-card-chip-arrow {
+  background-color: #fb923c;
+  opacity: 1;
+}
+.huddle-app .game-card-chip--market-warming .game-card-chip-value {
+  color: color-mix(in srgb, #fb923c 80%, var(--hr-text));
+}
+
+.huddle-app .game-card-chip--market-cooling .game-card-chip-arrow {
+  background-color: #7dd3fc;
+  opacity: 1;
+}
+.huddle-app .game-card-chip--market-cooling .game-card-chip-value {
+  color: color-mix(in srgb, #7dd3fc 80%, var(--hr-text));
+}
+
+/* Personalized news — listener's starter mentioned. Subtle left
+   accent rule instead of background fill so it reads "marked" not
+   "stickered." */
+.huddle-app .game-card-chip--news-personal {
+  padding-left: 0.45rem;
+  border-left: 2px solid color-mix(in srgb, var(--hr-gold-soft, #ffd166) 70%, transparent);
+}
+.huddle-app .game-card-chip--news-personal .game-card-chip-icon {
+  background-color: var(--hr-gold-soft, #ffd166);
+  opacity: 1;
+}
+.huddle-app .game-card-chip--news-personal .game-card-chip-headline {
+  color: var(--hr-text);
+  font-weight: var(--hr-weight-semibold, 600);
+}
+
+/* Broadcast — quietest. Just text + an icon, no other treatment. */
+.huddle-app .game-card-chip--broadcast {
+  color: var(--hr-text-muted);
+}
+.huddle-app .game-card-chip--broadcast .game-card-chip-label {
+  color: var(--hr-text-muted);
+  font-weight: var(--hr-weight-medium, 500);
+}
+
+/* Same chip row, surfaced under the live hero + on-air rail. Slightly
+   roomier than the discovery-card variant because the live view has
+   more vertical headroom and the chips here are the only out-of-game
+   editorial signal in the layout. */
+.huddle-app .live-hero-signals {
+  margin-top: 0.6rem;
+  padding-left: 0;
+}
+.huddle-app .live-hero-signals .game-card-chip {
+  font-size: 0.78rem;
+}
+.huddle-app .live-hero-signals .game-card-chip-icon,
+.huddle-app .live-hero-signals .game-card-chip-arrow {
+  --icon-size: 0.85rem;
+}
+.huddle-app .live-hero-signals .game-card-chip-logo {
+  width: 0.92rem;
+  height: 0.92rem;
+}
+.huddle-app .live-hero-signals .game-card-chip-headline {
+  max-width: 32ch;
+}
+
+.huddle-app .on-air-signals {
+  padding: var(--hr-space-3) var(--hr-space-3) 0;
 }
 
 .huddle-app .discover-section--listener > header h2 {
@@ -18124,6 +18294,199 @@ body {
 }
 
 /* =====================================================================
+   Live picks (in-show snap pick panel).
+
+   Visual relationship: lives in the same rail as PicksTracker but
+   reads as "the next 90 seconds" rather than "your pregame parlay".
+   Rows behave like a small queue — locked entries float to the top
+   with a countdown, recently-resolved rows linger underneath for a
+   couple of polls so the listener registers the verdict, then the
+   menu of unlocked candidates sits at the bottom waiting for taps.
+   ===================================================================== */
+.live-picks-card {
+  display: grid;
+  gap: var(--hr-space-3);
+}
+
+.live-picks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.live-picks-tag {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hr-gold);
+  padding: 2px 8px;
+  border-radius: var(--hr-radius-pill);
+  border: 1px solid color-mix(in srgb, var(--hr-gold) 38%, transparent);
+  background: color-mix(in srgb, var(--hr-gold) 8%, transparent);
+}
+
+.live-picks-empty .live-picks-empty-line {
+  font-size: var(--hr-text-sm);
+  color: var(--hr-text-muted);
+  margin: 0;
+}
+
+.live-picks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--hr-space-2);
+}
+
+.live-picks-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--hr-radius-md);
+  border: 1px solid var(--hr-line);
+  background: rgba(255, 255, 255, 0.025);
+  transition:
+    border-color var(--hr-motion-base) var(--hr-ease-standard),
+    background var(--hr-motion-base) var(--hr-ease-standard);
+}
+.live-picks-row[data-status="open"][data-side="more"],
+.live-picks-row[data-status="open"][data-side="less"] {
+  border-color: color-mix(in srgb, var(--hr-gold) 50%, transparent);
+  background: color-mix(in srgb, var(--hr-gold) 6%, transparent);
+}
+.live-picks-row[data-status="hit"] {
+  border-color: color-mix(in srgb, var(--hr-success) 60%, transparent);
+  background: color-mix(in srgb, var(--hr-success) 10%, transparent);
+}
+.live-picks-row[data-status="miss"] {
+  border-color: color-mix(in srgb, var(--hr-danger) 45%, transparent);
+  background: color-mix(in srgb, var(--hr-danger) 7%, transparent);
+}
+.live-picks-row[data-status="void"] {
+  opacity: 0.7;
+}
+
+.live-picks-row-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.live-picks-row-title {
+  font-size: var(--hr-text-sm);
+  line-height: 1.3;
+  color: var(--hr-text);
+}
+
+.live-picks-row-subtitle {
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text-muted);
+  font-family: var(--hr-font-mono);
+}
+
+.live-picks-row-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.live-picks-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.live-picks-side-btn {
+  font-family: inherit;
+  font-size: var(--hr-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: var(--hr-radius-pill);
+  border: 1px solid var(--hr-line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--hr-text);
+  cursor: pointer;
+  transition:
+    border-color var(--hr-motion-fast) var(--hr-ease-standard),
+    background var(--hr-motion-fast) var(--hr-ease-standard),
+    transform var(--hr-motion-fast) var(--hr-ease-standard);
+}
+.live-picks-side-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hr-gold) 55%, transparent);
+  transform: translateY(-1px);
+}
+.live-picks-side-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.live-picks-side-btn[data-side="more"] {
+  color: color-mix(in srgb, var(--hr-success) 85%, var(--hr-text));
+}
+.live-picks-side-btn[data-side="less"] {
+  color: color-mix(in srgb, var(--hr-danger) 75%, var(--hr-text));
+}
+
+.live-picks-side-pill {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: var(--hr-radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--hr-text);
+}
+.live-picks-side-pill[data-side="more"] {
+  background: color-mix(in srgb, var(--hr-success) 22%, transparent);
+  color: color-mix(in srgb, var(--hr-success) 80%, var(--hr-text));
+}
+.live-picks-side-pill[data-side="less"] {
+  background: color-mix(in srgb, var(--hr-danger) 22%, transparent);
+  color: color-mix(in srgb, var(--hr-danger) 80%, var(--hr-text));
+}
+.live-picks-side-pill[data-result="hit"] {
+  background: var(--hr-success);
+  color: #07140a;
+}
+.live-picks-side-pill[data-result="miss"] {
+  background: var(--hr-danger);
+  color: #1f0a0d;
+}
+.live-picks-side-pill[data-result="void"] {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--hr-text-muted);
+}
+
+.live-picks-countdown {
+  font-family: var(--hr-font-mono);
+  font-size: var(--hr-text-xs);
+  letter-spacing: 0.04em;
+  color: var(--hr-text-muted);
+}
+.live-picks-countdown[data-warning="true"] {
+  color: var(--hr-danger);
+}
+
+.live-picks-resolution-note {
+  font-size: var(--hr-text-xs);
+  color: var(--hr-text-muted);
+  flex-basis: 100%;
+  line-height: 1.35;
+}
+
+.live-picks-error {
+  margin: 0;
+  font-size: var(--hr-text-xs);
+  color: var(--hr-danger);
+}
+
+/* =====================================================================
    Topbar matchup chip.
 
    The page-level topbar (eyebrow + heading + meta line) is where the
@@ -19180,6 +19543,32 @@ body {
   grid-template-columns: none;
   grid-template-areas: none;
   transform: none;
+}
+
+/* Cue host button, inline in the bar. The standalone version (the
+   one originally embedded in the moment-hero) used a column layout
+   with the status paragraph below the pill — that doesn't fit the
+   bar's single-row rhythm, so override:
+     - Flatten the wrapper to inline (no grid-column / margin-top
+       inherited from the hero context).
+     - Drop the status paragraph; the button label + recording color
+       state already convey the state changes mid-flight.
+     - Tighten the pill so it sits at the same vertical weight as
+       the play button — too tall and the bar grows awkwardly. */
+.huddle-player .cue-host-button-wrap {
+  display: inline-flex;
+  align-items: center;
+  grid-column: auto;
+  margin-top: 0;
+  flex-shrink: 0;
+}
+.huddle-player .cue-host-button {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+  gap: 0.5rem;
+}
+.huddle-player .cue-host-status {
+  display: none;
 }
 
 .player-captions {

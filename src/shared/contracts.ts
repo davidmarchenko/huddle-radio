@@ -1,3 +1,5 @@
+import type { PeriodInfo } from "./period";
+
 export type ProviderStatus = "ready" | "degraded" | "disabled" | "error";
 
 export type ProviderHealth = {
@@ -75,7 +77,13 @@ export type SportsPlay = {
   type: "pass" | "rush" | "touchdown" | "first-down" | "turnover" | "field-goal" | "other";
   excitement: 1 | 2 | 3 | 4 | 5;
   clock: string;
-  quarter: string;
+  /** Structured game-period. Sport-aware: football/basketball carry
+   *  `kind: "quarter"`, hockey `"period"`, baseball `"inning"` with
+   *  an optional `half`, soccer `"half"`. Always run through
+   *  `formatPeriodLabel(period, sport)` from `./period` for display.
+   *  Replaces the old free-form `quarter: string` that hard-coded a
+   *  "Q" prefix at the provider boundary. */
+  period: PeriodInfo;
   possession: string;
   headline: string;
   description: string;

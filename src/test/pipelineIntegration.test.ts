@@ -47,7 +47,7 @@ function game(): SportsGameState {
       type: "other",
       excitement: 4,
       clock: "5:00",
-      quarter: "Q3",
+      period: { number: 3, kind: "quarter" },
       possession: "LV",
       headline: "Wilson hits a three from the wing",
       description: "Wilson catch-and-shoot",
@@ -257,7 +257,7 @@ describe("pipeline integration", () => {
     arcPlanner.tick({ game: game() }); // burn the cold-open
     const blowoutGame = {
       ...game(),
-      currentPlay: { ...game().currentPlay!, quarter: "Q4", clock: "5:00", score: { away: 105, home: 70 } }
+      currentPlay: { ...game().currentPlay!, period: { number: 4, kind: "quarter" as const }, clock: "5:00", score: { away: 105, home: 70 } }
     };
     const arcDirective = arcPlanner.tick({ game: blowoutGame });
     expect(arcDirective.position).toBe("pivot");

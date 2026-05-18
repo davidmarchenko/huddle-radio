@@ -31,8 +31,9 @@
  * different /watch/{otherId} doesn't pull in stale captions.
  */
 
-import type { LivecastCommentary } from "../shared/contracts";
+import type { LivecastCommentary, SportsPlay } from "../shared/contracts";
 import type { MentionCue, WordTiming } from "../shared/contracts";
+import { periodFromLegacyString } from "../shared/period";
 
 const STORAGE_KEY = "huddle-livecast-snapshot";
 // 4 hours covers an NFL game (~3h with halftime), an NBA game (~2.5h
@@ -113,6 +114,22 @@ export function loadLivecastSnapshot(sportsGameId: string): LivecastSnapshot | u
       return undefined;
     }
     if (!Array.isArray(parsed.commentary) || parsed.commentary.length === 0) return undefined;
+    // Migrate legacy snapshots written before SportsPlay.period existed.
+    // The previous shape carried `play.quarter: string` (e.g. "Q3");
+    // structured period replaced it. Without this, a snapshot from
+    // a pre-upgrade session would render the captions panel with
+    // undefined period info and the formatter would print empty.
+    for (const turn of parsed.commentary) {
+      // Some legacy turns (and a couple of test fixtures) persist
+      // without a `play` field at all — skip those rather than
+      // dereferencing undefined.
+      const play = turn.play as (SportsPlay & { quarter?: string }) | undefined;
+      if (!play) continue;
+      if (!play.period && play.quarter !== undefined) {
+        play.period = periodFromLegacyString(play.quarter, "other");
+        delete play.quarter;
+      }
+    }
     return parsed;
   } catch {
     return undefined;

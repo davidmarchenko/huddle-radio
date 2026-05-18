@@ -23,7 +23,7 @@ function baseDraft(overrides: Partial<CommentaryDraftInput> = {}): CommentaryDra
       type: "other",
       excitement: 3,
       clock: "5:00",
-      quarter: "Q1",
+      period: { number: 1, kind: "quarter" },
       possession: "SEA",
       headline: "tip",
       description: "tip",

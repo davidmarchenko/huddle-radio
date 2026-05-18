@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import type { MarketHistoryPoint, MarketSnapshot } from "../shared/contracts";
 import { HoverPopover } from "./HoverPopover";
 import { MarketChart } from "./MarketChart";
+import { marketSourceLabel, marketSourceLogoUrl } from "./marketLogos";
 
 /**
  * Market hovercard. Same shape as iMessage link previews but built
@@ -36,11 +37,10 @@ export function MarketPreview({ snapshot, children, className }: MarketPreviewPr
   // to construct one from externalId and got a 404 because Polymarket
   // events use slugs, not condition IDs.
   const url = snapshot.marketUrl;
-  const sourceLabel = snapshot.source === "kalshi" ? "Kalshi" : "Polymarket";
+  const sourceLabel = marketSourceLabel(snapshot.source);
   const kindLabel = snapshot.marketKind.replace("-", " ");
   const observedRel = formatRelativeTime(snapshot.observedAt);
-  const logoSrc =
-    snapshot.source === "kalshi" ? "/icons/Logos/Kalshi_logo.svg.png" : "/icons/Logos/polymarket-logo.png";
+  const logoSrc = marketSourceLogoUrl(snapshot.source);
 
   const card = (
     <div className="market-preview-card-body">

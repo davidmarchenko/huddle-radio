@@ -16,6 +16,7 @@ import type {
   VideoSourceConfig,
   MarketSnapshot
 } from "../shared/contracts";
+import { formatPeriodLabel } from "../shared/period";
 import { createLivecastCommentary, createListenerOpener } from "../engine/livecastEngine";
 import { createNewsProvider } from "./createNewsProvider";
 import { createCommentaryProvider } from "./createCommentaryProvider";
@@ -35,6 +36,11 @@ import { fetchMarketSnapshots, pickRelevantMarketsForGame, teamIdentifiersFromMe
 import { detectClosingHandoff, detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
 import { computeEntryStatus, getEntry } from "./picksStore";
 import { fetchLiveStats } from "./picksLiveStats";
+import {
+  buildLivePicksHostHint,
+  refreshActivePicks,
+  resolveExpiredEntries
+} from "./livePicksStore";
 import { extractMentionCues } from "./mentionCues";
 import { redactSecret } from "./redactSecret";
 import {
@@ -343,7 +349,7 @@ function formatGameSummary(state: SportsGameState): string {
     return `${winner} ${Math.max(home, away)}, ${loser} ${Math.min(home, away)} — final`;
   }
   if (state.status === "live" && score) {
-    return `${state.awayTeam} ${score.away ?? 0}, ${state.homeTeam} ${score.home ?? 0} — ${state.currentPlay?.quarter ?? "live"}`;
+    return `${state.awayTeam} ${score.away ?? 0}, ${state.homeTeam} ${score.home ?? 0} — ${state.currentPlay ? formatPeriodLabel(state.currentPlay.period) || "live" : "live"}`;
   }
   return `${state.awayTeam} at ${state.homeTeam}`;
 }
@@ -998,7 +1004,7 @@ export class ShowEngine {
           type: "other",
           excitement: 1,
           clock: "—",
-          quarter: "Pivot",
+          period: { number: 0, kind: "quarter", shortDetail: "Pivot" },
           possession: "—",
           headline: `Pivot to ${finalToSummary}`,
           description: "Mid-show handoff",
@@ -1337,6 +1343,35 @@ export class ShowEngine {
               this.logger.warn(
                 { err: error instanceof Error ? error.message : String(error) },
                 "Picks status fetch failed for tick — proceeding without pick context"
+              );
+            }
+          }
+
+          // Live (in-show) snap picks. Separate flow from the parlay
+          // hostHint above — the engine reads BOTH so the model gets
+          // the "what's the listener watching" + "what did they just
+          // lock 30 seconds ago" signals in parallel. Append rather
+          // than overwrite so the parlay context isn't lost when a
+          // live pick is also active.
+          if (request.picksListenerId) {
+            try {
+              const nowMs = Date.now();
+              resolveExpiredEntries({ game: gameState, now: nowMs });
+              refreshActivePicks({ game: gameState, now: nowMs });
+              const liveHint = buildLivePicksHostHint({
+                listenerId: request.picksListenerId,
+                gameId: gameState.gameId,
+                now: nowMs
+              });
+              if (liveHint) {
+                pickContextForTurn = pickContextForTurn
+                  ? `${pickContextForTurn} ${liveHint}`
+                  : liveHint;
+              }
+            } catch (error) {
+              this.logger.warn(
+                { err: error instanceof Error ? error.message : String(error) },
+                "Live picks tick failed — proceeding without live pick context"
               );
             }
           }

@@ -15,7 +15,7 @@ function game(overrides: Partial<SportsGameState> = {}): SportsGameState {
       type: "other",
       excitement: 3,
       clock: "5:30",
-      quarter: "Q2",
+      period: { number: 2, kind: "quarter" },
       possession: "LV",
       headline: "play",
       description: "play",
@@ -79,7 +79,7 @@ describe("ShowArcPlanner", () => {
     const blowout = game({
       currentPlay: {
         ...game().currentPlay!,
-        quarter: "Q4",
+        period: { number: 4, kind: "quarter" },
         clock: "5:00",
         score: { away: 105, home: 65 }
       }
@@ -97,7 +97,7 @@ describe("ShowArcPlanner", () => {
     const earlyBlowout = game({
       currentPlay: {
         ...game().currentPlay!,
-        quarter: "Q2",
+        period: { number: 2, kind: "quarter" },
         clock: "5:00",
         score: { away: 50, home: 20 }
       }
@@ -112,7 +112,7 @@ describe("ShowArcPlanner", () => {
     planner.tick({ game: game() }); // cold-open
     now += 600_000; // far past cold-open
     const halftime = game({
-      currentPlay: { ...game().currentPlay!, quarter: "Q2", clock: "0:00", score: { away: 50, home: 52 } }
+      currentPlay: { ...game().currentPlay!, period: { number: 2, kind: "quarter" }, clock: "0:00", score: { away: 50, home: 52 } }
     });
     const directive = planner.tick({ game: halftime });
     expect(directive.position).toBe("act-break");
@@ -125,7 +125,7 @@ describe("ShowArcPlanner", () => {
     planner.tick({ game: game() }); // cold-open
     now += 100_000; // 100s in (≤30s remaining of expected duration)
     const lateGame = game({
-      currentPlay: { ...game().currentPlay!, quarter: "Q4", clock: "1:30", score: { away: 80, home: 79 } }
+      currentPlay: { ...game().currentPlay!, period: { number: 4, kind: "quarter" }, clock: "1:30", score: { away: 80, home: 79 } }
     });
     const directive = planner.tick({ game: lateGame });
     expect(directive.position).toBe("close");

@@ -12,7 +12,7 @@ function minimalDraft(): CommentaryDraftInput {
       type: "other",
       excitement: 3,
       clock: "5:00",
-      quarter: "Q3",
+      period: { number: 3, kind: "quarter" },
       possession: "SEA",
       headline: "Wilson buries a three",
       description: "Wilson catch-and-shoot",

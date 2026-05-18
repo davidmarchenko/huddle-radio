@@ -1,4 +1,5 @@
 import type { FantasyImpact, FantasyLeagueState, FantasyMatchup, FantasyPlayer, FantasyRoster, GroupSettings, LivecastCommentary, SportsGameOption, SportsGameState, SportsPlay, VideoMode } from "../shared/contracts";
+import { formatPeriodLabel } from "../shared/period";
 
 export type HuddlePhase = "empty" | "pregame" | "live" | "live-audio" | "recap";
 
@@ -216,7 +217,7 @@ export function buildHostTurns(input: { commentary: LivecastCommentary[]; game?:
         // Opener gets to breathe — let it run longer than per-play turns.
         text: shorten(stripMarkdown(item.text), isOpener ? 360 : 150),
         eyebrow: isOpener ? "On air" : item.moment.priority,
-        time: isOpener ? undefined : `${item.play.quarter} ${item.play.clock}`
+        time: isOpener ? undefined : `${formatPeriodLabel(item.play.period)} ${item.play.clock}`
       };
     });
   }

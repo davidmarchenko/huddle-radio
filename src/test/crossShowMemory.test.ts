@@ -18,7 +18,7 @@ function game(overrides: Partial<SportsGameState> = {}): SportsGameState {
       type: "other",
       excitement: 3,
       clock: "5:00",
-      quarter: "Q3",
+      period: { number: 3, kind: "quarter" },
       possession: "LV",
       headline: "play",
       description: "play",

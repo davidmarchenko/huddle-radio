@@ -18,7 +18,7 @@ const buildInput = (overrides: Partial<CommentaryDraftInput> = {}): CommentaryDr
   play: {
     id: "p1",
     description: "Run for 4",
-    quarter: "Q1",
+    period: { number: 1, kind: "quarter" },
     clock: "10:00",
     playType: "rush",
     team: "KC",

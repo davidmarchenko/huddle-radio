@@ -16,7 +16,7 @@ const game: SportsGameState = {
     type: "other",
     excitement: 4,
     clock: "5:00",
-    quarter: "Q3",
+    period: { number: 3, kind: "quarter" },
     possession: "LV",
     headline: "Aja Wilson hits a three from the wing",
     description: "Aja Wilson catch-and-shoot three over Skylar Diggins",

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { CommentaryKind, DialogueLine, HostId, ProviderHealth } from "../shared/contracts";
+import { formatPeriodLabel } from "../shared/period";
 import {
   joinDialogueLines,
   parseDialogueResponse,
@@ -174,7 +175,7 @@ function describeOdds(input: CommentaryDraftInput): string {
 function describePlay(input: CommentaryDraftInput): string {
   const desc = input.play.description?.trim();
   if (desc) {
-    const quarter = input.play.quarter ? `${input.play.quarter}` : "";
+    const quarter = formatPeriodLabel(input.play.period);
     const clock = input.play.clock ? `${input.play.clock}` : "";
     const prefix = [quarter, clock].filter(Boolean).join(", ");
     return prefix ? `${prefix}: ${desc}.` : `${desc}.`;

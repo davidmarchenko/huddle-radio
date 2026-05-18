@@ -10,7 +10,7 @@ function baseDraft(overrides: Partial<CommentaryDraftInput> = {}): CommentaryDra
       type: "other",
       excitement: 3,
       clock: "5:42",
-      quarter: "Q3",
+      period: { number: 3, kind: "quarter" },
       possession: "SEA",
       headline: "Wilson hits a three from the wing",
       description: "Wilson catch-and-shoot from 24",

@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { AsrProvider, AsrTranscript, AsrWord, AudioClip, ProviderHealth, SportsPlay } from "../shared/contracts";
+import { formatPeriodLabel } from "../shared/period";
 import { dataUrlToBase64 } from "./visionShared";
 
 /**
@@ -49,7 +50,7 @@ function buildAsrTaskPayload(audio: AudioClip, play?: SportsPlay): string {
           type: play.type,
           headline: play.headline,
           team: play.team,
-          quarter: play.quarter,
+          quarter: formatPeriodLabel(play.period),
           clock: play.clock,
           score: play.score
         },

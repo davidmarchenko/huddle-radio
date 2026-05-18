@@ -55,10 +55,15 @@ import { DebugPanel } from "./DebugPanel";
 import { LinkPreview } from "./LinkPreview";
 import { FloatingMentionChips, LiveTranscriptPanel, PlayerBarCaptions } from "./LiveTranscriptPanel";
 import { MarketPreview } from "./MarketPreview";
+import { useDiscoverySignals, useGameSignals } from "./useDiscoverySignals";
+import type { DiscoverySignal } from "../server/discoverySignals";
+import { marketSourceLabel, marketSourceLogoUrl } from "./marketLogos";
 import { PicksCard } from "./PicksCard";
 import { PicksTracker } from "./PicksTracker";
+import { LivePicksCard } from "./LivePicksCard";
 import { PicksRecap } from "./PicksRecap";
 import type { PickEntry } from "../shared/picksContracts";
+import { formatPeriodLabel, periodKindForSport } from "../shared/period";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
@@ -401,6 +406,10 @@ function App() {
   const livecastSessionRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
+  // Last gameId the pre-show hydration effect has fetched for. Used
+  // to gate the effect so `plays` from a previous game can't bleed
+  // into the new game's RecentHighlights / moment-hero.
+  const hydratedGameIdRef = useRef<string | undefined>(undefined);
   // Stable per-page-load tab id for cross-tab leader election. Sticks
   // for the lifetime of this document; reloads mint a new one (which
   // is correct — the post-reload session must displace the pre-reload
@@ -826,11 +835,14 @@ function App() {
   // active game's sport / teams whenever the user picks a new game.
   // Vegas line for the picked game. Fetched once per game pick — lines
   // move on the order of minutes, so we don't need to repoll.
+  //
+  // The reset → fetch order matters. Without the synchronous clear,
+  // switching from game A to game B keeps A's OddsCard visible in
+  // the rail until B's odds fetch resolves — a small window, but
+  // visibly stale against B's hero + scoreline that update instantly.
   useEffect(() => {
-    if (!game) {
-      setPregameOdds(undefined);
-      return;
-    }
+    setPregameOdds(undefined);
+    if (!game) return;
     const params = new URLSearchParams({
       gameId: game.gameId,
       sport: game.sport,
@@ -854,11 +866,12 @@ function App() {
   }, [game?.gameId, game?.sport, game?.awayTeam, game?.homeTeam]);
 
   // Empty until a game is selected; cleared on sport/team change.
+  // Same synchronous-reset pattern as the odds effect above — the
+  // NewsStorylineCard must not flash game-A headlines while game-B's
+  // request is in flight.
   useEffect(() => {
-    if (!game) {
-      setPregameNews([]);
-      return;
-    }
+    setPregameNews([]);
+    if (!game) return;
     const teams = [game.awayTeam, game.homeTeam].filter(Boolean);
     // Listener starters playing in this game — gives the news provider
     // hooks for player-specific items when those land later.
@@ -883,6 +896,54 @@ function App() {
       cancelled = true;
     };
   }, [game?.gameId, game?.sport, game?.awayTeam, game?.homeTeam, listenerStakes?.startersInGame]);
+
+  // Hydrate the play-by-play feed BEFORE the show starts. Picking a
+  // real ESPN-routed game from discovery sets `game` from the
+  // SportsGameOption (which has no plays); without this fetch the
+  // listener sees "Waiting for the first moment" on an in-progress
+  // game until they tap play. The server endpoint forwards to the
+  // same sports-data provider the engine uses, so the plays match
+  // what the WebSocket will deliver once the show is live.
+  //
+  // Game-switch invariant: `plays` is gameId-scoped. When the gameId
+  // changes (discovery feed → game B, slate auto-pivot, etc.) the
+  // previous game's plays are stale and must be cleared, otherwise
+  // RecentHighlights AND the moment-hero (derived from `plays[0] ??
+  // currentPlay`) keep showing game-A content under game-B's matchup
+  // until the WebSocket takeover overwrites them. We use a ref to
+  // track which gameId we've already hydrated for so the effect
+  // doesn't re-fetch on unrelated game-object mutations.
+  useEffect(() => {
+    if (!game?.gameId) return;
+    if (hydratedGameIdRef.current === game.gameId) return;
+    hydratedGameIdRef.current = game.gameId;
+    // New game — drop any plays inherited from the previous one.
+    setPlays([]);
+    // Skip demo games — their gameState is synthesized inside the
+    // engine, not fetched, so the endpoint has nothing useful to
+    // return.
+    if (game.gameId.startsWith("demo-")) return;
+    const ctrl = new AbortController();
+    fetch(`/api/sports/game-state?gameId=${encodeURIComponent(game.gameId)}`, { signal: ctrl.signal })
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(`game-state ${response.status}`))))
+      .then((payload: { game?: SportsGameState | null }) => {
+        if (ctrl.signal.aborted) return;
+        const recent = payload.game?.recentPlays;
+        if (Array.isArray(recent) && recent.length > 0) {
+          // Newest-first matches the SSE play-message shape the
+          // engine emits later, so the panel doesn't reorder when
+          // the WebSocket takes over.
+          setPlays([...recent].reverse().slice(0, 8));
+        }
+      })
+      .catch((error) => {
+        if (ctrl.signal.aborted) return;
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          console.warn("game-state hydrate failed", error);
+        }
+      });
+    return () => ctrl.abort();
+  }, [game?.gameId]);
 
   // Restore any pre-existing picks entry when the game changes.
   // Server retains the listener's last entry per (listenerId, gameId)
@@ -1152,34 +1213,68 @@ function App() {
           if (livecastSessionRef.current !== sessionId) return;
           if (message.type === "snapshot") {
         setFantasy(message.fantasy);
-        setGame(withSportPrefixedGameId(message.game));
+        const previousGameId = effectiveGameId;
+        const incomingGame = withSportPrefixedGameId(message.game);
+        const gameDidChange = previousGameId !== incomingGame.gameId;
+        setGame(incomingGame);
         setHealth(Array.isArray(message.health) ? message.health : []);
         setProviders(message.providers);
+        // Mid-show slate pivot: the NemotronSeesPanel reads
+        // `lastObservation`, which is the engine's "what the model
+        // sees right now". Carrying it across a pivot would caption
+        // the new game with the previous game's freeze-frame.
+        // `commentary` intentionally stays — it's the show transcript
+        // and listeners should be able to scroll back to whatever was
+        // said about game A even after pivoting to game B.
+        if (gameDidChange) setLastObservation(undefined);
         // Hydrate the play-by-play feed from the engine's existing
         // `recentPlays` (set by the provider's most-recent fetch).
         // Without this the panel sits empty until the NEXT tick
         // produces a play message, even if the game already has
         // history sitting on the server. Merge with whatever the
         // bootstrap may have set — newest-first, dedup by id, cap 8.
+        //
+        // Game-switch invariant: on a slate auto-pivot or any reconnect
+        // that brings up a different gameId, REPLACE rather than merge.
+        // Otherwise game A's plays linger in the panel even though the
+        // moment-hero is already showing game B (the symptom users see
+        // as "recent highlights showing the wrong stuff").
         if (Array.isArray(message.game.recentPlays) && message.game.recentPlays.length > 0) {
           const incoming = [...message.game.recentPlays].reverse();
-          setPlays((current) => {
-            const seen = new Set(current.map((p) => p.id));
-            const fromSnapshot = incoming.filter((p) => !seen.has(p.id));
-            return [...current, ...fromSnapshot].slice(0, 8);
-          });
+          if (gameDidChange) {
+            setPlays(incoming.slice(0, 8));
+          } else {
+            setPlays((current) => {
+              const seen = new Set(current.map((p) => p.id));
+              const fromSnapshot = incoming.filter((p) => !seen.has(p.id));
+              return [...current, ...fromSnapshot].slice(0, 8);
+            });
+          }
+        } else if (gameDidChange) {
+          // No recentPlays in the new game's snapshot — still drop the
+          // previous game's plays so they don't bleed through until
+          // the first play message arrives for the new game.
+          setPlays([]);
         }
       }
       if (message.type === "play") {
-        setGame(withSportPrefixedGameId(message.game));
+        const incomingPlayGame = withSportPrefixedGameId(message.game);
+        const playGameChanged = effectiveGameId !== incomingPlayGame.gameId;
+        setGame(incomingPlayGame);
         // Dedup by play.id: ESPN's pre-game scoreboard returns the
         // same placeholder play (id ending in `-pre-0-0.0`) on every
         // tick. Without this guard the play array fills with
         // duplicates and React fires "duplicate key" warnings for
         // every render. Keep the existing entry's position; refresh
         // its data only.
+        //
+        // If the engine pivoted to a new game (slate auto-pivot) and
+        // we somehow get a play message before a fresh snapshot,
+        // throw away anything from the prior game — those plays
+        // belong to a different matchup.
         setPlays((current) => {
-          const filtered = current.filter((existing) => existing.id !== message.play.id);
+          const scoped = playGameChanged ? [] : current;
+          const filtered = scoped.filter((existing) => existing.id !== message.play.id);
           return [message.play, ...filtered].slice(0, 8);
         });
       }
@@ -2117,6 +2212,15 @@ function App() {
     if (window.location.pathname !== `/watch/${gameId}`) {
       window.history.pushState({ view: "show", gameId }, "", `/watch/${gameId}`);
     }
+    // Entering a game from discovery should always land at the top of
+    // the new view. The phase-change effect later scrolls .huddle-main
+    // smoothly, which is fine for mid-show transitions, but on the
+    // discovery → game jump the listener expects an instant reset —
+    // not a smooth scroll back from wherever they were browsing.
+    // Reset BOTH the scroll container and the window scroll up front
+    // so neither persists if the layout changes mid-transition.
+    document.querySelector(".huddle-main")?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
     setSportsGameId(gameId);
     // Routing source-of-truth is now the gameId prefix; the mode
     // toggle is just a label/list hint. Demo ids start with "demo-",
@@ -2921,12 +3025,10 @@ function MarketSourceBadge({
   variant: "ticker" | "board";
 }) {
   const className = variant === "ticker" ? "markets-ticker-source" : "markets-board-source";
-  const label = source === "kalshi" ? "Kalshi" : "Polymarket";
-  const src = source === "kalshi" ? "/icons/Logos/Kalshi_logo.svg.png" : "/icons/Logos/polymarket-logo.png";
   return (
     <span className={className}>
-      <img src={src} alt="" className="markets-source-logo" />
-      <span className="hr-sr-only">{label}</span>
+      <img src={marketSourceLogoUrl(source)} alt="" className="markets-source-logo" />
+      <span className="hr-sr-only">{marketSourceLabel(source)}</span>
     </span>
   );
 }
@@ -3118,7 +3220,7 @@ function ScoreBug({ game, mediaIndex }: { game?: SportsGameState; mediaIndex: Me
       </div>
       <div>
         <span>Clock</span>
-        <strong>{game?.currentPlay ? `${game.currentPlay.quarter} ${game.currentPlay.clock}` : "Demo"}</strong>
+        <strong>{game?.currentPlay ? `${formatPeriodLabel(game.currentPlay.period)} ${game.currentPlay.clock}` : "Demo"}</strong>
       </div>
     </div>
   );
@@ -3415,12 +3517,13 @@ function HuddleExperience({
                 onStop={onStop}
                 listenerStakes={listenerStakes}
                 onNudgeHost={onNudgeHost}
-                onSubmitCue={onSubmitCue}
                 observation={observation}
                 modelLabel={modelLabel}
                 profile={profile}
                 picksListenerId={picksListenerId}
                 pickEntry={pickEntry}
+                news={pregameNews}
+                odds={pregameOdds}
               />
             </motion.div>
           ) : phase === "recap" ? (
@@ -3486,6 +3589,7 @@ function HuddleExperience({
           onTogglePause={onTogglePause}
           onVolumeChange={onVolumeChange}
           onOpenStream={onOpenStream}
+          onSubmitCue={onSubmitCue}
         />
       )}
       {showHome && livecastActive && game && (
@@ -4558,6 +4662,21 @@ function HuddleDiscover({
   const leagueMet = readiness.requirements.find((req) => req.id === "league")?.met ?? false;
   const showSetupBanner = !leagueMet && !demoMode && !setupDismissed;
 
+  // Discovery editorial chips — markets, news, broadcasts. Fetched
+  // once for the full slate (the server batches per-sport) and
+  // looked up per card by gameId. Personalized news boosts via the
+  // listener's starter player ids.
+  const listenerStarterPlayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const spotlight of listenerSpotlights.values()) {
+      for (const starter of spotlight.starters) {
+        if (starter.id) ids.add(starter.id);
+      }
+    }
+    return [...ids];
+  }, [listenerSpotlights]);
+  const discoverySignals = useDiscoverySignals(setup.sportsGames, listenerStarterPlayerIds);
+
   const sportCounts = useMemo(() => {
     const counts = new Map<SportLeague, number>();
     for (const game of setup.sportsGames) {
@@ -4799,6 +4918,7 @@ function HuddleDiscover({
                 mediaIndex={mediaIndex}
                 onClick={() => onPickGame(game.id)}
                 spotlight={listenerSpotlights.get(game.id)}
+                signals={discoverySignals.get(game.id)}
               />
             ))}
           </div>
@@ -4876,12 +4996,16 @@ function GameCard({
   game,
   mediaIndex,
   onClick,
-  spotlight
+  spotlight,
+  signals
 }: {
   game: SportsGameOption;
   mediaIndex: MediaLookupIndex;
   onClick: () => void;
   spotlight?: { starters: { name: string; position: string; proTeam: string; projectedPoints: number }[]; topStarter?: { name: string; position: string; projectedPoints: number } };
+  /** Editorial chips: markets / news / broadcast signals ranked by
+   *  the server. Up to 2 surface below the card meta line. */
+  signals?: DiscoverySignal[];
 }) {
   const status = statusLabel(game.status);
   const detail = (game.detail ?? "").trim();
@@ -4962,7 +5086,95 @@ function GameCard({
           </span>
         )}
       </div>
+      {signals && signals.length > 0 && (
+        <div className="game-card-signals" aria-label="Editorial signals">
+          {signals.map((signal, index) => (
+            <DiscoverySignalChip key={`${signal.kind}-${index}`} signal={signal} />
+          ))}
+        </div>
+      )}
     </button>
+  );
+}
+
+/**
+ * Compact, monochrome editorial chip. No background fill, no border —
+ * reads as inline data attached to the card, not a sticker. Icons:
+ * masked SVGs for the kind (news, target, broadcast); market chips
+ * use the real source LOGO so attribution is implicit.
+ */
+function DiscoverySignalChip({ signal }: { signal: DiscoverySignal }) {
+  if (signal.kind === "market-swing") {
+    return (
+      <span
+        className={`game-card-chip game-card-chip--market game-card-chip--market-${signal.direction}`}
+        title={`${signal.source === "kalshi" ? "Kalshi" : "Polymarket"}: ${signal.outcomeLabel} ${signal.direction} ${Math.abs(signal.deltaCents)}¢`}
+      >
+        <MarketSourceLogo source={signal.source} />
+        <span className="game-card-chip-label">{signal.outcomeLabel}</span>
+        <span
+          className={`icon ${signal.direction === "warming" ? "icon-arrow-up" : "icon-arrow-down"} game-card-chip-arrow`}
+          aria-hidden="true"
+        />
+        <span className="game-card-chip-value">{Math.abs(signal.deltaCents)}¢</span>
+      </span>
+    );
+  }
+  if (signal.kind === "market-price") {
+    return (
+      <span
+        className="game-card-chip game-card-chip--market"
+        title={`${signal.source === "kalshi" ? "Kalshi" : "Polymarket"}: ${signal.outcomeLabel} ${signal.yesCents}¢`}
+      >
+        <MarketSourceLogo source={signal.source} />
+        <span className="game-card-chip-label">{signal.outcomeLabel}</span>
+        <span className="game-card-chip-value">{signal.yesCents}¢</span>
+      </span>
+    );
+  }
+  if (signal.kind === "news") {
+    return (
+      <span
+        className={signal.personalized ? "game-card-chip game-card-chip--news game-card-chip--news-personal" : "game-card-chip game-card-chip--news"}
+        title={`${signal.source}: ${signal.headline}`}
+      >
+        <span className="icon icon-newspaper game-card-chip-icon" aria-hidden="true" />
+        <span className="game-card-chip-label game-card-chip-headline">{signal.headline}</span>
+      </span>
+    );
+  }
+  if (signal.kind === "sharp-line") {
+    const sign = signal.spread > 0 ? "−" : "+";
+    return (
+      <span className="game-card-chip game-card-chip--line" title={`Spread ${signal.favorite} ${sign}${Math.abs(signal.spread)}`}>
+        <span className="icon icon-target game-card-chip-icon" aria-hidden="true" />
+        <span className="game-card-chip-label">{signal.favorite}</span>
+        <span className="game-card-chip-value">{sign}{Math.abs(signal.spread)}</span>
+      </span>
+    );
+  }
+  if (signal.kind === "broadcast") {
+    return (
+      <span className="game-card-chip game-card-chip--broadcast" title={`On ${signal.channel}`}>
+        <span className="icon icon-broadcast game-card-chip-icon" aria-hidden="true" />
+        <span className="game-card-chip-label">{signal.channel}</span>
+      </span>
+    );
+  }
+  return null;
+}
+
+/** Tiny source logo used by market chips — replaces the generic dot
+ *  glyph with the actual brand, which doubles as attribution. */
+function MarketSourceLogo({ source }: { source: "kalshi" | "polymarket" }) {
+  return (
+    <img
+      src={marketSourceLogoUrl(source)}
+      alt={marketSourceLabel(source)}
+      className="game-card-chip-logo"
+      data-source={source}
+      aria-label={marketSourceLabel(source)}
+    />
   );
 }
 
@@ -4972,7 +5184,27 @@ function TeamLogo({ logo, abbr }: { logo?: string; abbr: string }) {
     setFailed(false);
   }, [logo]);
   if (logo && !failed) {
-    return <img className="game-card-logo" src={logo} alt="" loading="lazy" onError={() => setFailed(true)} />;
+    return (
+      <img
+        className="game-card-logo"
+        src={logo}
+        alt=""
+        loading="lazy"
+        onError={() => {
+          setFailed(true);
+          // Match the MediaAvatar logger so a sweep of "missing
+          // logos in discovery" turns up here too, not just in the
+          // live-view panels. Deduped per URL so a single bad ESPN
+          // path doesn't spam.
+          logMediaAvatarOnce("load-failed", `team-logo|${logo}`, {
+            label: abbr,
+            url: logo,
+            assetKind: "team-logo",
+            surface: "game-card"
+          });
+        }}
+      />
+    );
   }
   return <span className="game-card-logo game-card-logo--fallback">{abbr.slice(0, 3)}</span>;
 }
@@ -5453,6 +5685,11 @@ function HuddleLiveWithStream({
   picksListenerId: string;
   pickEntry?: PickEntry;
 }) {
+  // Same editorial chip row the discovery feed + audio view show.
+  // Surfacing news here keeps the listener anchored to outside-the-
+  // game context (injury reports, beat-writer takes) without
+  // pulling them off the live stream.
+  const editorialSignals = useGameSignals(game);
   return (
     <section className="live-layout">
       <div className="video-stage">
@@ -5467,8 +5704,22 @@ function HuddleLiveWithStream({
         <FantasyMatchupFloat matchupTotals={matchupTotals} mediaIndex={mediaIndex} />
       </div>
       <aside className="on-air-panel">
+        {editorialSignals.length > 0 && (
+          <div className="on-air-signals game-card-signals" aria-label="In the news + markets">
+            {editorialSignals.map((signal, index) => (
+              <DiscoverySignalChip key={`${signal.kind}-${index}`} signal={signal} />
+            ))}
+          </div>
+        )}
         <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
         {pickEntry && <PicksTracker entry={pickEntry} listenerId={picksListenerId} />}
+        {game && (
+          <LivePicksCard
+            gameId={game.gameId}
+            listenerId={picksListenerId}
+            isLive={game.status === "live"}
+          />
+        )}
         <LiveTranscriptPanel
           commentary={commentary}
           lineTimings={lineTimings}
@@ -5644,12 +5895,13 @@ function HuddleLiveAudio({
   onStop,
   listenerStakes,
   onNudgeHost,
-  onSubmitCue,
   observation,
   modelLabel,
   profile,
   picksListenerId,
-  pickEntry
+  pickEntry,
+  news,
+  odds
 }: {
   game?: SportsGameState;
   fantasy?: FantasyLeagueState;
@@ -5669,12 +5921,19 @@ function HuddleLiveAudio({
   onStop: () => void;
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   onNudgeHost: (hostId: HostId) => void;
-  onSubmitCue?: (cue: ListenerCue) => boolean;
   observation?: LivecastCommentary["observation"];
   modelLabel?: string;
   profile?: UserProfile;
   picksListenerId: string;
   pickEntry?: PickEntry;
+  /** News items for this game's matchup — same data pregame
+   *  receives. Surfaced as a NewsStorylineCard in the rail so
+   *  listeners can read injury notes / beat takes mid-show. */
+  news?: NewsItem[];
+  /** Vegas line for this game — surfaced as the OddsCard in the
+   *  rail when present. Hidden on demo games where odds aren't
+   *  available. */
+  odds?: GameOdds;
 }) {
   const latestPlay = plays[0] ?? game?.currentPlay;
   const rawSpotlightPlayer = findPlayPlayer(fantasy, latestPlay) ?? findSpotlightPlayer(fantasy, fantasySpotlight.title);
@@ -5691,7 +5950,7 @@ function HuddleLiveAudio({
   const awayScore = latestPlay?.score.away ?? game?.currentPlay?.score.away ?? 0;
   const homeScore = latestPlay?.score.home ?? game?.currentPlay?.score.home ?? 0;
   const scoreLine = game ? `${game.awayTeam} ${awayScore} - ${game.homeTeam} ${homeScore}` : "Live show";
-  const meta = latestPlay ? `${latestPlay.quarter} · ${latestPlay.clock}` : "Official play-by-play";
+  const meta = latestPlay ? `${formatPeriodLabel(latestPlay.period)} · ${latestPlay.clock}` : "Official play-by-play";
   const heroHeadline = formatLiveMomentHeadline(latestPlay?.headline ?? fantasySpotlight.title);
   const heroDescription = formatLiveMomentDescription(latestPlay?.description ?? fantasySpotlight.body);
   // If the latest play touched a listener starter, the hero gets a
@@ -5737,8 +5996,18 @@ function HuddleLiveAudio({
     const normalized = Math.max(0, Math.min(1, (avg - 18) / 60));
     return 1 + normalized * 0.18;
   }, [audioPlaying, audioLevels, isPaused]);
+  // Editorial chips for this game — news, markets, sharp lines.
+  // Same row component the discovery feed uses; visual continuity
+  // between "what made me pick this" and "what's happening now."
+  const editorialSignals = useGameSignals(
+    game,
+    listenerStakes?.status === "ready"
+      ? listenerStakes.startersInGame.map((p) => p.id)
+      : undefined
+  );
   return (
     <section className="audio-live-layout" data-paused={isPaused ? "true" : "false"}>
+      <div className="audio-live-main">
       <div className="moment-hero">
         <div className="live-action-backdrop" aria-hidden="true" />
         <div className="live-hero-copy">
@@ -5753,6 +6022,13 @@ function HuddleLiveAudio({
             <span>{scoreLine}</span>
             <b>{meta}</b>
           </div>
+          {editorialSignals.length > 0 && (
+            <div className="live-hero-signals game-card-signals" aria-label="In the news + markets">
+              {editorialSignals.map((signal, index) => (
+                <DiscoverySignalChip key={`${signal.kind}-${index}`} signal={signal} />
+              ))}
+            </div>
+          )}
         </div>
         <div className="live-hero-media">
           <div className="live-player-portrait">
@@ -5789,7 +6065,6 @@ function HuddleLiveAudio({
             );
           })}
         </div>
-        {onSubmitCue && <CueHostButton onSubmit={onSubmitCue} />}
       </div>
       {/* Play-by-play is the primary feed — live football/basketball
           updates belong in the main reading column under the hero,
@@ -5797,9 +6072,17 @@ function HuddleLiveAudio({
           The rail keeps tonight's matchup, fantasy impact, picks,
           and the model-sees panel. */}
       <RecentHighlights plays={plays} game={game} mediaIndex={mediaIndex} />
+      </div>
       <aside className="audio-live-rail">
         <NemotronSeesPanel observation={observation} modelLabel={modelLabel} />
         {pickEntry && <PicksTracker entry={pickEntry} listenerId={picksListenerId} />}
+        {game && (
+          <LivePicksCard
+            gameId={game.gameId}
+            listenerId={picksListenerId}
+            isLive={game.status === "live"}
+          />
+        )}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         <article className="huddle-card fantasy-impact-card">
           <span className="eyebrow"><span className="icon icon-trophy-winner" aria-hidden="true" />Fantasy impact</span>
@@ -5814,6 +6097,13 @@ function HuddleLiveAudio({
             {matchupTotals.slice(0, 2).map((roster) => <ScoreRow key={roster.id} roster={roster} mediaIndex={mediaIndex} />)}
           </div>
         </article>
+        {/* Vegas line + prediction-market board + headlines — same
+            structure pregame carries in its rail. Surface here so
+            listeners stay anchored to outside-the-game context
+            during the show, not just the play-by-play. */}
+        {odds && <OddsCard odds={odds} />}
+        <MarketsBoardCard game={game} />
+        {news && news.length > 0 && <NewsStorylineCard news={news} extras={[]} />}
       </aside>
     </section>
   );
@@ -6015,7 +6305,8 @@ function HuddlePlayerBar({
   onStop,
   onTogglePause,
   onVolumeChange,
-  onOpenStream
+  onOpenStream,
+  onSubmitCue
 }: {
   phase: HuddlePhase;
   game?: SportsGameState;
@@ -6040,6 +6331,10 @@ function HuddlePlayerBar({
   onTogglePause: () => void;
   onVolumeChange: (next: number) => void;
   onOpenStream: () => void;
+  /** Push-to-talk cue handler. The cue button lives in the bar (not
+   *  the hero) so it stays reachable while the listener scrolls
+   *  through the in-show panels. Absent → button hidden. */
+  onSubmitCue?: (cue: ListenerCue) => boolean;
 }) {
   const isLive = phase === "live" || phase === "live-audio";
   const isEmpty = phase === "empty";
@@ -6193,6 +6488,29 @@ function HuddlePlayerBar({
               />
             </AnimatePresence>
           </motion.button>
+          {/* Cue host lives in the bar — always reachable, sits next
+              to play/pause so push-to-talk is one finger away even
+              while the listener is scrolling the in-show panels.
+              Only renders during a live show with an active SSE
+              session — hidden in empty/pregame AND in the
+              live-audio carry-over state where the user paused or
+              the session dropped (sessionInactive). The hosts can
+              only react to a cue when the show is actually streaming
+              so showing the button before then would be a dead end. */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {isLive && livecastActive && onSubmitCue && (
+              <motion.div
+                key="cue-slot"
+                layout
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: "auto" }}
+                exit={{ opacity: 0, width: 0 }}
+                style={{ minWidth: 0, overflow: "hidden" }}
+              >
+                <CueHostButton onSubmit={onSubmitCue} />
+              </motion.div>
+            )}
+          </AnimatePresence>
           {/* Captions slot enters / exits with the bar resizing
               springily around it via the parent's `layout` prop. */}
           <AnimatePresence initial={false} mode="popLayout">
@@ -6400,7 +6718,7 @@ function MatchupCard({ game, mediaIndex }: { game?: SportsGameState; mediaIndex:
           <b>{game?.currentPlay?.score.home ?? 0}</b>
         </div>
       </div>
-      <p>{game?.currentPlay ? `${game.currentPlay.quarter} · ${game.currentPlay.clock}` : "Pregame show is warming up."}</p>
+      <p>{game?.currentPlay ? `${formatPeriodLabel(game.currentPlay.period)} · ${game.currentPlay.clock}` : "Pregame show is warming up."}</p>
     </article>
   );
 }
@@ -7014,7 +7332,7 @@ function buildLiveFeedItems({
       kind: "Score",
       title: `${game.awayTeam} ${game.currentPlay?.score.away ?? 0}, ${game.homeTeam} ${game.currentPlay?.score.home ?? 0}`,
       body: game.currentPlay?.headline ?? `Game status: ${game.status}.`,
-      meta: game.currentPlay ? `${game.currentPlay.quarter} · ${game.currentPlay.clock}` : game.status
+      meta: game.currentPlay ? `${formatPeriodLabel(game.currentPlay.period)} · ${game.currentPlay.clock}` : game.status
     });
   }
   commentary.slice(0, 2).forEach((item) => {
@@ -7041,7 +7359,7 @@ function buildLiveFeedItems({
       kind: "Play",
       title: play.headline,
       body: play.description,
-      meta: `${play.quarter} · ${play.clock} · ${play.team}`
+      meta: `${formatPeriodLabel(play.period)} · ${play.clock} · ${play.team}`
     });
   });
   if (items.length === 0) {
@@ -7592,7 +7910,7 @@ function PlayRow({ play, game, mediaIndex }: { play: SportsPlay; game?: SportsGa
     <div className="play-row">
       <MediaAvatar src={logoUrl} asset={resolveTeamMedia(mediaIndex, play.team)} label={play.team} size="sm" />
       <div>
-        <small>{play.quarter} {play.clock}</small>
+        <small>{formatPeriodLabel(play.period)} {play.clock}</small>
         <strong>{play.headline}</strong>
         <span>{play.description}</span>
       </div>
@@ -7600,18 +7918,77 @@ function PlayRow({ play, game, mediaIndex }: { play: SportsPlay; game?: SportsGa
   );
 }
 
+/** Avatars can fail to render for three distinct reasons, and only
+ *  ONE of them naturally surfaces in the browser's network/console
+ *  tabs:
+ *    1. The media-manifest lookup found nothing for this team/player
+ *       (no `asset` AND no `src`). We never render an <img>, never
+ *       fetch anything, and the user just sees initials. Silent by
+ *       default.
+ *    2. The asset exists but has no usable URL field (rare — only
+ *       when the cache script ran but couldn't copy/generate). Also
+ *       silent — no <img> rendered.
+ *    3. An <img> WAS rendered but its src 404'd or hit a CORS wall.
+ *       The browser logs a "Failed to load" itself, but our React
+ *       onError just flips `failed=true` and the placeholder kicks
+ *       in, with no app-side signal that anything went wrong.
+ *  The console.* calls below give each path a distinct, dedupable
+ *  signal so DevTools can answer "why is this initialed?" without
+ *  re-running the user. */
+const MEDIA_AVATAR_LOGGED = new Set<string>();
+function logMediaAvatarOnce(kind: "missing-asset" | "missing-url" | "load-failed", key: string, payload: Record<string, unknown>) {
+  const dedupKey = `${kind}:${key}`;
+  if (MEDIA_AVATAR_LOGGED.has(dedupKey)) return;
+  MEDIA_AVATAR_LOGGED.add(dedupKey);
+  console.warn(JSON.stringify({ event: `media.avatar.${kind}`, ...payload }));
+}
+
 function MediaAvatar({ asset, src, label, size = "md" }: { asset?: CachedMediaAsset; src?: string; label: string; size?: "sm" | "md" }) {
   const [failed, setFailed] = useState(false);
-  const resolved = failed ? undefined : (src ?? mediaAssetUrl(asset));
+  const resolvedFromAsset = mediaAssetUrl(asset);
+  const resolved = failed ? undefined : (src ?? resolvedFromAsset);
   const initials = initialsForUi(label);
+  // Classify the render state so DevTools can answer "why initials?"
+  // by inspecting the element rather than running a tracer.
+  const state: "loaded" | "missing-asset" | "missing-url" | "load-failed" = (() => {
+    if (failed) return "load-failed";
+    if (resolved) return "loaded";
+    if (!asset && !src) return "missing-asset";
+    return "missing-url";
+  })();
 
   useEffect(() => {
     setFailed(false);
   }, [asset?.id, src]);
 
+  // One-shot observability for the silent paths. Deduped by label so
+  // the same missing team logo doesn't spam on every render.
+  useEffect(() => {
+    if (state === "missing-asset") {
+      logMediaAvatarOnce("missing-asset", label, { label });
+    } else if (state === "missing-url") {
+      logMediaAvatarOnce("missing-url", asset?.id ?? label, {
+        label,
+        assetId: asset?.id,
+        assetKind: asset?.kind,
+        assetStatus: asset?.status
+      });
+    }
+  }, [state, label, asset?.id, asset?.kind, asset?.status]);
+
+  const handleError = () => {
+    setFailed(true);
+    logMediaAvatarOnce("load-failed", `${label}|${resolved ?? ""}`, {
+      label,
+      url: resolved,
+      assetId: asset?.id,
+      assetKind: asset?.kind
+    });
+  };
+
   return (
-    <span className="media-avatar" data-size={size} title={asset ? `${asset.label} (${asset.source})` : label}>
-      {resolved ? <img src={resolved} alt="" onError={() => setFailed(true)} /> : <span>{initials}</span>}
+    <span className="media-avatar" data-size={size} data-state={state} title={asset ? `${asset.label} (${asset.source})` : label}>
+      {resolved ? <img src={resolved} alt="" onError={handleError} /> : <span>{initials}</span>}
     </span>
   );
 }
@@ -7940,12 +8317,18 @@ function withSportPrefixedGameId(game: SportsGameState): SportsGameState {
 }
 
 function sportsGameOptionPlay(option: SportsGameOption): SportsPlay {
+  // No real period — this play is the placeholder shown before any
+  // actual play has arrived. Carry the upstream status (Pregame /
+  // Live / Final) as the shortDetail so `formatPeriodLabel` returns
+  // it verbatim while `number === 0`.
+  const shortDetail =
+    option.status === "live" ? "Live" : option.status === "final" ? "Final" : "Pregame";
   return {
     id: `selected-${option.id}`,
     type: "other",
     excitement: option.status === "live" ? 3 : 1,
     clock: option.detail,
-    quarter: option.status === "live" ? "Live" : option.status === "final" ? "Final" : "Pregame",
+    period: { number: 0, kind: periodKindForSport(option.sport), shortDetail },
     possession: option.awayTeam,
     headline: option.shortName,
     description: option.detail,

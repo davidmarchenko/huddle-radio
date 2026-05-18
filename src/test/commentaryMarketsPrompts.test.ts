@@ -20,7 +20,7 @@ const market = (overrides: Partial<MarketSnapshot> = {}): MarketSnapshot => ({
 });
 
 const buildInput = (overrides: Partial<CommentaryDraftInput> = {}): CommentaryDraftInput => ({
-  play: { id: "p1", description: "Run for 4", quarter: "Q1", clock: "10:00", playType: "rush", team: "KC", score: { away: 0, home: 0 }, playerIds: [], occurredAt: "2026-05-10T20:00:00Z" } as unknown as SportsPlay,
+  play: { id: "p1", description: "Run for 4", period: { number: 1, kind: "quarter" }, clock: "10:00", playType: "rush", team: "KC", score: { away: 0, home: 0 }, playerIds: [], occurredAt: "2026-05-10T20:00:00Z" } as unknown as SportsPlay,
   observation: { summary: "live game", confidence: 0.9 } as unknown as VideoObservation,
   impacts: [],
   group: {

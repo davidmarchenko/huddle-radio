@@ -7,7 +7,7 @@ const play: SportsPlay = {
   type: "pass",
   excitement: 3,
   clock: "0:00",
-  quarter: "Q1",
+  period: { number: 1, kind: "quarter" },
   possession: "KC",
   headline: "h",
   description: "d",

@@ -1,4 +1,5 @@
 import type { SportsPlay, StreamValidation, VideoFrameSnapshot, VideoObservation, VideoSourceConfig } from "../shared/contracts";
+import { formatPeriodLabel } from "../shared/period";
 
 export type VisionPayload = {
   isSportsEvent?: boolean;
@@ -30,7 +31,7 @@ export function buildVisionTaskPayload(play: SportsPlay): string {
       description: play.description,
       score: play.score,
       clock: play.clock,
-      quarter: play.quarter
+      quarter: formatPeriodLabel(play.period)
     },
     requiredJsonShape: {
       isSportsEvent: "boolean",

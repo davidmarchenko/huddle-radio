@@ -1,4 +1,5 @@
 import type { ProviderHealth, SportLeague, SportsDataProvider, SportsGameOption, SportsGameState, SportsPlay } from "../shared/contracts";
+import { periodFromNumber } from "../shared/period";
 import { getDefaultPlayerIdResolver, type PlayerIdResolver } from "../server/playerIdResolver";
 
 type Fetcher = typeof fetch;
@@ -200,7 +201,7 @@ export class EspnSportsDataProvider implements SportsDataProvider {
       type: playType(play.type?.text ?? description),
       excitement: play.scoringPlay ? 4 : 2,
       clock,
-      quarter: period > 0 ? `Q${period}` : "",
+      period: periodFromNumber(period, this.sport),
       possession: teamAbbr || away?.team?.abbreviation || "",
       headline: play.type?.text ?? "Play",
       description,
@@ -321,7 +322,7 @@ export class EspnSportsDataProvider implements SportsDataProvider {
       type: playType(lastPlay?.type?.text ?? description),
       excitement: state === "in" ? 3 : 2,
       clock: status?.displayClock ?? "0:00",
-      quarter: status?.period ? `Q${status.period}` : status?.type?.shortDetail ?? "NFL",
+      period: periodFromNumber(status?.period ?? 0, this.sport, { shortDetail: status?.type?.shortDetail }),
       possession,
       headline: lastPlay?.type?.text ?? event.shortName ?? event.name ?? "ESPN scoreboard update",
       description,

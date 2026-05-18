@@ -160,4 +160,43 @@ describe("livecast snapshot", () => {
     clearLivecastSnapshot();
     expect(loadLivecastSnapshot("nfl-game-1")).toBeUndefined();
   });
+
+  it("migrates a legacy snapshot with play.quarter into structured period", () => {
+    // Simulate a snapshot written before the period refactor — the
+    // play carries `quarter: "Q3"` and no `period`. Drop it directly
+    // into localStorage so we exercise the migration branch in
+    // loadLivecastSnapshot rather than going through saveLivecastSnapshot
+    // (which now writes the new shape).
+    const legacy = {
+      sportsGameId: "nfl-game-1",
+      commentary: [
+        {
+          id: "a",
+          text: "Hello",
+          lines: [{ hostId: "maya", text: "Hi." }],
+          play: { id: "p1", quarter: "Q3", clock: "10:00" }
+        }
+      ],
+      lineTimings: [],
+      playedLineKeys: [],
+      isPaused: false,
+      savedAt: Date.now()
+    };
+    const store = (globalThis as unknown as {
+      window: { localStorage: { getItem(k: string): string | null; setItem(k: string, v: string): void } };
+    }).window.localStorage;
+    store.setItem("huddle-livecast-snapshot", JSON.stringify(legacy));
+
+    const restored = loadLivecastSnapshot("nfl-game-1");
+    expect(restored).toBeDefined();
+    const restoredPlay = restored?.commentary[0]?.play as unknown as {
+      period?: { number: number; shortDetail?: string };
+      quarter?: string;
+    };
+    expect(restoredPlay.period).toBeDefined();
+    expect(restoredPlay.period?.number).toBe(3);
+    // Legacy field is stripped from the in-memory shape so consumers
+    // don't accidentally branch on the deprecated key after migration.
+    expect(restoredPlay.quarter).toBeUndefined();
+  });
 });

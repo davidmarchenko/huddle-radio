@@ -20,3 +20,7 @@ playwright/.cache/
 .vercel
 # TypeScript incremental cache — regenerated on every tsc invocation
 tsconfig.tsbuildinfo
+# Claude Code session state (lockfiles, in-progress work)
+.claude/
+# Brand kit archives — we commit the extracted folders, not the zips
+public/icons/Logos/*.zip

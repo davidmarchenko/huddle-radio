@@ -16,6 +16,7 @@ import {
   statLabel,
   submitEntry
 } from "./picksClient";
+import { marketSourceLabel, marketSourceLogoUrl } from "./marketLogos";
 
 /**
  * Pregame slate selector. Lists 4-6 player props for the chosen game;
@@ -322,8 +323,8 @@ function SourceBadge({ source }: { source: PickProp["source"] }) {
   if (source === "synthetic") {
     return <span className="picks-synth-tag" title="No live market — line set from sport baseline">est</span>;
   }
-  const src = source === "polymarket" ? "/icons/Logos/polymarket-logo.png" : "/icons/Logos/Kalshi_logo.svg.png";
-  const label = source === "polymarket" ? "Polymarket" : "Kalshi";
+  const src = marketSourceLogoUrl(source);
+  const label = marketSourceLabel(source);
   return <img className="picks-source-badge" src={src} alt={label} title={`Line from ${label}`} />;
 }
 

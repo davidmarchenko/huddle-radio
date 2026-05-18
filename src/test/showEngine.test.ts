@@ -136,6 +136,11 @@ describe("ShowEngine", () => {
   });
 
   describe("slate mode", () => {
+    // Slate-boot exercises the full first-tick pipeline (provider +
+    // commentary + opener). On a cold CI run that pipeline can push
+    // past the default 5s vitest timeout — same flake pattern that
+    // bumped the mid-show handoff test below to 20s. Use the same
+    // ceiling so the slate boots never flake when CPU is contended.
     it("ranks the slate and boots the show on the top entry", async () => {
       const engine = createEngine();
       // A 2-game slate where the listener's favorite team (KC) is in
@@ -180,7 +185,7 @@ describe("ShowEngine", () => {
       expect(snapshot).toBeDefined();
       // The boot game is the top-ranked entry — KC@DET, not BUF@CIN.
       expect(snapshot!.game.gameId).toBe("demo-kc-det");
-    });
+    }, 20000);
 
     it("falls through to single-game mode when the slate has fewer than 2 entries", async () => {
       const engine = createEngine();
@@ -209,7 +214,7 @@ describe("ShowEngine", () => {
       // sportsGameId from baseRequest is "demo-kc-det" — that wins
       // because the 1-entry slate doesn't trigger slate mode.
       expect(snapshot!.game.gameId).toBe("demo-kc-det");
-    });
+    }, 20000);
   });
 
   describe("switchGame", () => {
