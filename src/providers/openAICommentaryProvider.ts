@@ -308,10 +308,19 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
     // would hear. New caps give ~60% headroom on a busy 3-turn play
     // beat so the model can finish the JSON cleanly.
     const { system, payload } = selectCommentaryPrompt(input, persona, kind);
+    // gpt-5-mini rejects `reasoning.effort: "none"` (only low/medium/
+    // high) — so when the listener picked effort=none, omit the
+    // reasoning param entirely. Reasoning-capable models (gpt-5.2)
+    // fall back to their default behavior; non-reasoning variants
+    // (gpt-5-mini with effort=none) don't 400 on an unsupported value.
+    const reasoning =
+      this.model.startsWith("gpt-5") && this.reasoningEffort !== "none"
+        ? { effort: this.reasoningEffort }
+        : undefined;
     const response = await this.client.responses.create({
       model: this.model,
       max_output_tokens: kind === "opener" ? 1100 : 800,
-      reasoning: this.model.startsWith("gpt-5") ? { effort: this.reasoningEffort } : undefined,
+      reasoning,
       instructions: system,
       input: JSON.stringify(payload)
     });

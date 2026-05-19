@@ -11,11 +11,13 @@ import type { HostId, ProviderHealth, TTSAudioChunk, TTSProvider } from "../shar
 
 function makeChunk(commentaryId: string, payload = "audio"): TTSAudioChunk {
   return {
+    id: `${commentaryId}-chunk`,
     commentaryId,
-    seq: 0,
-    audioBase64: Buffer.from(payload).toString("base64"),
+    provider: "test",
     mimeType: "audio/mpeg",
-    final: true
+    base64Audio: Buffer.from(payload).toString("base64"),
+    isFinal: true,
+    latencyMs: 0
   };
 }
 
@@ -82,7 +84,7 @@ describe("TtsProviderChain", () => {
     const chain = new TtsProviderChain([primary, backup]);
     const chunks = await collect(chain.synthesize({ commentaryId: "c1", text: "hello" }));
     expect(chunks).toHaveLength(1);
-    expect(Buffer.from(chunks[0]!.audioBase64, "base64").toString()).toBe("from-primary");
+    expect(Buffer.from(chunks[0]!.base64Audio ?? "", "base64").toString()).toBe("from-primary");
     expect(chain.lastProviderId).toBe("primary");
   });
 
@@ -93,7 +95,7 @@ describe("TtsProviderChain", () => {
     ]);
     const chunks = await collect(chain.synthesize({ commentaryId: "c2", text: "hi" }));
     expect(chunks).toHaveLength(1);
-    expect(Buffer.from(chunks[0]!.audioBase64, "base64").toString()).toBe("from-backup");
+    expect(Buffer.from(chunks[0]!.base64Audio ?? "", "base64").toString()).toBe("from-backup");
     expect(chain.lastProviderId).toBe("backup");
     expect(chain.getFallbackStats()).toEqual({ primary: 1 });
   });
@@ -120,7 +122,7 @@ describe("TtsProviderChain", () => {
         { text: "second", hostId: "maya" as HostId }
       ]
     });
-    expect(Buffer.from(chunk.audioBase64, "base64").toString()).toBe("dialogue-from-backup");
+    expect(Buffer.from(chunk.base64Audio ?? "", "base64").toString()).toBe("dialogue-from-backup");
     expect(chain.lastProviderId).toBe("backup");
   });
 
