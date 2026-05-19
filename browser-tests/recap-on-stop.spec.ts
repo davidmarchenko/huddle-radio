@@ -50,6 +50,11 @@ test("Stop → Recap → Back to discover preserves what the listener heard", as
   const callCountMatch = statsText.match(/^(\d+)/);
   const callCount = callCountMatch ? Number(callCountMatch[1]) : 0;
   expect(callCount, `recap shows ${callCount} calls; expected >= 1`).toBeGreaterThanOrEqual(1);
+  // (Multi-host attribution check intentionally lives in
+  // huddleViewModel.test.ts — the local mock provider only emits
+  // single-line opener turns in test mode, so a browser-level
+  // assertion would false-fail when reality is just "demo opener is
+  // single-line." The unit test covers the multi-line path exhaustively.)
   // "Back to discover" exits to home cleanly. This is the explicit
   // post-recap exit the fix introduces — recap is no longer a
   // dead-end.
