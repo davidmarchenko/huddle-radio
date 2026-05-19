@@ -45,7 +45,7 @@ export function buildTranscriptExport(input: TranscriptExportInput) {
     "",
     "## Session Highlights",
     "",
-    biggestMoment ? `- Biggest moment: ${biggestMoment.moment.headline} (${biggestMoment.moment.priority}, ${biggestMoment.moment.score}/100).` : "- Biggest moment: none yet.",
+    biggestMoment ? `- Biggest moment: ${pickMomentLabel(biggestMoment)} (${biggestMoment.moment.priority}, ${biggestMoment.moment.score}/100).` : "- Biggest moment: none yet.",
     topImpact ? `- Biggest fantasy swing: ${topImpact.ownerName} ${topImpact.pointsDelta > 0 ? "+" : ""}${topImpact.pointsDelta} from ${topImpact.playerName}.` : "- Biggest fantasy swing: none yet.",
     spanMs > 0 ? `- Show length: ${spanMin === 0 ? "<1" : spanMin} ${spanMin === 1 ? "minute" : "minutes"} (${input.commentary.length} ${input.commentary.length === 1 ? "call" : "calls"}).` : `- Show length: ${input.commentary.length} ${input.commentary.length === 1 ? "call" : "calls"}.`,
     "",
@@ -71,6 +71,19 @@ function formatCommentary(item: LivecastCommentary) {
     ? `\n\n_Fantasy impact: ${item.fantasyImpacts[0].ownerName} ${item.fantasyImpacts[0].pointsDelta > 0 ? "+" : ""}${item.fantasyImpacts[0].pointsDelta} via ${item.fantasyImpacts[0].playerName}._`
     : "";
   return `${header}\n\n${lines}${impact}`;
+}
+
+// Pick the most descriptive label for the "Biggest moment" callout.
+// `moment.headline` is the producer's internal short label and is
+// sometimes a generic phrase ("pass update", "tick") that reads
+// poorly when quoted user-facing. Fall back to the play's headline
+// when the moment label is too short to be informative — same
+// length-guard pattern used by buildRecapSummary for the recap title.
+function pickMomentLabel(item: LivecastCommentary): string {
+  const momentLabel = item.moment.headline?.trim() ?? "";
+  if (momentLabel.length >= 12) return momentLabel;
+  const playLabel = item.play.headline?.trim();
+  return playLabel && playLabel.length > 0 ? playLabel : momentLabel || "Live moment";
 }
 
 // Render CommentaryKind as a short human label. The internal kind
