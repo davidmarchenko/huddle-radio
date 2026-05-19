@@ -1708,6 +1708,15 @@ function App() {
   // listener just heard. The recap's own "Back to discover" button
   // calls stopLivecast() to finish the teardown.
   const stopAndShowRecap = () => {
+    // If the listener taps Stop before any commentary has landed
+    // (~5-15s of LLM warmup), there's nothing to recap. Falling through
+    // to the recap path would strand them on a "Show complete" pregame
+    // screen with no recap content. Delegate to the full teardown so
+    // they return cleanly to discover.
+    if (commentary.length === 0) {
+      stopLivecast();
+      return;
+    }
     livecastSessionRef.current += 1;
     const handle = liveSessionRef.current;
     liveSessionRef.current = null;
