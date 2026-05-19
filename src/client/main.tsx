@@ -1098,7 +1098,15 @@ function App() {
         // pressing Listen and assumes the demo is broken. The bed
         // alone is too subtle to register as "yes, something
         // happened."
-        playShowOpeningSting(audioContextRef.current);
+        //
+        // Skip the sting on auto-reconnect — the listener was
+        // already mid-show and hearing the opener cue again would
+        // read as "show restarted from scratch" rather than "the
+        // network blip recovered." The ambient bed call above is
+        // idempotent so re-arming it is fine.
+        if (!overrides?._internalReconnect) {
+          playShowOpeningSting(audioContextRef.current);
+        }
       }
     }
     livecastSessionRef.current += 1;
