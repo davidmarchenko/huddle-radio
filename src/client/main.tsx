@@ -48,7 +48,7 @@ import { buildTranscriptExport } from "../shared/transcriptExport";
 import { createYouTubeEmbedUrl, isYouTubeUrl } from "../shared/videoLinks";
 import { pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "../shared/marketsRelevance";
 import { startMicRecording, type MicRecording } from "./audioCapture";
-import { closeSession, sendCue, sendFrame, sendNudge, startLiveSession } from "./liveSession";
+import { closeSession, sendCue, sendFrame, sendNudge, sendPauseState, startLiveSession } from "./liveSession";
 import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showLeader";
 import { clearLivecastSnapshot, loadLivecastSnapshot, saveLivecastSnapshot } from "./livecastSnapshot";
 import { DebugPanel } from "./DebugPanel";
@@ -1669,6 +1669,15 @@ function App() {
             void audio.play().catch(() => undefined);
           } catch { /* ignore */ }
         }
+      }
+      // Tell the server too — otherwise the engine keeps ticking,
+      // burning OpenAI commentary tokens + ElevenLabs/Inworld voice
+      // credits + piling unheard audio into the local queue. Best
+      // effort: a failed POST means we waste credits but the show
+      // still works.
+      const handle = liveSessionRef.current;
+      if (handle && handle.isOpen()) {
+        void sendPauseState(handle, next);
       }
       return next;
     });

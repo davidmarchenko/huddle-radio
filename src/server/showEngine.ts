@@ -363,6 +363,14 @@ export class ShowEngine {
   private readonly logger: ShowEngineLogger;
 
   private stopped = false;
+  /** Listener-initiated pause. When true, the tick interval handler
+   *  short-circuits BEFORE any LLM / TTS calls — no commentary tokens,
+   *  no voice credits, no audio chunks shipped over SSE. Heartbeat +
+   *  health timer keep running so the connection (and engine state:
+   *  rapport, claims, arc planner) stay warm. Resume just flips the
+   *  flag back; the existing setInterval picks up cleanly on the next
+   *  cycle. State preserved end-to-end. */
+  private paused = false;
   private started = false;
   private tickTimer?: ReturnType<typeof setInterval>;
   private healthTimer?: ReturnType<typeof setInterval>;
@@ -471,6 +479,26 @@ export class ShowEngine {
     this.healthTimer = undefined;
     if (this.started) incrementCounter("showsCompleted");
     this.queue.close();
+  }
+
+  /**
+   * Listener pressed pause. Subsequent ticks short-circuit before any
+   * LLM call or TTS generation — no OpenAI tokens, no ElevenLabs /
+   * Inworld credits, no audio chunks queued. Keeps the engine warm
+   * (heartbeat + health timer untouched) so resume picks up with
+   * full state. Idempotent.
+   */
+  setPaused(paused: boolean): void {
+    if (this.stopped) return;
+    if (this.paused === paused) return;
+    this.paused = paused;
+    this.queue.push({
+      type: "status",
+      message: paused
+        ? "Paused — pausing live commentary until you resume."
+        : "Resumed — back on the air.",
+      level: "info"
+    });
   }
 
   async start(request: LivecastRequest): Promise<void> {
@@ -1175,6 +1203,12 @@ export class ShowEngine {
 
       const tick = async () => {
         if (this.stopped) return;
+        // Listener paused — bail BEFORE any provider calls so we don't
+        // burn commentary tokens, voice credits, or news provider
+        // budget on chunks the listener won't hear. Engine state
+        // (rapport, claims, arc planner) is preserved untouched so
+        // resume picks up exactly where pause left off.
+        if (this.paused) return;
         // Drain a pending game switch BEFORE any per-tick fetches —
         // the swap rebuilds sportsProvider and resets per-game state,
         // so subsequent fetches use the new game.

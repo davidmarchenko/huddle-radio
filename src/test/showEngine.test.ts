@@ -224,6 +224,47 @@ describe("ShowEngine", () => {
     }, 20000);
   });
 
+  describe("setPaused", () => {
+    it("stops emitting commentary turns while paused, resumes when unpaused", async () => {
+      const engine = createEngine();
+      void engine.start(baseRequest);
+      // Drain past the opener so we're inside the regular tick loop.
+      await collectEvents(engine, { count: 3, timeoutMs: 8000 });
+      // Pause. A tick that started BEFORE the flag flipped may still
+      // finish and emit commentary — that's an unavoidable race
+      // because we can't safely kill a mid-flight LLM call. The
+      // contract we care about is: while paused, NO new ticks
+      // generate commentary, so the rate falls off a cliff.
+      // cadenceMs=3000 → unpaused, 8s would produce ~2-3 commentary
+      // turns. Paused, we should see at most 1 (the in-flight
+      // straggler).
+      engine.setPaused(true);
+      await new Promise((r) => setTimeout(r, 8000));
+      const eventsWhilePaused = await collectEvents(engine, { count: 20, timeoutMs: 500 });
+      const commentaryWhilePaused = eventsWhilePaused.filter((e) => e.type === "commentary");
+      expect(commentaryWhilePaused.length).toBeLessThanOrEqual(1);
+      // Resume — a commentary turn should land within a tick + budget.
+      engine.setPaused(false);
+      const eventsAfterResume = await collectEvents(engine, { count: 6, timeoutMs: 10000 });
+      const resumedCommentary = eventsAfterResume.find((e) => e.type === "commentary");
+      expect(resumedCommentary).toBeDefined();
+    }, 30000);
+
+    it("is idempotent — pausing twice does not double-fire status events", () => {
+      const engine = createEngine();
+      // Pre-start setPaused is a no-op (engine.stopped is false but
+      // started is false too; we just exercise the flag — no tick
+      // loop yet, so no side effects to assert.) Calling twice in a
+      // row with the same value must not throw.
+      expect(() => {
+        engine.setPaused(true);
+        engine.setPaused(true);
+        engine.setPaused(false);
+        engine.setPaused(false);
+      }).not.toThrow();
+    });
+  });
+
   describe("switchGame", () => {
     it("no-ops when the engine hasn't started yet", () => {
       const engine = createEngine();

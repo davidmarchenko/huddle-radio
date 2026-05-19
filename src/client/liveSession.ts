@@ -262,6 +262,30 @@ export async function sendCue(handle: LiveSessionHandle, cue: ListenerCue): Prom
   }
 }
 
+/**
+ * Tell the server the listener pressed pause (or resume). The server
+ * flips a flag on the engine so subsequent ticks short-circuit before
+ * any LLM commentary call or TTS generation — pausing the local
+ * <audio> element alone leaves the engine generating unheard audio
+ * and burning OpenAI / ElevenLabs / Inworld credit until the listener
+ * resumes (or 5 min of detach grace expires after a tab close).
+ *
+ * Best-effort: a transient network failure here means the engine
+ * keeps ticking, which wastes credit but doesn't break the show.
+ */
+export async function sendPauseState(handle: LiveSessionHandle, paused: boolean): Promise<void> {
+  try {
+    const response = await fetch("/api/live/pause", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: handle.sessionId, paused })
+    });
+    maybeReportSessionLost(handle.sessionId, response);
+  } catch {
+    // Transient failure: leave the engine to its current state.
+  }
+}
+
 export async function sendNudge(handle: LiveSessionHandle, hostId: HostId): Promise<void> {
   try {
     const response = await fetch("/api/live/nudge", {
