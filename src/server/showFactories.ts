@@ -19,6 +19,7 @@ import { SportsDataIoProvider } from "../providers/sportsDataIoProvider";
 import { ElevenLabsTTSProvider, MockTTSProvider, type HostVoiceMap } from "../providers/ttsProviders";
 import { FishAudioTTSProvider, buildFishHostVoiceMap } from "../providers/fishAudioProvider";
 import { InworldTtsProvider, buildInworldHostVoiceMap } from "../providers/inworldTtsProvider";
+import { TtsProviderChain } from "../providers/ttsProviderChain";
 import type { TTSProvider } from "../shared/contracts";
 import { UserVideoProvider } from "../providers/userVideoProvider";
 import { EnrichmentAggregator } from "../providers/enrichment/aggregator";
@@ -193,9 +194,10 @@ export function buildHostVoiceMap(): HostVoiceMap {
 
 /**
  * Pick the right TTS provider implementation for this process based on
- * RESOLVED_TTS_PROVIDER. ElevenLabs remains the proven path; Fish Audio
- * is the experimental low-latency multi-speaker alternative. Mock is
- * always the safe fallback when no real provider is configured.
+ * RESOLVED_TTS_PROVIDER. ElevenLabs is the proven path; Fish Audio
+ * is the experimental low-latency multi-speaker alternative; Inworld
+ * is the current default. Mock is always the safe fallback when no
+ * real provider is configured.
  *
  * Kept as a factory (not inlined in the engine) so swapping providers
  * is a single config flip — no code paths to delete when experimenting.
@@ -206,6 +208,13 @@ export function buildHostVoiceMap(): HostVoiceMap {
  * whether the corresponding API key is configured — if the listener
  * picks Inworld but INWORLD_API_KEY is empty, we fall back to mock so
  * the show doesn't 500 instead of speak.
+ *
+ * Returns a TtsProviderChain when at least one secondary provider has
+ * an API key set — the chosen provider stays primary, and the chain
+ * silently falls through on hard failures (Inworld 403 "no credit",
+ * ElevenLabs 401, network drop) so the listener still hears the show
+ * in a backup voice instead of dead air. Mock is always the tail so
+ * the chain can never go fully silent.
  */
 export function createTTSProvider(
   override?: "auto" | "elevenlabs" | "fish" | "inworld" | "mock"
@@ -220,6 +229,36 @@ export function createTTSProvider(
           : override === "inworld" && !config.INWORLD_API_KEY
             ? "mock"
             : override;
+  const primary = instantiateTTSProvider(resolved);
+  // When the user explicitly picked mock (or fell through to it
+  // because their chosen vendor's key was missing), don't wrap — they
+  // didn't ask for a real-vendor experience, and a chain with mock at
+  // the front would just "succeed" silently and never reach any
+  // backup. Return the bare mock so the contract "explicit mock
+  // returns mock" stays true.
+  if (resolved === "mock") return primary;
+  // Build the fallback ladder. Each entry only joins when its key is
+  // set AND it isn't already the primary. Order: ElevenLabs (proven
+  // multi-voice + Text-to-Dialogue) → Fish (low-latency) → Inworld.
+  // Mock tail — guarantees the chain never falls all the way through.
+  const backups: TTSProvider[] = [];
+  const pushBackup = (kind: "elevenlabs" | "fish" | "inworld") => {
+    if (kind === resolved) return;
+    if (kind === "elevenlabs" && !config.ELEVENLABS_API_KEY) return;
+    if (kind === "fish" && !config.FISH_API_KEY) return;
+    if (kind === "inworld" && !config.INWORLD_API_KEY) return;
+    backups.push(instantiateTTSProvider(kind));
+  };
+  pushBackup("elevenlabs");
+  pushBackup("fish");
+  pushBackup("inworld");
+  backups.push(new MockTTSProvider());
+  return new TtsProviderChain([primary, ...backups]);
+}
+
+function instantiateTTSProvider(
+  resolved: "elevenlabs" | "fish" | "inworld" | "mock"
+): TTSProvider {
   switch (resolved) {
     case "elevenlabs":
       return new ElevenLabsTTSProvider(
