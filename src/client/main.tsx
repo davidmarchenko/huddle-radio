@@ -6297,7 +6297,19 @@ function HuddleRecap({
         {pickEntry && <PicksRecap entry={pickEntry} listenerId={picksListenerId} />}
         <MatchupCard game={game} mediaIndex={mediaIndex} />
         <StorylineCard icon="icon-flag" title="The turning point" items={[recapSummary.turningPoint, fantasySpotlight.body]} />
-        <StorylineCard icon="icon-star-filled" title="Best host moment" items={[recapSummary.hostMoment, recapSummary.matchupShift]} />
+        <StorylineCard
+          icon="icon-star-filled"
+          title="Best host moment"
+          items={[
+            (() => {
+              const speaker = hosts.find((h) => h.id === recapSummary.hostMomentSpeaker);
+              return speaker
+                ? `${speaker.name} — "${recapSummary.hostMoment}"`
+                : recapSummary.hostMoment;
+            })(),
+            recapSummary.matchupShift
+          ]}
+        />
         <RecentHighlights plays={plays} game={game} mediaIndex={mediaIndex} />
         <StorylineCard
           icon="icon-megaphone-loud"

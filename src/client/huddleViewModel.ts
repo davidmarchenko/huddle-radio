@@ -1,4 +1,4 @@
-import type { FantasyImpact, FantasyLeagueState, FantasyMatchup, FantasyPlayer, FantasyRoster, GroupSettings, LivecastCommentary, SportsGameOption, SportsGameState, SportsPlay, VideoMode } from "../shared/contracts";
+import type { FantasyImpact, FantasyLeagueState, FantasyMatchup, FantasyPlayer, FantasyRoster, GroupSettings, HostId, LivecastCommentary, SportsGameOption, SportsGameState, SportsPlay, VideoMode } from "../shared/contracts";
 import { formatPeriodLabel } from "../shared/period";
 
 export type HuddlePhase = "empty" | "pregame" | "live" | "live-audio" | "recap";
@@ -42,6 +42,11 @@ export type RecapSummary = {
   subtitle: string;
   turningPoint: string;
   hostMoment: string;
+  /** Which host delivered the best moment — undefined when commentary
+   *  is empty (recap shouldn't render in that state, but defensive).
+   *  Lets the UI attribute the quote ("Cam: …") instead of showing it
+   *  anonymously. */
+  hostMomentSpeaker?: HostId;
   matchupShift: string;
 };
 
@@ -342,6 +347,7 @@ export function buildRecapSummary(input: { commentary: LivecastCommentary[]; gam
     subtitle: input.game ? `${input.game.awayTeam} ${input.game.currentPlay?.score.away ?? 0}, ${input.game.homeTeam} ${input.game.currentPlay?.score.home ?? 0}` : "Your personalized postgame show is ready.",
     turningPoint: best?.play.headline ?? "The first big fantasy swing defined the night.",
     hostMoment: best?.text ? shorten(best.text, 140) : "The hosts kept the room oriented around the stakes.",
+    hostMomentSpeaker: best?.hostId,
     matchupShift: matchup.line
   };
 }
