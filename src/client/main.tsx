@@ -285,6 +285,11 @@ function App() {
   const [commentary, setCommentary] = useState<LivecastCommentary[]>(
     () => initialLivecastSnapshot?.commentary ?? []
   );
+  // Ref-mirror of `commentary.length` so callback closures (esp. the
+  // SSE onError handler) can read the CURRENT count without depending
+  // on the stale-at-capture useState value. Updated by the effect
+  // below.
+  const commentaryCountRef = useRef(commentary.length);
   const [ttsLatencyByCommentary, setTtsLatencyByCommentary] = useState<Record<string, number>>({});
   // Per-line audio metadata (wordTimings + mentionCues) accumulated from
   // TTS chunks. Keyed by `${commentaryId}:${lineIndex}` so the live
@@ -372,6 +377,9 @@ function App() {
   const [isPaused, setIsPaused] = useState(() => Boolean(initialLivecastSnapshot));
   const isPausedRef = useRef(Boolean(initialLivecastSnapshot));
   useEffect(() => { isPausedRef.current = isPaused; }, [isPaused]);
+  // Mirror of `commentary.length` for callback closures — see the
+  // declaration above. Updated whenever the commentary array changes.
+  useEffect(() => { commentaryCountRef.current = commentary.length; }, [commentary.length]);
   // Listener volume (0..1). Persisted across reloads so the listener's
   // last setting sticks. Applied to every new audio element in
   // playBase64Audio and live to the current element via a ref-driven
@@ -406,6 +414,15 @@ function App() {
   const clipChunksRef = useRef<Map<string, { mimeType: string; chunks: string[] }>>(new Map());
   const frameTimerRef = useRef<number | undefined>(undefined);
   const livecastSessionRef = useRef(0);
+  // Count of transient-error reconnect attempts for the CURRENT user
+  // intent — i.e. since the listener last tapped Listen. Resets on a
+  // user-initiated start. Used to cap auto-recovery from SSE stream
+  // drops so a server that's hard-down doesn't trigger a tight retry
+  // loop on the client. Up to MAX_TRANSIENT_RECONNECTS attempts; past
+  // that the listener sees the error and has to manually retry. The
+  // 410/WRONG_INSTANCE path (onSessionLost) is a separate, unbounded
+  // recovery — those are structural reroutes, not failures.
+  const transientReconnectAttemptsRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
   const drawerRef = useRef<HTMLElement | null>(null);
   // Last gameId the pre-show hydration effect has fetched for. Used
@@ -1040,6 +1057,13 @@ function App() {
      *  on a single matchup. Wired to the home/discovery feed's
      *  primary "Start tonight's show" CTA. */
     slate?: SportsGameOption[];
+    /** True when this start is auto-recovery from a transient stream
+     *  error (onError) — NOT a user tap. Skips the transient-retry
+     *  budget reset so we don't grant an infinite retry loop. The
+     *  410 onSessionLost path doesn't set this — those reconnects
+     *  are structural reroutes that legitimately deserve a fresh
+     *  budget.  */
+    _internalReconnect?: boolean;
   }) => {
     const effectiveGameId = overrides?.sportsGameId ?? sportsGameId;
     const validation = validateLivecastStart({ providerMode, sleeperLeagueId, espnLeagueId, videoMode, videoUrl });
@@ -1078,6 +1102,15 @@ function App() {
       }
     }
     livecastSessionRef.current += 1;
+    // A user-initiated start (Listen / Resume) resets the transient-
+    // error retry budget. A subsequent SSE stream drop will get up to
+    // MAX_TRANSIENT_RECONNECTS auto-recovery attempts before falling
+    // back to a manual retry. Auto-recovery re-entries pass
+    // `_internalReconnect: true` so this reset is skipped — the
+    // budget needs to actually decrement to be useful.
+    if (!overrides?._internalReconnect) {
+      transientReconnectAttemptsRef.current = 0;
+    }
     setShowPrepared(true);
     const sessionId = livecastSessionRef.current;
     setFormError("");
@@ -1186,6 +1219,41 @@ function App() {
         },
         onError: (msg) => {
           if (livecastSessionRef.current !== sessionId) return;
+          // Auto-recover from transient SSE stream drops. Three gates:
+          //
+          //   1. A show must have been actively running (≥1 commentary
+          //      turn landed). Pre-first-call drops aren't worth a
+          //      silent retry — the listener hasn't heard anything,
+          //      and a server that's failing during the cold-open
+          //      phase is more likely permanently misconfigured than
+          //      experiencing a network blip.
+          //   2. We haven't exhausted the per-user-intent budget
+          //      (MAX_TRANSIENT_RECONNECTS). Past that, the user sees
+          //      the error and chooses whether to retry — better than
+          //      hammering a hard-down server on a tight loop.
+          //   3. The listener didn't manually stop in the meantime
+          //      (livecastSessionRef advancement covers this; we
+          //      already returned above on mismatch).
+          //
+          // When the gates pass, surface a status hint and re-enter
+          // startLivecast with the auto-recovery flag so the budget
+          // decrements properly. Preserves transcript + pause state so
+          // the reconnect is invisible to the listener if it works.
+          const MAX_TRANSIENT_RECONNECTS = 2;
+          const showWasRunning = commentaryCountRef.current > 0;
+          const underBudget = transientReconnectAttemptsRef.current < MAX_TRANSIENT_RECONNECTS;
+          if (showWasRunning && underBudget) {
+            transientReconnectAttemptsRef.current += 1;
+            setStatus("Reconnecting…");
+            void startLivecast({
+              sportsGameId: effectiveGameId || undefined,
+              bypassReadiness: true,
+              preserveTranscript: true,
+              clearPaused: false,
+              _internalReconnect: true
+            });
+            return;
+          }
           setStatus(msg);
         },
         onClose: () => {
