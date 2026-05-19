@@ -65,7 +65,7 @@ import { PicksRecap } from "./PicksRecap";
 import type { PickEntry } from "../shared/picksContracts";
 import { formatPeriodLabel, periodKindForSport } from "../shared/period";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
-import { playShowOpeningSting } from "./showOpeningSting";
+import { playShowClosingSting, playShowOpeningSting } from "./showOpeningSting";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -1724,6 +1724,14 @@ function App() {
       currentAudioRef.current = null;
     }
     window.speechSynthesis?.cancel();
+    // Closing sting — symmetric with the opening sting. Plays right
+    // before we tear down the ambient bed so the listener gets a
+    // brief "signing off" cue. Doesn't block: it's scheduled on the
+    // audio context and runs even after stopAmbientBed disconnects
+    // its own nodes.
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      try { playShowClosingSting(audioContextRef.current); } catch { /* ignore */ }
+    }
     stopAmbientBed();
     setLivecastActive(false);
     setAudioPlaying(false);
