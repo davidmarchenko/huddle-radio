@@ -5017,8 +5017,8 @@ function HuddleDiscover({
         <article className="discover-banner discover-banner--profile">
           <div>
             <span className="eyebrow"><span className="icon icon-radio" aria-hidden="true" />Hear it before you set anything up</span>
-            <strong>Listen to a 60-second sample show.</strong>
-            <p>Three named hosts, real-time fantasy commentary, personalized to a sample lineup. No sign-up. Customize after — once you know if it's for you.</p>
+            <strong>Listen to a sample show.</strong>
+            <p>Three named hosts, real-time fantasy commentary, personalized to a sample lineup. No sign-up. Stop whenever — customize after.</p>
           </div>
           <div className="discover-banner-actions discover-banner-actions--split">
             <button className="primary" onClick={() => onPickAndStart("demo-kc-det")}>
