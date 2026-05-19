@@ -2383,7 +2383,15 @@ function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `fantasy-livecast-${new Date().toISOString().slice(0, 10)}.md`;
+    // Filename includes the matchup when present so multiple recap
+    // exports on the same day don't collide ("huddle-2026-05-19.md"
+    // → "huddle-2026-05-19-kc-at-det.md"). Inline slug: lowercase,
+    // alphanumerics only, dashes between.
+    const slug = (raw: string) =>
+      raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const dateSlug = new Date().toISOString().slice(0, 10);
+    const matchupSlug = game ? `-${slug(game.awayTeam)}-at-${slug(game.homeTeam)}` : "";
+    link.download = `huddle-${dateSlug}${matchupSlug}.md`;
     link.click();
     URL.revokeObjectURL(url);
   };
