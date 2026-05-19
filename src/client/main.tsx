@@ -355,7 +355,7 @@ function App() {
   // livecast running". Lets users return to discover while a show
   // continues playing in a floating mini-player. Initial value reads
   // the URL so deep-linking to /watch/{id} works.
-  const [viewingHome, setViewingHome] = useState(() => !window.location.pathname.startsWith("/watch"));
+  const [viewingHome, setViewingHome] = useState(() => !window.location.pathname.startsWith("/watch/"));
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioLevels, setAudioLevels] = useState(WAVEFORM_BARS);
   // Listener-paused state. When true, the currently-playing chunk is
