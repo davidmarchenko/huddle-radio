@@ -6464,6 +6464,33 @@ function HuddlePlayerBar({
   // available line when playedLineKeys is empty, so the strip
   // renders something the moment commentary arrives.
   const hasShowableCaptions = isLive && commentary.length > 0;
+  // Rotating warmup status during the opening gap — between when the
+  // sting ends (~1.2s after Listen) and when the first commentary
+  // turn lands (~5-10s for the LLM to draft + parse). Without it the
+  // player bar just says "Tuning in…" for ~10s, making the demo feel
+  // broken even though the engine is working as fast as it can.
+  // Cycle through 3 short host-specific lines every 2.5s so the bar
+  // visibly breathes.
+  const WARMUP_LINES = [
+    "Cam's at the desk.",
+    "Maya's pulling stats.",
+    "Theo's reading the room."
+  ];
+  const [warmupIndex, setWarmupIndex] = useState(0);
+  const inOpeningWarmup = isLive && !hasShowableCaptions && !isPaused;
+  useEffect(() => {
+    if (!inOpeningWarmup) {
+      setWarmupIndex(0);
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setWarmupIndex((prev) => (prev + 1) % WARMUP_LINES.length);
+    }, 2500);
+    return () => window.clearInterval(interval);
+    // WARMUP_LINES is a stable literal; eslint can't see that across
+    // module boundaries so we accept the harmless dep miss.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inOpeningWarmup]);
   // Slate mode is available from the discovery feed when 2+ games
   // are loaded. The primary button then starts the show in
   // discovery / slate mode — the server ranks the slate and the
@@ -6479,9 +6506,11 @@ function HuddlePlayerBar({
       ? "Tap play to start the show."
       : isLive && isPaused
         ? "Paused — tap play to resume."
-        : isLive
-          ? "Tuning in…"
-          : hostTurns[0]?.text ?? "Ready for the first call.";
+        : inOpeningWarmup
+          ? WARMUP_LINES[warmupIndex]
+          : isLive
+            ? "Tuning in…"
+            : hostTurns[0]?.text ?? "Ready for the first call.";
   const showLabel = isEmpty
     ? "Not playing"
     : game ? `${game.awayTeam} vs ${game.homeTeam}` : (isPregame ? "Pregame" : isLive ? "Live show" : "Not playing");
@@ -6566,7 +6595,12 @@ function HuddlePlayerBar({
                 <motion.div
                   className="mini-host-stack"
                   layout
-                  data-pulsing={audioPlaying && !isPaused ? "true" : "false"}
+                  // Also pulse during the opening warmup so the bar
+                  // visibly breathes while the LLM cooks — without
+                  // it, the gap between sting end (~1.2s) and first
+                  // TTS audio (~18s) reads as dead air even with the
+                  // rotating status text.
+                  data-pulsing={(audioPlaying && !isPaused) || inOpeningWarmup ? "true" : "false"}
                   style={{ ["--host-pulse" as string]: pulseScale.toFixed(3) }}
                 >
                   {HUDDLE_HOSTS.map((host) => (
