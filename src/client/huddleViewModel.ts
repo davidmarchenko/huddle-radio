@@ -346,6 +346,78 @@ export function buildRecapSummary(input: { commentary: LivecastCommentary[]; gam
   };
 }
 
+/**
+ * Recap "Show stats" card content. Goes a bit beyond "X calls" so the
+ * listener can see who carried the show and how long it ran — turns
+ * the card from a single-line bullet into a real summary line.
+ *
+ * Inputs:
+ *  - commentary: every host turn that landed during the show (already
+ *    filtered to this show).
+ *  - hosts: HUDDLE_HOSTS in display order (Maya, Theo, Cam). Used to
+ *    drive the "led with X turns" callout and ensure label order
+ *    matches the rest of the UI.
+ *
+ * Output: up to 4 lines suitable for StorylineCard. Empty strings are
+ * dropped by the card itself.
+ */
+export function buildShowStatsLines(
+  commentary: LivecastCommentary[],
+  hosts: HuddleHost[]
+): string[] {
+  const lines: string[] = [];
+  const turnCount = commentary.length;
+  if (turnCount === 0) {
+    // Recap shouldn't render in this state, but if it does we want a
+    // graceful single-line fallback instead of "0 calls."
+    return ["No calls landed during this show."];
+  }
+  // Sort by createdAt so we can read duration off first/last regardless
+  // of array order. Source `commentary` from main.tsx is reverse-
+  // chronological in some surfaces, chronological in others — sorting
+  // here means the helper is robust to either.
+  const timestamps = commentary
+    .map((c) => Date.parse(c.createdAt))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+  const spanMs =
+    timestamps.length >= 2 ? timestamps[timestamps.length - 1] - timestamps[0] : 0;
+  const spanMin = Math.max(1, Math.round(spanMs / 60000));
+
+  if (spanMs > 0) {
+    lines.push(
+      `${turnCount} ${turnCount === 1 ? "call" : "calls"} across ${spanMin} ${spanMin === 1 ? "minute" : "minutes"} of show.`
+    );
+  } else {
+    lines.push(`${turnCount} ${turnCount === 1 ? "call" : "calls"} in this show.`);
+  }
+
+  // Host turn distribution — count by primary hostId on each turn.
+  // Multi-speaker turns are still attributed to the lead so the totals
+  // sum to turnCount (not to the dialogue-line count).
+  const counts = new Map<string, number>();
+  for (const c of commentary) {
+    counts.set(c.hostId, (counts.get(c.hostId) ?? 0) + 1);
+  }
+  // Sort hosts by turn count desc, then by display order to break ties.
+  const ranked = hosts
+    .map((h) => ({ host: h, count: counts.get(h.id) ?? 0 }))
+    .filter((entry) => entry.count > 0)
+    .sort((a, b) => b.count - a.count);
+  if (ranked.length >= 2) {
+    const lead = ranked[0];
+    const rest = ranked
+      .slice(1)
+      .map((entry) => `${entry.host.name} ${entry.count}`)
+      .join(", ");
+    lines.push(
+      `${lead.host.name} led with ${lead.count} ${lead.count === 1 ? "turn" : "turns"} — ${rest}.`
+    );
+  }
+
+  return lines;
+}
+
 export function buildListenerStakes(input: {
   group: GroupSettings;
   leagues: FantasyLeagueState[];
