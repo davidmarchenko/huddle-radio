@@ -1,3 +1,5 @@
+import { getDefaultTurnSummaryStore } from "./turnSummaryStore";
+
 /**
  * Per-turn observability ring buffer.
  *
@@ -12,6 +14,12 @@
  * The companion route `/api/diagnostics/recent-turns` reads from this
  * buffer so debugging doesn't require terminal access to the dev
  * server (or Vercel runtime logs in prod).
+ *
+ * Storage: when UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN are
+ * set in env, summaries are persisted to Upstash so the diagnostics
+ * endpoint sees every turn regardless of which Fluid Compute instance
+ * recorded it. Without those env vars (tests, local dev without
+ * Upstash), falls back to an in-memory ring buffer.
  */
 export type TurnSummary = {
   /** Commentary id — also the turn id. Sortable with the buffer order. */
@@ -66,25 +74,31 @@ export type TurnSummary = {
   lines?: { hostId: string; text: string }[];
 };
 
-const BUFFER_LIMIT = 100;
-const buffer: TurnSummary[] = [];
-
 export function recordTurn(summary: TurnSummary): void {
-  buffer.push(summary);
-  if (buffer.length > BUFFER_LIMIT) {
-    buffer.splice(0, buffer.length - BUFFER_LIMIT);
-  }
   // Single grep target — `grep live.turn.summary` gives the full
   // per-turn audit trail without needing the diagnostics endpoint.
   console.log(JSON.stringify({ event: "live.turn.summary", ...summary }));
+  // Async persist to the configured store (Upstash in prod, memory
+  // in tests + local-no-upstash). Fire-and-forget so the engine
+  // doesn't pay a Redis round-trip on the hot path; a failed write
+  // logs to stderr instead of breaking the turn.
+  void getDefaultTurnSummaryStore()
+    .record(summary)
+    .catch((err) => {
+      console.warn(
+        JSON.stringify({
+          event: "turn-summary.store.error",
+          err: err instanceof Error ? err.message : String(err)
+        })
+      );
+    });
 }
 
-export function getRecentTurns(limit: number): TurnSummary[] {
-  const clamped = Math.max(1, Math.min(BUFFER_LIMIT, Math.floor(limit)));
-  return buffer.slice(-clamped).reverse();
+export async function getRecentTurns(limit: number): Promise<TurnSummary[]> {
+  return getDefaultTurnSummaryStore().recent(limit);
 }
 
 /** Test-only — reset the buffer between integration runs. */
-export function _resetTurnSummariesForTests(): void {
-  buffer.length = 0;
+export async function _resetTurnSummariesForTests(): Promise<void> {
+  await getDefaultTurnSummaryStore().reset();
 }

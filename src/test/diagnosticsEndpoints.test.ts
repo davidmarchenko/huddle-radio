@@ -106,8 +106,8 @@ describe("/api/diagnostics/memory", () => {
 });
 
 describe("/api/diagnostics/show-arc", () => {
-  beforeEach(() => {
-    _resetTurnSummariesForTests();
+  beforeEach(async () => {
+    await _resetTurnSummariesForTests();
   });
 
   it("groups arc trajectory by sessionId, oldest → newest within session", async () => {

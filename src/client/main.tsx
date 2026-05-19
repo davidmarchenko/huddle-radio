@@ -65,6 +65,7 @@ import { PicksRecap } from "./PicksRecap";
 import type { PickEntry } from "../shared/picksContracts";
 import { formatPeriodLabel, periodKindForSport } from "../shared/period";
 import { duckAmbientBed, startAmbientBed, stopAmbientBed, unduckAmbientBed } from "./ambientBed";
+import { playShowOpeningSting } from "./showOpeningSting";
 import { demoLeagueState, demoLeagues } from "../providers/demoData";
 import {
   applyProfileToGroup,
@@ -1064,7 +1065,16 @@ function App() {
       // Subtle ambient bed under the show — fills the gap between
       // turn-sets so the app doesn't feel dead. Ducks under TTS
       // automatically via onAudioStart/onAudioEnd below.
-      if (audioContextRef.current) startAmbientBed(audioContextRef.current);
+      if (audioContextRef.current) {
+        startAmbientBed(audioContextRef.current);
+        // Immediate audible cue that the show is starting. The LLM
+        // commentary + Inworld TTS take 10-20s to produce the first
+        // chunk; without a sting the listener hears nothing after
+        // pressing Listen and assumes the demo is broken. The bed
+        // alone is too subtle to register as "yes, something
+        // happened."
+        playShowOpeningSting(audioContextRef.current);
+      }
     }
     livecastSessionRef.current += 1;
     setShowPrepared(true);
@@ -1656,31 +1666,38 @@ function App() {
   // element back; the queue chain naturally drains in order from
   // there. The view stays in `live-audio` phase the whole time.
   const togglePause = () => {
+    // Compute the next state OUTSIDE the React setter — putting
+    // side effects (audio.pause/.play, sendPauseState fetch) inside
+    // setIsPaused((prev) => ...) makes them fire twice in React 18
+    // StrictMode (the updater is intentionally called twice to detect
+    // impurity). The original version was double-POSTing every
+    // pause/resume to /api/live/pause, which in prod meant the
+    // engine flipped paused → paused (no-op the second time, since
+    // setPaused is idempotent) but the WIRE STILL CARRIED TWO
+    // REQUESTS per click. Same answer; double the requests.
+    const next = !isPausedRef.current;
+    isPausedRef.current = next;
+    setIsPaused(next);
     const audio = currentAudioRef.current;
-    setIsPaused((prev) => {
-      const next = !prev;
-      isPausedRef.current = next;
-      if (audio) {
-        if (next) {
-          try { audio.pause(); } catch { /* ignore */ }
-        } else {
-          try {
-            audio.volume = volumeRef.current;
-            void audio.play().catch(() => undefined);
-          } catch { /* ignore */ }
-        }
+    if (audio) {
+      if (next) {
+        try { audio.pause(); } catch { /* ignore */ }
+      } else {
+        try {
+          audio.volume = volumeRef.current;
+          void audio.play().catch(() => undefined);
+        } catch { /* ignore */ }
       }
-      // Tell the server too — otherwise the engine keeps ticking,
-      // burning OpenAI commentary tokens + ElevenLabs/Inworld voice
-      // credits + piling unheard audio into the local queue. Best
-      // effort: a failed POST means we waste credits but the show
-      // still works.
-      const handle = liveSessionRef.current;
-      if (handle && handle.isOpen()) {
-        void sendPauseState(handle, next);
-      }
-      return next;
-    });
+    }
+    // Tell the server too — otherwise the engine keeps ticking,
+    // burning OpenAI commentary tokens + ElevenLabs/Inworld voice
+    // credits + piling unheard audio into the local queue. Best
+    // effort: a failed POST means we waste credits but the show
+    // still works.
+    const handle = liveSessionRef.current;
+    if (handle && handle.isOpen()) {
+      void sendPauseState(handle, next);
+    }
   };
 
   const stopLivecast = () => {
