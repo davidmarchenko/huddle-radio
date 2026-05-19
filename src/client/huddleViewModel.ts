@@ -303,15 +303,45 @@ export function buildFantasySpotlight(input: { impacts: FantasyImpact[]; league?
   };
 }
 
+/** Rank by moment.priority first (interrupt > major > notable > routine),
+ *  then by score, then by text length (a substantive turn beats a
+ *  one-liner). Used to pick the "best" turn for the recap so the
+ *  hero / host-moment cards quote the most memorable beat instead of
+ *  whichever turn happened to be first in the array. */
+const PRIORITY_RANK: Record<string, number> = {
+  interrupt: 4,
+  major: 3,
+  notable: 2,
+  routine: 1
+};
+function rankTurn(turn: LivecastCommentary): number {
+  const p = PRIORITY_RANK[turn.moment?.priority ?? "routine"] ?? 1;
+  const score = turn.moment?.score ?? 0;
+  const length = turn.text?.length ?? 0;
+  // priority dominates; score is a tiebreaker; length nudges between
+  // two equal-priority turns toward the meatier paragraph.
+  return p * 10_000 + score * 100 + Math.min(length, 600);
+}
+
 export function buildRecapSummary(input: { commentary: LivecastCommentary[]; game?: SportsGameState; league?: FantasyLeagueState }): RecapSummary {
-  const top = input.commentary[0];
   const matchup = buildMatchupStory(input.league);
   const gameLabel = input.game ? `${input.game.awayTeam} vs ${input.game.homeTeam}` : "The show";
+  // Pick the highest-ranked turn for the host-moment + title.
+  // Falling back to commentary[0] (whichever was newest) meant the
+  // recap always quoted the most-recent tick, often a low-impact
+  // turn or — worse — the welcome opener.
+  const best = [...input.commentary].sort((a, b) => rankTurn(b) - rankTurn(a))[0];
+  const headline = best?.moment.headline?.trim();
+  // Treat very short / generic moment.headlines ("pass update",
+  // "play", "tick") as not useful for the title — fall back to the
+  // game label so the listener doesn't read 'pass update became the
+  // story'.
+  const useHeadlineForTitle = Boolean(headline) && headline!.length >= 12;
   return {
-    title: top?.moment.headline ? `${top.moment.headline} became the story` : `${gameLabel} recap`,
+    title: useHeadlineForTitle ? `${headline} became the story` : `${gameLabel} recap`,
     subtitle: input.game ? `${input.game.awayTeam} ${input.game.currentPlay?.score.away ?? 0}, ${input.game.homeTeam} ${input.game.currentPlay?.score.home ?? 0}` : "Your personalized postgame show is ready.",
-    turningPoint: top?.play.headline ?? "The first big fantasy swing defined the night.",
-    hostMoment: top?.text ? shorten(top.text, 140) : "The hosts kept the room oriented around the stakes.",
+    turningPoint: best?.play.headline ?? "The first big fantasy swing defined the night.",
+    hostMoment: best?.text ? shorten(best.text, 140) : "The hosts kept the room oriented around the stakes.",
     matchupShift: matchup.line
   };
 }

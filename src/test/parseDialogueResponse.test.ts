@@ -104,6 +104,25 @@ describe("parseDialogueResponse", () => {
     expect(lines?.[1].text).toBe("Marc's roster, Marc's call — let's see how it plays.");
   });
 
+  it("strips leading vocative-with-empty-name artifacts (', welcome...' / '— hello...')", () => {
+    // Pattern observed in prod: the LLM was instructed not to overuse
+    // the listener's name, sometimes elides the addressee entirely and
+    // emits a bare comma + space at the start of a turn. Caught at
+    // parse time so the listener never hears '... , welcome to your
+    // show.' read literally as 'comma welcome to your show.'
+    const raw = JSON.stringify({
+      turns: [
+        { speaker: "theo", text: ", welcome to your show. Fourth & Snack is rolling." },
+        { speaker: "maya", text: "— and the math says you're up 3 already." },
+        { speaker: "cam", text: ": one more thing before we go." }
+      ]
+    });
+    const lines = parseDialogueResponse(raw, "theo", "");
+    expect(lines?.[0].text).toBe("welcome to your show. Fourth & Snack is rolling.");
+    expect(lines?.[1].text).toBe("and the math says you're up 3 already.");
+    expect(lines?.[2].text).toBe("one more thing before we go.");
+  });
+
   it("is a no-op when listenerName is empty (non-demo, no profile)", () => {
     const raw = JSON.stringify({
       turns: [
