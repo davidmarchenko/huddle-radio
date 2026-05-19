@@ -4451,6 +4451,26 @@ function useDialogA11y(open: boolean, dialogRef: React.RefObject<HTMLElement | n
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const node = dialogRef.current;
 
+    // Move focus INTO the dialog on open. Without this, the modal
+    // visually appears but keyboard focus stays on whatever triggered
+    // it — keyboard / screen-reader users have to Tab blindly to find
+    // their way in. Prefer the first interactive element; if the
+    // dialog root itself has tabindex=-1 we fall back to focusing it
+    // so the screen reader at least announces the dialog label.
+    if (node) {
+      const focusables = Array.from(
+        node.querySelectorAll<HTMLElement>("a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])")
+      ).filter((element) => !element.hasAttribute("disabled") && element.getAttribute("tabindex") !== "-1");
+      const target = focusables[0] ?? node;
+      // Defer one frame so React has committed the modal contents
+      // before we try to focus into them. requestAnimationFrame is
+      // sufficient — useEffect already runs post-paint, but the
+      // dialog's children may still be hydrating in some flows.
+      requestAnimationFrame(() => {
+        try { target.focus({ preventScroll: false }); } catch { /* ignore */ }
+      });
+    }
+
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
