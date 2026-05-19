@@ -79,7 +79,14 @@ export class LocalCommentaryProvider implements CommentaryProvider {
  */
 function buildLocalDialogue(input: CommentaryDraftInput, leadHostId: HostId): DialogueLine[] {
   const peerHostId = pickPeer(leadHostId);
-  const listenerName = input.group.listener.name;
+  // Empty/whitespace name is legal — the demo "Listen to a sample"
+  // flow starts without a profile, so listener.name is "". Templates
+  // that previously interpolated raw `${listenerName}` produced ",
+  // welcome in." and "'s board just shifted." Guard at the boundary
+  // so every downstream template can assume a non-empty string.
+  const rawListenerName = input.group.listener.name?.trim() ?? "";
+  const listenerName = rawListenerName || "everyone";
+  const hasListenerName = rawListenerName.length > 0;
   const kind = input.kind ?? "play";
 
   if (kind === "opener") {
@@ -92,7 +99,7 @@ function buildLocalDialogue(input: CommentaryDraftInput, leadHostId: HostId): Di
     const oddsBlurb = describeOdds(input);
     const leadTurn = clip(
       [
-        `${listenerName}, welcome in.`,
+        hasListenerName ? `${rawListenerName}, welcome in.` : "Welcome in.",
         `${team} is rolling${starterSummary ? ` with ${starterSummary}` : ""}.`,
         matchupBlurb,
         "Let's get into it."
@@ -160,8 +167,11 @@ function clip(text: string): string {
 }
 
 function describeMatchup(input: CommentaryDraftInput): string {
-  const team = input.play.team;
-  if (!team) return "";
+  const team = input.play.team?.trim();
+  // Some fixtures (and a couple of real providers) use "—" as an
+  // empty-marker for missing teams. Treat that the same as
+  // undefined so we don't emit "— is on the field, ...".
+  if (!team || team === "—" || team === "-") return "";
   return `${team} is on the field, and there's plenty riding on this one.`;
 }
 
@@ -254,6 +264,9 @@ function pickColorLine(input: CommentaryDraftInput): string {
 
 function pickReactor(input: CommentaryDraftInput, listenerName: string): string {
   const playType = input.play.type;
+  // listenerName is normalized to "everyone" by buildLocalDialogue
+  // when the listener is anonymous, so "everyone's board" reads
+  // naturally instead of the broken "'s board" we used to emit.
   if (playType === "touchdown") return `Big one. ${listenerName}'s board just shifted.`;
   if (playType === "field-goal") return "Field goal's on the board.";
   if (playType === "turnover") return "Field flipped. That changes the math.";
@@ -285,14 +298,19 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
     const persona = resolveHostPersona(leadHostId);
     const kind: CommentaryKind = input.kind ?? "play";
 
-    // Higher token budget than the old single-line path: 5-7 short
-    // lines (opener) or 3-5 short lines (play) plus JSON scaffolding
-    // round-trips at ~500-700 tokens. Still well under the response
-    // ceiling and keeps latency tight at flash-TTS pace.
+    // Token budget covers 5-7 short lines (opener) or 3-5 short lines
+    // (play) plus JSON scaffolding. Earlier caps (700/500) were tight
+    // enough that ~3-turn play responses truncated mid-string —
+    // parseDialogueResponse then failed, and the fallback path dumped
+    // the raw JSON envelope as a single host line ("[cam] { \"turns\":
+    // [{ \"speaker\": \"cam\", \"text\": ... }, ..." cut off
+    // mid-word). The recovery was the broken artifact a listener
+    // would hear. New caps give ~60% headroom on a busy 3-turn play
+    // beat so the model can finish the JSON cleanly.
     const { system, payload } = selectCommentaryPrompt(input, persona, kind);
     const response = await this.client.responses.create({
       model: this.model,
-      max_output_tokens: kind === "opener" ? 700 : 500,
+      max_output_tokens: kind === "opener" ? 1100 : 800,
       reasoning: this.model.startsWith("gpt-5") ? { effort: this.reasoningEffort } : undefined,
       instructions: system,
       input: JSON.stringify(payload)
