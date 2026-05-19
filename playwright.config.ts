@@ -48,23 +48,48 @@ export default defineConfig({
   use: {
     baseURL,
     trace: "retain-on-failure",
-    video: "retain-on-failure",
-    // Auto-grant any permission the app asks for (mic, camera) so
-    // we can exercise the push-to-talk flow without a browser
-    // popup.
-    permissions: ["microphone"]
+    video: "retain-on-failure"
+    // permissions are scoped to the chromium project — WebKit
+    // doesn't recognize "microphone" as a permission name and errors
+    // out when we try to grant it globally.
   },
   projects: [
     {
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
+        // Auto-grant mic permission so push-to-talk doesn't trigger
+        // a permission popup that no test framework can dismiss.
+        permissions: ["microphone"],
         // Fake mic/camera input so getUserMedia / getDisplayMedia
         // resolve without real hardware.
         launchOptions: {
           args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"]
         }
       }
+    },
+    {
+      // WebKit lane — engine parity with iOS Safari. Default project
+      // runs are Chromium-only (the listener pool skews mobile-
+      // Chromium). Run this lane on-demand to catch iOS-specific
+      // regressions: AudioContext requires a real user gesture to
+      // unlock, BroadcastChannel was a recent add, CSS @media calc
+      // quirks. Run with `--project=webkit`.
+      //
+      // WebKit doesn't support the "microphone" permission grant by
+      // name (Chrome-specific). Specs that need mic must skip on
+      // WebKit explicitly. The major surfaces (listen, captions,
+      // audio playback) work without mic — push-to-talk Cue host is
+      // the only feature that needs it.
+      name: "webkit",
+      use: { ...devices["Desktop Safari"] },
+      // Skip specs that emulate Chromium-flavored mobile devices
+      // (Pixel 5, narrow Android UA). Running them under WebKit is a
+      // hybrid that doesn't represent any real device — mobile Safari
+      // is exercised by prod-smoke + capture-transcript at desktop
+      // viewport, which is enough to catch engine-specific bugs
+      // (AudioContext gesture unlock, BroadcastChannel, CSS calc).
+      testIgnore: ["**/prod-mobile.spec.ts", "**/narrow-mobile.spec.ts"]
     }
   ],
   // Only auto-start the dev server when targeting localhost.

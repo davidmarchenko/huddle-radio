@@ -121,12 +121,22 @@ export function createListenerOpener(input: {
 }
 
 function buildLocalOpenerText(input: { listenerName: string; roster?: { teamName: string; starters: Array<{ name: string; position: string; currentPoints: number; projectedPoints: number }> } }): string {
+  // Listener name may be empty in demo / no-profile flows. A bare
+  // template "{name}, welcome..." would render as ", welcome..." —
+  // the leading-vocative-comma bug parseDialogueResponse fixes on
+  // the LLM path. Local fallback needs the same guard so a profile-
+  // less listener doesn't hear "comma welcome to your show."
+  const name = input.listenerName.trim();
   if (!input.roster || input.roster.starters.length === 0) {
-    return `${input.listenerName}, welcome in. We don't have your lineup loaded yet, so we'll call this one off the official feed.`;
+    return name
+      ? `${name}, welcome in. We don't have your lineup loaded yet, so we'll call this one off the official feed.`
+      : `Welcome in. We don't have your lineup loaded yet, so we'll call this one off the official feed.`;
   }
   const top = [...input.roster.starters].sort((a, b) => b.projectedPoints - a.projectedPoints).slice(0, 3);
   const names = top.map((p) => `${p.name} at ${p.position}`).join(", ");
-  return `${input.listenerName}, welcome to your show. ${input.roster.teamName} is rolling with ${names} — that's the trio I'm watching for you tonight. Let's see what they give us.`;
+  return name
+    ? `${name}, welcome to your show. ${input.roster.teamName} is rolling with ${names} — that's the trio I'm watching for you tonight. Let's see what they give us.`
+    : `Welcome to your show. ${input.roster.teamName} is rolling with ${names} — that's the trio I'm watching for you tonight. Let's see what they give us.`;
 }
 
 function syntheticOpenerPlay(): SportsPlay {
