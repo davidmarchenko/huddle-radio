@@ -210,9 +210,11 @@ function speakableOpenerForSourceKind(
     case "news":
       return "Worth flagging this one.";
     case "picks":
-      return `${listenerName}, on your card —`;
+      // Empty listenerName would render as ", on your card —" — the
+      // same leading-vocative bug the local opener fallback had.
+      return listenerName.trim() ? `${listenerName}, on your card —` : "On your card —";
     case "listener":
-      return `${listenerName}, back to your cue —`;
+      return listenerName.trim() ? `${listenerName}, back to your cue —` : "Back to your cue —";
     case "pregame":
       return "Setting the scene before tip.";
     case "handoff":
