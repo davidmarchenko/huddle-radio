@@ -7896,6 +7896,26 @@ body:has(.huddle-app) {
   color: var(--huddle-soft);
 }
 
+/* Multi-speaker turn breakdown. Recap surface now attributes each
+   line of a multi-host dialogue to its actual speaker — same
+   container, no new avatars, just an inline bold name tag prefixed
+   on each paragraph keyed to the host's accent. Single-speaker turns
+   still render through the existing `.host-turn p` styles above. */
+.host-turn p.host-turn-line {
+  margin-top: 0.4rem;
+}
+.host-turn p.host-turn-line:first-of-type {
+  margin-top: 0.25rem;
+}
+.host-turn .host-turn-line-speaker {
+  color: var(--huddle-text);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.host-turn .host-turn-line-speaker[data-accent="violet"] { color: #c4b1ff; }
+.host-turn .host-turn-line-speaker[data-accent="orange"] { color: #ffb487; }
+.host-turn .host-turn-line-speaker[data-accent="gold"]   { color: #f0c95a; }
+
 .audio-live-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;

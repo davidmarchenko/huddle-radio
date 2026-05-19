@@ -16,10 +16,21 @@ export type HuddleHost = {
 
 export type HuddleHostTurn = {
   id: string;
+  /** Lead speaker (first line's host). Drives accent + the
+   *  single-line fallback rendering. */
   host: HuddleHost;
+  /** Joined / shortened text. Kept for back-compat and as the
+   *  fallback render when `lines` is absent. */
   text: string;
   eyebrow: string;
   time?: string;
+  /** Per-speaker breakdown for multi-host turns. Populated only when
+   *  the underlying commentary had >1 dialogue line — single-host
+   *  turns leave this undefined so the renderer keeps the simpler
+   *  single-block layout. Each entry is the line as-emitted by the
+   *  engine (no per-line truncation; the engine prompts already cap
+   *  turn length at 30-60 words). */
+  lines?: Array<{ host: HuddleHost; text: string }>;
 };
 
 export type HuddleSetupStep = {
@@ -216,13 +227,27 @@ export function buildHostTurns(input: { commentary: LivecastCommentary[]; game?:
       // legacy commentary missing the field (older sessions, snapshots).
       const host = HUDDLE_HOSTS.find((h) => h.id === item.hostId) ?? HUDDLE_HOSTS[index % HUDDLE_HOSTS.length];
       const isOpener = item.kind === "opener";
+      // Resolve every line's host to a HuddleHost. Lines without a
+      // recognized hostId fall back to the turn's lead host, same
+      // pattern as legacy fallback above. Filter out empty texts —
+      // they'd render as empty avatar blocks with no content.
+      const lineEntries = (item.lines ?? [])
+        .map((line) => ({
+          host: HUDDLE_HOSTS.find((h) => h.id === line.hostId) ?? host,
+          text: stripMarkdown(line.text).trim()
+        }))
+        .filter((line) => line.text.length > 0);
       return {
         id: item.id,
         host,
         // Opener gets to breathe — let it run longer than per-play turns.
         text: shorten(stripMarkdown(item.text), isOpener ? 360 : 150),
         eyebrow: isOpener ? "On air" : item.moment.priority,
-        time: isOpener ? undefined : `${formatPeriodLabel(item.play.period)} ${item.play.clock}`
+        time: isOpener ? undefined : `${formatPeriodLabel(item.play.period)} ${item.play.clock}`,
+        // Only attach `lines` when the turn actually had multiple
+        // speakers — single-speaker turns keep the existing simpler
+        // single-block render via `host` + `text`.
+        lines: lineEntries.length > 1 ? lineEntries : undefined
       };
     });
   }

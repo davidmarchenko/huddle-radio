@@ -103,6 +103,75 @@ describe("huddle view model", () => {
     expect(pregameTurns.map((turn) => turn.host.name)).toEqual(["Maya", "Theo", "Cam"]);
   });
 
+  it("attaches per-speaker `lines` only when the underlying commentary had >1 dialogue line", () => {
+    // Single-line commentary (createLivecastCommentary seeds a
+    // single-line dialogue). The recap should keep the simple
+    // single-block render — no `lines` field needed.
+    const single = createLivecastCommentary({
+      league: demoLeagueState,
+      play: demoPlays[1],
+      observation,
+      group,
+      news: [],
+      startedAt: performance.now()
+    });
+    expect(single.lines).toHaveLength(1);
+    const [singleTurn] = buildHostTurns({ commentary: [single], game: undefined, group });
+    expect(singleTurn.lines, "single-speaker turn should not surface multi-line breakdown").toBeUndefined();
+
+    // Multi-line turn: emulate a dialogue across all three hosts.
+    // Mutating the seed is safe — createLivecastCommentary builds a
+    // single line and the engine overwrites it from the LLM. The
+    // recap should preserve attribution per line, NOT collapse to a
+    // single quote under the lead host.
+    const multi = {
+      ...single,
+      id: "multi-1",
+      hostId: "theo" as const,
+      lines: [
+        { hostId: "theo" as const, text: "First, the matchup math." },
+        { hostId: "maya" as const, text: "Pace + projections favor the underdog." },
+        { hostId: "cam" as const, text: "Bold call: cover by ten." }
+      ],
+      text: "First, the matchup math. Pace + projections favor the underdog. Bold call: cover by ten."
+    };
+    const [multiTurn] = buildHostTurns({ commentary: [multi], game: undefined, group });
+    expect(multiTurn.host.id).toBe("theo");
+    expect(multiTurn.lines).toBeDefined();
+    expect(multiTurn.lines).toHaveLength(3);
+    expect(multiTurn.lines!.map((line) => line.host.id)).toEqual(["theo", "maya", "cam"]);
+    expect(multiTurn.lines![1].text).toBe("Pace + projections favor the underdog.");
+  });
+
+  it("drops empty lines from the multi-speaker breakdown and falls back to single-block when only one survives", () => {
+    const base = createLivecastCommentary({
+      league: demoLeagueState,
+      play: demoPlays[1],
+      observation,
+      group,
+      news: [],
+      startedAt: performance.now()
+    });
+    // Server emitted an empty placeholder line — the recap shouldn't
+    // render an empty speaker block; if only one non-empty line
+    // remains, the recap reverts to the simpler single-block layout
+    // (`lines` undefined) since multi-speaker rendering isn't
+    // warranted for a single survivor.
+    const withEmpty = {
+      ...base,
+      id: "with-empty",
+      hostId: "theo" as const,
+      lines: [
+        { hostId: "theo" as const, text: "Real content here." },
+        { hostId: "maya" as const, text: "" },
+        { hostId: "cam" as const, text: "  " }
+      ],
+      text: "Real content here."
+    };
+    const [turn] = buildHostTurns({ commentary: [withEmpty], game: undefined, group });
+    expect(turn.lines, "only one non-empty line — should fall back to single-block").toBeUndefined();
+  });
+
   it("summarizes matchup, spotlight, and recap without backend contract changes", () => {
     const commentary = createLivecastCommentary({
       league: demoLeagueState,

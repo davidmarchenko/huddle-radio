@@ -6957,7 +6957,24 @@ function HostTurns({ turns, compact = false }: { turns: HuddleHostTurn[]; compac
               <span>{turn.host.role}</span>
               {turn.time && <small>{turn.time}</small>}
             </header>
-            <p>{turn.text}</p>
+            {turn.lines && turn.lines.length > 1 ? (
+              // Multi-speaker turn — render each line attributed to
+              // its actual speaker so the recap reflects the actual
+              // dialogue instead of collapsing it all under the lead
+              // host. Each line gets a small inline speaker tag in
+              // bold (no extra avatars to keep the card density
+              // unchanged from the single-speaker layout).
+              turn.lines.map((line, i) => (
+                <p key={`${turn.id}:${i}`} className="host-turn-line">
+                  <strong className="host-turn-line-speaker" data-accent={line.host.accent}>
+                    {line.host.name}:
+                  </strong>{" "}
+                  {line.text}
+                </p>
+              ))
+            ) : (
+              <p>{turn.text}</p>
+            )}
           </div>
         </article>
       ))}
