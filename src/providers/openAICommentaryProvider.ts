@@ -298,15 +298,19 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
     const persona = resolveHostPersona(leadHostId);
     const kind: CommentaryKind = input.kind ?? "play";
 
-    // Token budget covers 5-7 short lines (opener) or 3-5 short lines
-    // (play) plus JSON scaffolding. Earlier caps (700/500) were tight
-    // enough that ~3-turn play responses truncated mid-string —
-    // parseDialogueResponse then failed, and the fallback path dumped
-    // the raw JSON envelope as a single host line ("[cam] { \"turns\":
-    // [{ \"speaker\": \"cam\", \"text\": ... }, ..." cut off
-    // mid-word). The recovery was the broken artifact a listener
-    // would hear. New caps give ~60% headroom on a busy 3-turn play
-    // beat so the model can finish the JSON cleanly.
+    // Token budget tuned for two competing risks:
+    //   - too low: a busy 3-turn play response truncates mid-string,
+    //     parseDialogueResponse fails, fallback dumps raw JSON ("{
+    //     \"turns\": [{ \"speaker\": ... ") as a single host line —
+    //     listener hears the broken artifact.
+    //   - too high: gpt-5-mini happily generates up to the cap, so
+    //     a 1500-token ceiling can push first-byte to 15-25s and
+    //     blow past the chain timeout — listener hears local
+    //     templates instead of LLM output.
+    // 850/600 sits in the sweet spot: 5-7 short opener turns fit
+    // comfortably (~600-700 tokens incl. JSON), 3-5 play turns fit
+    // (~400-500 tokens), and the typical wall-clock generation
+    // stays under 12s on gpt-5-mini.
     const { system, payload } = selectCommentaryPrompt(input, persona, kind);
     // gpt-5-mini rejects `reasoning.effort: "none"` (only low/medium/
     // high) — so when the listener picked effort=none, omit the
@@ -319,7 +323,7 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
         : undefined;
     const response = await this.client.responses.create({
       model: this.model,
-      max_output_tokens: kind === "opener" ? 1100 : 800,
+      max_output_tokens: kind === "opener" ? 850 : 600,
       reasoning,
       instructions: system,
       input: JSON.stringify(payload)

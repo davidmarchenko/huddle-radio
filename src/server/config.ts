@@ -22,7 +22,7 @@ const EnvSchema = z.object({
   ANTHROPIC_COMMENTARY_MODEL: z.string().default("claude-sonnet-4-6"),
   GOOGLE_API_KEY: z.string().optional(),
   GEMINI_COMMENTARY_MODEL: z.string().default("gemini-1.5-pro"),
-  COMMENTARY_PROVIDER_TIMEOUT_MS: z.coerce.number().int().min(1000).max(30000).default(8000),
+  COMMENTARY_PROVIDER_TIMEOUT_MS: z.coerce.number().int().min(1000).max(45000).default(8000),
   OPENAI_REALTIME_MODEL: z.string().default(recommendedModelDefaults.realtimeModel),
   OPENAI_REALTIME_FAST_MODEL: z.string().default(recommendedModelDefaults.realtimeFastModel),
   MODEL_PROVIDER: z.enum(["mock", "openai-vision", "nemotron", "openai-realtime"]).default("openai-vision"),
