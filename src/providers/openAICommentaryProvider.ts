@@ -108,17 +108,22 @@ function buildLocalDialogue(input: CommentaryDraftInput, leadHostId: HostId): Di
   // Play turn: lead host gets the substance (call + color + landing) as
   // ONE full thought. Peer adds a second turn only when there's a
   // genuinely meaningful market swing or listener cue worth a paragraph.
-  // When a producer directive is present AND the first beat is NOT a
-  // play beat (i.e. the producer chose to lead with a callback,
-  // pivot, market, etc.), anchor the lead on the producer's topic.
-  // For play beats, describePlay is richer than the producer's
-  // generic topic — keep the play substance.
+  //
+  // CRITICAL: `directive.beats[].topic` is a WRITER'S BRIEF — written for
+  // the LLM commentary path as steering ("Act-break reflection — what
+  // we've seen this half + a callback to a host's earlier take"). It
+  // is NEVER speakable copy. The local fallback used to clip the
+  // topic straight into the spoken line, which leaked producer
+  // instructions into the listener's TTS feed verbatim. We now ignore
+  // the topic entirely and synthesize a short speakable opener off
+  // `sourceKind` only. For non-play beats the rest of the paragraph
+  // (color + reactor) carries the substance; the opener just
+  // signals tone.
   const directiveBeat = input.directive?.beats[0];
-  const useDirectiveTopic =
-    directiveBeat?.topic && directiveBeat.sourceKind !== "play";
-  const call = useDirectiveTopic
-    ? clip(directiveBeat!.topic)
-    : describePlay(input);
+  const call =
+    directiveBeat && directiveBeat.sourceKind !== "play"
+      ? speakableOpenerForSourceKind(directiveBeat.sourceKind, listenerName)
+      : describePlay(input);
   const color = pickColorLine(input);
   const reactor = pickReactor(input, listenerName);
   const leadParagraph = [call, color, reactor].filter(Boolean).join(" ");
@@ -170,6 +175,47 @@ function describeOdds(input: CommentaryDraftInput): string {
   }
   if (typeof odds.total === "number") return `Total is sitting at ${odds.total}.`;
   return "";
+}
+
+/**
+ * Deterministic speakable opener keyed off the producer's beat
+ * `sourceKind`. Used by the local fallback when the producer picked
+ * a non-play beat (callback / banter / market / etc.) — the beat's
+ * `topic` is a writer's brief and isn't safe to read aloud, so we
+ * substitute a short, neutral lead-in here. The rest of the
+ * paragraph (color line + reactor) carries the actual content.
+ *
+ * Returning "" is fine — the empty string drops out of the joined
+ * paragraph and the listener just hears color + reactor.
+ */
+function speakableOpenerForSourceKind(
+  kind: import("./producer/types").BeatSourceKind,
+  listenerName: string
+): string {
+  switch (kind) {
+    case "callback":
+      return "Quick callback before we move on.";
+    case "banter":
+      return "Real quick on the room.";
+    case "news":
+      return "Worth flagging this one.";
+    case "picks":
+      return `${listenerName}, on your card —`;
+    case "listener":
+      return `${listenerName}, back to your cue —`;
+    case "pregame":
+      return "Setting the scene before tip.";
+    case "handoff":
+      return "Alright, that one's in the books — moving on.";
+    case "market":
+    case "enrichment":
+    case "vision":
+    case "play":
+      // pickColorLine already speaks markets / impacts; describePlay
+      // covers play; vision/enrichment have no safe deterministic
+      // template, so we stay silent on the opener and let color carry.
+      return "";
+  }
 }
 
 function describePlay(input: CommentaryDraftInput): string {

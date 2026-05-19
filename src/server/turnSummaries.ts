@@ -58,6 +58,12 @@ export type TurnSummary = {
    *  answer "what fraction of the show happened in pivot mode?"
    *  without joining external tables. */
   arcPosition?: string;
+  /** Full transcript of the turn — one entry per dialogue line, in
+   *  speak order. Captured so the diagnostics endpoint can answer
+   *  "show me the actual words the hosts said this turn" without a
+   *  separate log scrape. Optional so legacy summaries (and tests
+   *  that only assert telemetry) keep working. */
+  lines?: { hostId: string; text: string }[];
 };
 
 const BUFFER_LIMIT = 100;

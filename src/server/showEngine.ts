@@ -309,7 +309,8 @@ function buildTickSummary(partial: Partial<TurnSummary>, startedAtIso: string): 
     textGenerationMs: partial.textGenerationMs,
     totalMs: partial.totalMs ?? 0,
     errorReason: partial.errorReason,
-    startedAt: partial.startedAt ?? startedAtIso
+    startedAt: partial.startedAt ?? startedAtIso,
+    lines: partial.lines
   };
 }
 
@@ -890,6 +891,7 @@ export class ShowEngine {
         openerSummary.leadHostId = opener.hostId;
         openerSummary.finalHostIds = openerLines.map((l) => l.hostId);
         openerSummary.lineCount = openerLines.length;
+        openerSummary.lines = openerLines.map((l) => ({ hostId: l.hostId, text: l.text }));
         openerSummary.commentaryProvider = commentaryProviderLabel();
         const chainErrors = realCommentaryProvider instanceof CommentaryProviderChain
           ? realCommentaryProvider.lastTurnErrors
@@ -960,7 +962,8 @@ export class ShowEngine {
           errorReason: openerSummary.errorReason,
           startedAt: openerSummary.startedAt ?? openerStartedIso,
           producer: openerSummary.producer,
-          producerBeats: openerSummary.producerBeats
+          producerBeats: openerSummary.producerBeats,
+          lines: openerSummary.lines
         });
       }
 
@@ -1159,6 +1162,7 @@ export class ShowEngine {
         pivotSummary.leadHostId = pivotCommentary.hostId;
         pivotSummary.finalHostIds = pivotLines.map((l) => l.hostId);
         pivotSummary.lineCount = pivotLines.length;
+        pivotSummary.lines = pivotLines.map((l) => ({ hostId: l.hostId, text: l.text }));
         pivotSummary.commentaryProvider = commentaryProviderLabel();
         pivotSummary.totalMs = Math.round(performance.now() - pivotStarted);
         pivotSummary.arcPosition = "act-break";
@@ -1612,6 +1616,7 @@ export class ShowEngine {
           tickSummary.leadHostId = commentary.hostId;
           tickSummary.finalHostIds = dialogueLines.map((l) => l.hostId);
           tickSummary.lineCount = dialogueLines.length;
+          tickSummary.lines = dialogueLines.map((l) => ({ hostId: l.hostId, text: l.text }));
           tickSummary.commentaryProvider = commentaryProviderLabel();
           tickSummary.textGenerationMs = commentary.latency.textGenerationMs;
           const tickChainErrors = realCommentaryProvider instanceof CommentaryProviderChain
