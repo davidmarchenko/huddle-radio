@@ -1289,6 +1289,18 @@ function App() {
             });
             return;
           }
+          // Surface a friendlier message when the user is offline.
+          // The default fetch error ("Failed to fetch" / "Load failed"
+          // / similar) tells the listener nothing actionable. The
+          // navigator.onLine check is cheap and only narrows the
+          // friendly-override path — if the browser thinks we're
+          // online but the fetch still failed (DNS hiccup, CORS,
+          // CSP), keep the underlying error so we don't mask real
+          // problems behind a generic "offline" string.
+          if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            setStatus("You're offline — reconnect and try again.");
+            return;
+          }
           setStatus(msg);
         },
         onClose: () => {
