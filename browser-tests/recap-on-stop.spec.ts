@@ -41,7 +41,10 @@ test("Stop → Recap → Back to discover preserves what the listener heard", as
   await expect(recap).toBeVisible({ timeout: 15_000 });
   // Show stats card proves commentary was preserved — pre-fix,
   // stopLivecast cleared commentary[] so this would show "0".
-  const showStats = recap.getByText(/generated calls/i).first();
+  // Text shape after the buildShowStatsLines rewrite:
+  //   "6 calls across 5 minutes of show." (multi-turn)
+  //   "1 call in this show."              (single turn)
+  const showStats = recap.getByText(/\d+ calls? (across|in)/i).first();
   await expect(showStats).toBeVisible();
   const statsText = (await showStats.textContent())?.trim() ?? "";
   const callCountMatch = statsText.match(/^(\d+)/);
