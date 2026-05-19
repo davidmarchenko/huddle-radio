@@ -1232,9 +1232,20 @@ function App() {
           // queue at the pause gate. Best-effort: a transient failure
           // here just means the engine runs hot until the listener
           // resumes manually.
+          //
+          // queueMicrotask is load-bearing here. onOpen fires
+          // synchronously inside startLiveSession BEFORE the caller
+          // (this very function) gets a chance to assign
+          // `liveSessionRef.current = handle`. Reading the ref now
+          // gets the previous session (or null). Deferring to a
+          // microtask runs after the sync caller stack unwinds and
+          // does the assignment.
           if (overrides?._internalReconnect && isPausedRef.current) {
-            const handle = liveSessionRef.current;
-            if (handle) void sendPauseState(handle, true);
+            queueMicrotask(() => {
+              if (livecastSessionRef.current !== sessionId) return;
+              const handle = liveSessionRef.current;
+              if (handle) void sendPauseState(handle, true);
+            });
           }
         },
         onError: (msg) => {
