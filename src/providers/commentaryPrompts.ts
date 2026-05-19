@@ -186,7 +186,7 @@ const SHARED_HARD_RULES = [
   "- The first turn is spoken by the `leadHostId` in the input. Subsequent turns rotate.",
   "- Direct address controls the next speaker. If a host addresses another host BY NAME in a question, callout, or handoff ('Maya, what do you see?' / 'Cam — push back on that' / 'Theo, run it back'), the VERY NEXT turn MUST be from that addressed host. Do not skip them, do not have a third host answer for them. If you don't want to force a specific handoff, don't name a host at the end of the turn — address the room or the listener instead.",
   "- Across the WHOLE output (not per turn — across every turn combined), name the listener AT MOST ONCE. After that first mention, address them as 'you' / 'your team' — never repeat the name. Hearing your own name 3-4 times in a clip is the #1 thing that makes this sound robotic, so default to zero name uses if nothing earns it. Reference their actual starters when relevant; never invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
-  "- If `listener.name` is empty / missing, the listener has not claimed an identity yet. Address them as 'you,' 'tonight's listener,' or 'the room' — NEVER invent a name like 'Alex,' 'David,' etc. The demo persona is OFF; treat the listener as anonymous.",
+  "- If `listener.name` is null / empty / missing, the listener has not claimed an identity yet. Address them as 'you,' 'tonight's listener,' or 'the room' — NEVER invent a name like 'Alex,' 'David,' etc. NEVER emit a leading comma or vocative-followed-by-empty pattern like ', welcome' or ', what's up' — start the line with the actual greeting. The demo persona is OFF; treat the listener as anonymous.",
   "- If `friends` is empty, there are no real friends in this league — do NOT invent friend names ('Maya,' 'Devon,' 'Alex' as a friend, etc.). Skip any 'your friend X' beats; the only addressee is the listener themselves. (Maya as a HOST name is fine — that's a real host on the show.)",
   "- Avoid generic radio openers ('welcome back, folks,' 'big play here'). Open on the take or the news.",
   "- If `odds` is provided, exactly ONE turn across the whole output may cite the line/total/moneyline. Never lead with it; never recommend a bet.",
@@ -317,7 +317,13 @@ export function buildDirectivePayload(input: CommentaryDraftInput, persona: Host
       examples: persona.examples
     },
     listener: {
-      name: listener.name,
+      // Normalize empty / whitespace name to null so the prompt
+      // rule "if listener.name is empty/missing, address as 'you'"
+      // is unambiguous. Passing "" through let the LLM produce a
+      // ", welcome" artifact on prod (empty name → `${name}, welcome`
+      // pattern leaks the comma even when the model "knows" the name
+      // is absent). null forces the model to take the no-name branch.
+      name: listener.name?.trim() ? listener.name.trim() : null,
       favoriteTeam: listener.favoriteTeam,
       fantasyTeamName: roster?.teamName,
       starters: (roster?.starters ?? []).map((p) => ({
@@ -515,7 +521,13 @@ export function buildCommentaryPayload(input: CommentaryDraftInput, persona: Hos
       examples: persona.examples
     },
     listener: {
-      name: listener.name,
+      // Normalize empty / whitespace name to null so the prompt
+      // rule "if listener.name is empty/missing, address as 'you'"
+      // is unambiguous. Passing "" through let the LLM produce a
+      // ", welcome" artifact on prod (empty name → `${name}, welcome`
+      // pattern leaks the comma even when the model "knows" the name
+      // is absent). null forces the model to take the no-name branch.
+      name: listener.name?.trim() ? listener.name.trim() : null,
       favoriteTeam: listener.favoriteTeam,
       fantasyTeamName: roster?.teamName,
       starters: (roster?.starters ?? []).map((p) => ({
@@ -815,7 +827,16 @@ function detectTrailingHostAddress(text: string, speaker: HostId): HostId | unde
 }
 
 function coerceSingleTurn(speakerRaw: unknown, textRaw: string, leadHostId: HostId): DialogueLine | undefined {
-  const text = textRaw.trim();
+  // Strip leading-vocative-with-empty-name artifacts: when the
+  // listener is anonymous (listener.name=null in the payload) the
+  // LLM occasionally still emits ", welcome in." — interpolating
+  // an empty addressee leaves a leading comma + space. The prompt
+  // forbids this but belt-and-suspenders here means a stray model
+  // output never reaches the listener as `, welcome to your show.`
+  const text = textRaw
+    .trim()
+    .replace(/^[,;:—–\-]\s+/, "")
+    .trim();
   if (!text) return undefined;
   // Credential filter — same as the legacy per-line sanitizer.
   if (/api[\s_-]?key|secret|token|credential|system prompt/i.test(text)) return undefined;
