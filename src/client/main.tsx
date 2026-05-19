@@ -1057,12 +1057,16 @@ function App() {
      *  on a single matchup. Wired to the home/discovery feed's
      *  primary "Start tonight's show" CTA. */
     slate?: SportsGameOption[];
-    /** True when this start is auto-recovery from a transient stream
-     *  error (onError) — NOT a user tap. Skips the transient-retry
-     *  budget reset so we don't grant an infinite retry loop. The
-     *  410 onSessionLost path doesn't set this — those reconnects
-     *  are structural reroutes that legitimately deserve a fresh
-     *  budget.  */
+    /** True when this start is auto-recovery (NOT a user tap):
+     *  either the SSE drop path (onError) or the 410 WRONG_INSTANCE
+     *  reroute (onSessionLost). Three behavioral differences from a
+     *  user-tapped Listen:
+     *    1. Skip the opening sting — the listener was already mid-
+     *       show and "lights coming up" would read as a restart.
+     *    2. Skip the transient-retry budget reset so the counter
+     *       can actually decrement and cap loops.
+     *    3. Forward the listener's pause state to the new engine
+     *       once it acknowledges the handshake (see onOpen). */
     _internalReconnect?: boolean;
   }) => {
     const effectiveGameId = overrides?.sportsGameId ?? sportsGameId;
@@ -1316,7 +1320,12 @@ function App() {
             // Reconnect is transparent — preserve the listener's pause
             // state. Flipping pause here would silently resume audio
             // for a paused listener mid-reconnect.
-            clearPaused: false
+            clearPaused: false,
+            // Same reasoning as the onError path: skip the opening
+            // sting so the listener doesn't hear "show starting" cues
+            // every time the engine moves Fluid-Compute instances.
+            // Pause-state forward also fires for this path now.
+            _internalReconnect: true
           });
         },
         onEvent: (message) => {
