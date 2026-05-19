@@ -1224,6 +1224,18 @@ function App() {
         onOpen: () => {
           if (livecastSessionRef.current !== sessionId) return;
           setStatus("Live");
+          // If this is a reconnect AND the listener was paused when
+          // the previous session dropped, the new engine boots in the
+          // default unpaused state — it has no memory of the prior
+          // pause flag. Push the pause state up to it so it doesn't
+          // burn OpenAI + TTS credit generating turns the client will
+          // queue at the pause gate. Best-effort: a transient failure
+          // here just means the engine runs hot until the listener
+          // resumes manually.
+          if (overrides?._internalReconnect && isPausedRef.current) {
+            const handle = liveSessionRef.current;
+            if (handle) void sendPauseState(handle, true);
+          }
         },
         onError: (msg) => {
           if (livecastSessionRef.current !== sessionId) return;
