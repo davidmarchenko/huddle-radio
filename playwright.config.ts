@@ -17,6 +17,16 @@ import { defineConfig, devices } from "@playwright/test";
  * `projects` when we have multi-browser regressions to catch.
  */
 
+// Allow pointing the suite at a remote deployment so a human-free
+// verification loop can run against prod (or any preview URL). When
+// PLAYWRIGHT_BASE_URL is set, we skip the auto-started local dev
+// server — the browser tests just exercise the remote target.
+//
+// Example: `PLAYWRIGHT_BASE_URL=https://huddle-radio.vercel.app \
+//   npx playwright test browser-tests/capture-transcript.spec.ts`
+const REMOTE_BASE_URL = process.env.PLAYWRIGHT_BASE_URL;
+const baseURL = REMOTE_BASE_URL ?? "http://localhost:3000";
+
 export default defineConfig({
   testDir: "./browser-tests",
   testMatch: /.*\.spec\.ts$/,
@@ -36,7 +46,7 @@ export default defineConfig({
   fullyParallel: false,
   reporter: process.env.CI ? "github" : [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL,
     trace: "retain-on-failure",
     video: "retain-on-failure",
     // Auto-grant any permission the app asks for (mic, camera) so
@@ -57,10 +67,14 @@ export default defineConfig({
       }
     }
   ],
-  webServer: {
-    command: "npm run dev",
-    url: "http://localhost:3000",
-    timeout: 60_000,
-    reuseExistingServer: !process.env.CI
-  }
+  // Only auto-start the dev server when targeting localhost.
+  // Pointing at a remote URL skips this entirely.
+  webServer: REMOTE_BASE_URL
+    ? undefined
+    : {
+        command: "npm run dev",
+        url: "http://localhost:3000",
+        timeout: 60_000,
+        reuseExistingServer: !process.env.CI
+      }
 });

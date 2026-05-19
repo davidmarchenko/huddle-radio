@@ -15,7 +15,8 @@
     "verify:nemotron": "tsx scripts/verifyNemotron.ts",
     "test": "vitest run",
     "test:providers": "vitest run --config vitest.providers.config.ts",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "test:browser:prod": "PLAYWRIGHT_BASE_URL=https://huddle-radio.vercel.app playwright test"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
