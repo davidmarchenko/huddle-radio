@@ -6484,6 +6484,11 @@ function HuddlePlayerBar({
     "Maya's pulling stats.",
     "Theo's reading the room."
   ];
+  // Parallel to WARMUP_LINES — index i names the host that line i is
+  // about. Drives the mini-host avatar spotlight so the visual cue
+  // tracks the text and the listener gets a second sense (visual) that
+  // something is happening during the LLM-warmup gap.
+  const WARMUP_HOST_ORDER = ["cam", "maya", "theo"] as const;
   const [warmupIndex, setWarmupIndex] = useState(0);
   const inOpeningWarmup = isLive && !hasShowableCaptions && !isPaused;
   useEffect(() => {
@@ -6612,7 +6617,11 @@ function HuddlePlayerBar({
                   style={{ ["--host-pulse" as string]: pulseScale.toFixed(3) }}
                 >
                   {HUDDLE_HOSTS.map((host) => (
-                    <MiniHostPop key={host.id} host={host} />
+                    <MiniHostPop
+                      key={host.id}
+                      host={host}
+                      spotlit={inOpeningWarmup && WARMUP_HOST_ORDER[warmupIndex] === host.id}
+                    />
                   ))}
                 </motion.div>
                 <div className="player-show-meta">
@@ -6815,7 +6824,15 @@ function HostAvatar({
  * trigger's bounding rect each time the popover opens, so it always
  * lands directly above the avatar regardless of the surrounding layout.
  */
-function MiniHostPop({ host }: { host: import("./huddleViewModel").HuddleHost }) {
+function MiniHostPop({
+  host,
+  spotlit = false
+}: {
+  host: import("./huddleViewModel").HuddleHost;
+  /** Briefly highlight this avatar while the warmup status names this
+   *  host. Drives a CSS-only outline glow keyed to the host accent. */
+  spotlit?: boolean;
+}) {
   const triggerRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [coords, setCoords] = useState<{ left: number; top: number } | null>(null);
@@ -6847,6 +6864,8 @@ function MiniHostPop({ host }: { host: import("./huddleViewModel").HuddleHost })
       <motion.div
         ref={triggerRef}
         className="mini-host-pop"
+        data-spotlit={spotlit ? "true" : "false"}
+        data-accent={host.accent}
         tabIndex={0}
         role="button"
         aria-label={`${host.name}, ${host.role}. ${host.description}`}

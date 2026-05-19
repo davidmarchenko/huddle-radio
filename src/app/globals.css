@@ -18673,6 +18673,44 @@ body {
   box-shadow: 0 0 0 2px var(--hr-accent, var(--huddle-violet, #9b6cff));
 }
 
+/* Warmup spotlight: when the rotating status line names a specific
+   host, the matching avatar gets a brief outline glow keyed to its
+   accent. Pairs visual + verbal cues during the LLM-warmup gap so the
+   listener sees something resolve to the audio narrative. Pure CSS —
+   the parent toggles `data-spotlit="true"` on the active avatar. */
+.mini-host-stack .mini-host-pop {
+  /* Smooth fade between spotlit states so the spotlight glides across
+     the three avatars in time with the status text, instead of cutting. */
+  transition: transform 0.18s ease, box-shadow 0.5s ease,
+              filter 0.5s ease;
+}
+.mini-host-stack .mini-host-pop[data-spotlit="true"] {
+  /* Lift + soft accent halo. Two stacked shadows: a hard inner ring at
+     1px for definition, plus a wider feathered glow. */
+  filter: brightness(1.05);
+  z-index: 2;
+}
+.mini-host-stack .mini-host-pop[data-spotlit="true"][data-accent="violet"] {
+  box-shadow:
+    0 0 0 2px rgba(167, 139, 250, 0.55),
+    0 0 18px 4px rgba(167, 139, 250, 0.35);
+}
+.mini-host-stack .mini-host-pop[data-spotlit="true"][data-accent="orange"] {
+  box-shadow:
+    0 0 0 2px rgba(245, 158, 11, 0.55),
+    0 0 18px 4px rgba(245, 158, 11, 0.35);
+}
+.mini-host-stack .mini-host-pop[data-spotlit="true"][data-accent="gold"] {
+  box-shadow:
+    0 0 0 2px rgba(251, 191, 36, 0.55),
+    0 0 18px 4px rgba(251, 191, 36, 0.35);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mini-host-stack .mini-host-pop {
+    transition: none;
+  }
+}
+
 /* Portal-rendered popover. Sits at body level (not inside the audio
    bar) so it escapes every ancestor's `overflow: hidden` and stacking
    context. Position is set inline via React from the trigger's
