@@ -56,7 +56,17 @@ describe("buildTranscriptExport", () => {
     expect(text).toContain("# Fantasy Livecast Recap");
     expect(text).toContain("Biggest moment");
     expect(text).toContain("Biggest fantasy swing");
-    expect(text).toContain(commentary.moment.priority.toUpperCase());
-    expect(text).toContain(commentary.text);
+    // Per-turn priority / score no longer appears in the body —
+    // it's summarized once in the Highlights block. The kind label
+    // now reads as a human phrase ("Cold open" / "Live call"), not
+    // the internal token.
+    expect(text).toMatch(/Cold open|Live call/);
+    // Host attribution: every turn should be tagged with a host name
+    // in bold. This commentary has at least one line.
+    expect(text).toMatch(/\*\*(Maya|Theo|Cam):\*\*/);
+    // Internal moment.summary should no longer leak into the export.
+    expect(text).not.toContain(commentary.moment.summary);
+    // Per-turn score/priority noise gone.
+    expect(text).not.toMatch(/MAJOR \(\d+\/100\)/);
   });
 });
