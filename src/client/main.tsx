@@ -1700,6 +1700,46 @@ function App() {
     }
   };
 
+  // "Stop show" from inside an active broadcast — keeps the listener
+  // on the recap view instead of dumping them back to discover.
+  // Closes the SSE session immediately (so the server engine stops
+  // ticking and we stop burning OpenAI + Inworld credits) but
+  // preserves enough state that the recap can quote what the
+  // listener just heard. The recap's own "Back to discover" button
+  // calls stopLivecast() to finish the teardown.
+  const stopAndShowRecap = () => {
+    livecastSessionRef.current += 1;
+    const handle = liveSessionRef.current;
+    liveSessionRef.current = null;
+    if (handle) void closeSession(handle);
+    if (frameTimerRef.current) {
+      window.clearInterval(frameTimerRef.current);
+      frameTimerRef.current = undefined;
+    }
+    audioQueueRef.current = Promise.resolve();
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.removeAttribute("src");
+      currentAudioRef.current.load();
+      currentAudioRef.current = null;
+    }
+    window.speechSynthesis?.cancel();
+    stopAmbientBed();
+    setLivecastActive(false);
+    setAudioPlaying(false);
+    setAudioLevels(WAVEFORM_BARS);
+    setActivePlayback(null);
+    // Intentionally NOT clearing: commentary, plays, lineTimings,
+    // playedLineKeys, ttsLatencyByCommentary — recap reads them.
+    // deriveHuddlePhase flips to "recap" when commentary.length > 0
+    // and isLive is false.
+    setIsPaused(false);
+    isPausedRef.current = false;
+    setAwaitingResume(false);
+    autoResumeAttemptedRef.current = true;
+    setStatus("Show complete");
+  };
+
   const stopLivecast = () => {
     livecastSessionRef.current += 1;
     const handle = liveSessionRef.current;
@@ -1799,7 +1839,10 @@ function App() {
     const handlePause = () => {
       if (livecastActive && !isPaused) togglePause();
     };
-    const handleStop = () => stopLivecast();
+    // OS-level Stop (lock screen / AirPods / media key) routes
+    // through recap, same UX as the in-app Stop button. Lets the
+    // listener see what they heard before navigating away.
+    const handleStop = () => stopAndShowRecap();
     try { session.setActionHandler("play", handlePlay); } catch { /* ignore */ }
     try { session.setActionHandler("pause", handlePause); } catch { /* ignore */ }
     try { session.setActionHandler("stop", handleStop); } catch { /* ignore */ }
@@ -2387,7 +2430,8 @@ function App() {
         ttsEnabled={ttsEnabled}
         onPrepareDemo={prepareDemoRehearsal}
         onStart={startLivecast}
-        onStop={stopLivecast}
+        onStop={stopAndShowRecap}
+        onExitRecap={stopLivecast}
         onTogglePause={togglePause}
         isPaused={isPaused}
         volume={volume}
@@ -2545,7 +2589,7 @@ function App() {
                     </section>
                     <div className="cast-controls">
                       {isLive ? (
-                        <button className="secondary icon-label" onClick={stopLivecast}>
+                        <button className="secondary icon-label" onClick={stopAndShowRecap}>
                           <MicroIcon name="stop" />
                           Stop livecast
                         </button>
@@ -2587,7 +2631,7 @@ function App() {
             ttsEnabled={ttsEnabled}
             displayedTurnText={displayedTurnText}
             onStart={startLivecast}
-            onStop={stopLivecast}
+            onStop={stopAndShowRecap}
             onValidate={validateFrameNow}
             onOpenSetup={() => openSetup("league")}
             onDemo={prepareDemoRehearsal}
@@ -3284,6 +3328,7 @@ function HuddleExperience({
   onPrepareDemo,
   onStart,
   onStop,
+  onExitRecap,
   onTogglePause,
   isPaused,
   volume,
@@ -3361,6 +3406,11 @@ function HuddleExperience({
   onPrepareDemo: () => void;
   onStart: () => void;
   onStop: () => void;
+  /** Tear down the show fully and return the listener to discover.
+   *  Called from the recap "Back to discover" button — onStop only
+   *  flips the listener to recap (preserving commentary so the
+   *  recap can render); onExitRecap is the post-recap clean exit. */
+  onExitRecap: () => void;
   onTogglePause: () => void;
   isPaused: boolean;
   volume: number;
@@ -3571,6 +3621,7 @@ function HuddleExperience({
                 mediaIndex={mediaIndex}
                 onStart={onStart}
                 onExportRecap={onExportRecap}
+                onExitRecap={onExitRecap}
                 listenerStakes={listenerStakes}
                 listenerRecapHighlight={listenerRecapHighlight}
                 onArchiveClip={onArchiveClip}
@@ -6155,6 +6206,7 @@ function HuddleRecap({
   mediaIndex,
   onStart,
   onExportRecap,
+  onExitRecap,
   listenerStakes,
   listenerRecapHighlight,
   onArchiveClip,
@@ -6173,6 +6225,10 @@ function HuddleRecap({
   mediaIndex: MediaLookupIndex;
   onStart: () => void;
   onExportRecap: () => void;
+  /** Fully tear down the show and return to discover. Optional so
+   *  recap mounted via natural game-end (no Stop button pressed)
+   *  still works without forcing an exit affordance. */
+  onExitRecap?: () => void;
   listenerStakes?: ReturnType<typeof buildListenerStakes>;
   listenerRecapHighlight?: ReturnType<typeof buildListenerRecapHighlight>;
   onArchiveClip?: (commentaryId: string) => Promise<string | undefined>;
@@ -6222,6 +6278,11 @@ function HuddleRecap({
       <div className="button-row">
         <button className="primary" onClick={onStart}><span className="icon icon-broadcast" aria-hidden="true" />Go live again</button>
         <button className="secondary" onClick={onExportRecap}><span className="icon icon-share" aria-hidden="true" />Export transcript</button>
+        {onExitRecap && (
+          <button className="secondary" onClick={onExitRecap}>
+            <span className="icon icon-arrow-left" aria-hidden="true" />Back to discover
+          </button>
+        )}
       </div>
     </section>
   );
