@@ -19598,6 +19598,34 @@ body {
   transform: translateY(-1px);
 }
 
+/* Return-to-show — icon-only pill, sized to match the cue + stream
+   buttons so the bar's right-hand cluster reads as one row. */
+.player-return-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--hr-text) 18%, transparent);
+  background: color-mix(in srgb, var(--hr-text) 4%, var(--hr-surface));
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color var(--hr-motion-base) var(--hr-ease-standard),
+    background var(--hr-motion-base) var(--hr-ease-standard),
+    transform var(--hr-motion-fast) var(--hr-ease-standard);
+}
+.player-return-btn:hover {
+  border-color: color-mix(in srgb, var(--hr-text) 35%, transparent);
+  transform: translateY(-1px);
+}
+.player-return-btn .icon {
+  width: 1rem;
+  height: 1rem;
+}
+
 .player-captions {
   --live-pulse: 1;
   display: grid;

@@ -703,27 +703,15 @@ export class ShowEngine {
         }
       });
 
-      // Fetch the Vegas line once at show start. Lines move on the
-      // order of minutes, so refetching every tick would burn the free
-      // tier. `undefined` is the no-op happy path when no key is set.
-      let odds: GameOdds | undefined;
-      try {
-        odds = await createOddsProvider().getOdds({
-          gameId: game.gameId,
-          sport: game.sport,
-          homeTeam: game.homeTeam,
-          awayTeam: game.awayTeam
-        });
-      } catch (error) {
-        this.logger.warn(
-          { err: error instanceof Error ? error.message : String(error) },
-          "Show-start odds fetch failed"
-        );
-      }
-
-      // W12: fetch advanced stats for the listener's starters once
-      // at show start. Provider returns only known canonicalIds, so
-      // an empty list is the no-op fallback.
+      // Vegas line + advanced stats run in parallel with the opener
+      // commentary + TTS below, instead of blocking sequentially in
+      // front of it. Used to be the first thing-the-listener-hears
+      // landed only after both fetches resolved — that put 1-5s of
+      // unnecessary latency between snapshot and audio (the opener
+      // happily generates without odds or analytics — both are
+      // enrichment context that gets folded in IF available, never
+      // required). Kicked off here so the awaits below can read the
+      // already-settled values without waiting.
       const matchKind = rosterMatchKind(fantasy, request.group.listener.rosterId);
       if (matchKind === "fallback-first" && request.group.listener.rosterId) {
         this.logger.warn(
@@ -737,20 +725,36 @@ export class ShowEngine {
       }
       const showRoster = rosterForListener(fantasy, request.group.listener.rosterId);
       const starterIds = (showRoster?.starters ?? []).map((player) => player.id);
-      let analytics: PlayerSeasonStats[] = [];
-      if (starterIds.length) {
-        try {
-          analytics = await getDefaultAdvancedStatsProvider().getPlayerSeason({
-            canonicalIds: starterIds,
-            sport: game.sport
-          });
-        } catch (error) {
+      const oddsPromise: Promise<GameOdds | undefined> = createOddsProvider()
+        .getOdds({
+          gameId: game.gameId,
+          sport: game.sport,
+          homeTeam: game.homeTeam,
+          awayTeam: game.awayTeam
+        })
+        .catch((error) => {
           this.logger.warn(
             { err: error instanceof Error ? error.message : String(error) },
-            "Show-start advanced-stats fetch failed"
+            "Show-start odds fetch failed"
           );
-        }
-      }
+          return undefined;
+        });
+      const analyticsPromise: Promise<PlayerSeasonStats[]> = starterIds.length
+        ? getDefaultAdvancedStatsProvider()
+            .getPlayerSeason({ canonicalIds: starterIds, sport: game.sport })
+            .catch((error) => {
+              this.logger.warn(
+                { err: error instanceof Error ? error.message : String(error) },
+                "Show-start advanced-stats fetch failed"
+              );
+              return [] as PlayerSeasonStats[];
+            })
+        : Promise.resolve([] as PlayerSeasonStats[]);
+      // Await both right before the opener composer needs them.
+      // Settled-or-not, the opener still composes — `odds` and
+      // `analytics` default to undefined / [] when the upstream
+      // providers fail or aren't configured.
+      const [odds, analytics] = await Promise.all([oddsPromise, analyticsPromise]);
 
       // ---- SHOW OPENER ----
       // Emit the personalized welcome before any plays come in. This is

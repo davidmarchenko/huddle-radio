@@ -3565,43 +3565,43 @@ function HuddleExperience({
           playedLineKeys={playedLineKeys}
         />
       )}
-      {/* Huddle bar is the cross-app "tap to play" affordance. Show it
-          on the discovery feed (showHome=true) AS LONG AS no show is
-          already running — when a show is active, the smaller
-          MiniPlayer takes over so the bar doesn't double up. */}
-      {(!showHome || !livecastActive) && (
-        <HuddlePlayerBar
-          phase={phase}
-          game={game}
-          hostTurns={hostTurns}
-          audioPlaying={audioPlaying}
-          audioLevels={audioLevels}
-          isPaused={isPaused}
-          volume={volume}
-          commentary={commentary}
-          lineTimings={lineTimings}
-          activePlayback={activePlayback}
-          playedLineKeys={playedLineKeys}
-          livecastActive={livecastActive}
-          slatePreview={emptySetup.sportsGames}
-          onStart={onStart}
-          onStop={onStop}
-          onTogglePause={onTogglePause}
-          onVolumeChange={onVolumeChange}
-          onOpenStream={onOpenStream}
-          onSubmitCue={onSubmitCue}
-        />
-      )}
-      {showHome && livecastActive && game && (
-        <MiniPlayer
-          game={game}
-          mediaIndex={mediaIndex}
-          audioPlaying={audioPlaying}
-          audioLevels={audioLevels}
-          onExpand={onReturnToShow}
-          onStop={onStop}
-        />
-      )}
+      {/* Single unified player surface — HuddlePlayerBar carries
+          play/pause, captions, cue host, add stream, and volume in
+          every phase, including the discovery feed during an active
+          show. The old MiniPlayer fork was a stripped-down version
+          that lacked all those affordances, so a listener browsing
+          discovery while a show was running couldn't talk to the
+          hosts or even see what was being said. Drop the fork and
+          let the bar follow the listener everywhere. */}
+      <HuddlePlayerBar
+        phase={phase}
+        game={game}
+        hostTurns={hostTurns}
+        audioPlaying={audioPlaying}
+        audioLevels={audioLevels}
+        isPaused={isPaused}
+        volume={volume}
+        commentary={commentary}
+        lineTimings={lineTimings}
+        activePlayback={activePlayback}
+        playedLineKeys={playedLineKeys}
+        livecastActive={livecastActive}
+        slatePreview={emptySetup.sportsGames}
+        onStart={onStart}
+        onStop={onStop}
+        onTogglePause={onTogglePause}
+        onVolumeChange={onVolumeChange}
+        onOpenStream={onOpenStream}
+        onSubmitCue={onSubmitCue}
+        // Return-to-show is only meaningful from the discovery feed
+        // while a show is running — pass undefined otherwise so the
+        // bar can hide the affordance.
+        onReturnToShow={showHome && livecastActive && game ? onReturnToShow : undefined}
+      />
+      {/* MiniPlayer retained as a legacy export in case any deep
+          link still mounts it directly; the main app no longer
+          renders it. Safe to delete once any external consumers
+          (if any) are confirmed gone. */}
     </>
   );
 }
@@ -6315,7 +6315,8 @@ function HuddlePlayerBar({
   onTogglePause,
   onVolumeChange,
   onOpenStream,
-  onSubmitCue
+  onSubmitCue,
+  onReturnToShow
 }: {
   phase: HuddlePhase;
   game?: SportsGameState;
@@ -6344,6 +6345,11 @@ function HuddlePlayerBar({
    *  the hero) so it stays reachable while the listener scrolls
    *  through the in-show panels. Absent → button hidden. */
   onSubmitCue?: (cue: ListenerCue) => boolean;
+  /** Only set when the listener is on the discovery feed AND a show
+   *  is running. Renders an expand-arrow button that jumps back to
+   *  the live show view. Absent in every other state (the bar IS
+   *  the show controls in pregame/live/recap). */
+  onReturnToShow?: () => void;
 }) {
   const isLive = phase === "live" || phase === "live-audio";
   const isEmpty = phase === "empty";
@@ -6360,7 +6366,17 @@ function HuddlePlayerBar({
   // fall through to the simpler idle status text instead — the play
   // button is the call to action; a separate "tap play" pill is
   // visual noise.
-  const hasShowableCaptions = isLive && playedLineKeys.size > 0;
+  // Captions slot mounts as soon as the engine has emitted any
+  // commentary turn — NOT only after TTS audio actually starts. The
+  // commentary event lands on the SSE stream long before the first
+  // TTS chunk (text generation finishes in 1-3s; first audio chunk
+  // can take 5-15s on cold ElevenLabs). Gating on playedLineKeys
+  // made the listener wait through the whole TTS pre-roll with a
+  // blank bar even though the engine had already drafted the opener.
+  // PlayerBarCaptions has its own fallback that picks the latest
+  // available line when playedLineKeys is empty, so the strip
+  // renders something the moment commentary arrives.
+  const hasShowableCaptions = isLive && commentary.length > 0;
   // Slate mode is available from the discovery feed when 2+ games
   // are loaded. The primary button then starts the show in
   // discovery / slate mode — the server ranks the slate and the
@@ -6558,6 +6574,20 @@ function HuddlePlayerBar({
             >
               <span className="icon icon-plus" aria-hidden="true" />
               <span className="player-add-stream-label">Add stream</span>
+            </button>
+          )}
+          {/* Return-to-show — only present when the listener is on
+              the discovery feed during an active show. Replaces the
+              old MiniPlayer's only unique affordance ("expand back to
+              the show view"). */}
+          {onReturnToShow && (
+            <button
+              type="button"
+              className="player-return-btn"
+              onClick={onReturnToShow}
+              aria-label="Return to show"
+            >
+              <span className="icon icon-arrow-up" aria-hidden="true" />
             </button>
           )}
           <VolumeControl value={volume} onChange={onVolumeChange} disabled={!isLive} />
