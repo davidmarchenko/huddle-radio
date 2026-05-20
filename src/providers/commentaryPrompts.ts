@@ -182,8 +182,15 @@ const SHARED_HARD_RULES = [
   "    b) a NAMED disagreement with another host (steel-man + reject) — 'Cam, the throw was good; the YAC was lucky' beats 'big play'.",
   "    c) a CALLBACK to recentCommentary that pays off or undoes a prior take — 'two ticks ago you said no first-half TD' beats 'cashing checks'.",
   "    d) a CONCRETE single number with a unit and a meaning — 'six targets through three quarters, that's a role' beats 'putting up points'.",
-  "    e) a SHORT REACTION (5-20 words) when the moment doesn't need more — 'Mmhmm.' / 'Yeah, I'm not buying it.' beats padding a recycled take.",
+  "    e) a SHORT REACTION (1-8 words) when the moment doesn't need more — 'Mmhmm.' / 'Yeah, no.' / 'Brutal.' / 'Lock it in.' beats padding a recycled take.",
   "  If the turn you're writing doesn't have one of (a)-(e), stop and write a shorter turn instead of reaching for a transition phrase.",
+  // --- LENGTH-VARIANCE HARD RULE — radio rhythm, not LLM rhythm ----
+  //
+  // The single biggest tell that an LLM is writing a podcast script
+  // instead of a podcast TRANSCRIPT is uniform turn length — three
+  // balanced 30-60 word turns is the LLM rhythm. Real sports radio
+  // interleaves 60-word takes with 4-word reactions. Force that.
+  "- LENGTH VARIANCE IS MANDATORY: when the output has 2+ turns, AT LEAST ONE turn must be ≤8 words. That short turn is real radio — a reaction, a callout, a 'told you,' a 'brutal.' It cannot be ALL middle-length turns. If every turn ends up 30+ words, the output is wrong; rewrite at least one as a one-line reaction. Examples: 'Mmhmm.' / 'Lock it in.' / 'Yeah, no.' / 'Your guy.' / 'Brutal.' / 'Told you.' / 'Nah, nah.' / 'I'm done.'",
   "- WHEN AGREEING, ADVANCE. 'Right, but here's why it matters for the second half' is allowed. 'Right, exactly, big play' is not — pure affirmation is a missed turn, not a turn.",
   "- TRANSITION PHRASES are a code smell. Phrases like 'this matters,' 'big play,' 'rack points,' 'warm market,' 'first drive matters for fantasy rhythm,' 'a touchdown is a touchdown,' 'getting their footing' signal you don't have the take yet. The fix is never the transition phrase — the fix is writing one of the (a)-(e) shapes above, or writing a shorter turn.",
   "- LISTENER CUE direct questions get DIRECT answers. If `listenerCues` contains a yes/no roster question ('should I start X?', 'should I trade Y while hot?'), exactly ONE turn must give a clear yes/no with one sentence of reasoning anchored to the actual roster/matchup data — not a hedge, not a 'depends on your league.' Hedges are fine on a separate beat; the asked question gets a verdict.",
@@ -248,11 +255,16 @@ const OUTPUT_SCHEMA_BLOCK = [
   "Required output: JSON only, no code fences, no commentary outside JSON. Shape:",
   "{",
   '  "turns": [',
-  '    {"speaker": "maya" | "theo" | "cam", "text": "one host\'s full thought (30-60 words). May include ONE leading audio tag like [laughing] or [skeptical] when it lands."},',
+  '    {"speaker": "maya" | "theo" | "cam", "text": "one host\'s line — see length rule below"},',
   "    ...",
   "  ]",
   "}",
-  "Each element of `turns` is ONE host's paragraph. The text-to-dialogue engine plays them as a real conversation — natural turn-taking and pacing is handled for you, so write as if you were scripting a live podcast.",
+  "TURN LENGTH RULE (load-bearing — this is the rhythm of real sports radio, not LLM-uniform paragraphs):",
+  "- When `turns.length >= 2`, AT LEAST ONE turn must be ≤8 words.",
+  "- Short turns sound like: 'Mmhmm.' / 'Yeah, no.' / 'Lock it in.' / 'Brutal.' / 'Told you.' / 'Your guy.' / 'Nah, nah.' / 'Maya, math?' Real sports radio is full of these — they're reactions, callouts, hand-offs.",
+  "- Other turns can be 10-50 words when there's a real take to deliver — but NEVER three balanced 30+ word turns. That's the LLM-tell.",
+  "- INLINE audio tags like [deadpan], [laughs softly], [skeptical] are still fine and welcomed inside short or long turns.",
+  "Each element of `turns` is ONE host's line. The text-to-dialogue engine plays them as a real conversation — natural turn-taking and pacing is handled for you.",
   "Begin directly with `{`. Do not include any preamble.",
   "The first turn's `speaker` MUST match the `leadHostId` in the input payload."
 ];
