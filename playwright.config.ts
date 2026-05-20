@@ -27,9 +27,24 @@ import { defineConfig, devices } from "@playwright/test";
 const REMOTE_BASE_URL = process.env.PLAYWRIGHT_BASE_URL;
 const baseURL = REMOTE_BASE_URL ?? "http://localhost:3000";
 
+// Specs designed for a deployed URL (need real OPENAI_API_KEY +
+// TTS keys to produce audio the assertions check for). They run
+// only when PLAYWRIGHT_BASE_URL is set to point at prod/preview.
+// When PLAYWRIGHT_BASE_URL is unset (CI runs against a local dev
+// server with no keys), .waveform.is-playing never lights up and
+// these specs time out — they're testing prod reality, not source
+// correctness. Excluded from the default run.
+const PROD_ONLY_SPECS = [
+  "**/prod-smoke.spec.ts",
+  "**/prod-mobile.spec.ts",
+  "**/narrow-mobile.spec.ts",
+  "**/dialogue-quality.spec.ts"
+];
+
 export default defineConfig({
   testDir: "./browser-tests",
   testMatch: /.*\.spec\.ts$/,
+  testIgnore: REMOTE_BASE_URL ? undefined : PROD_ONLY_SPECS,
   // The dev server takes a few seconds to come up + each show needs
   // an opener + a tick or two; 60s per test gives slack without
   // hiding genuinely stuck tests.
@@ -89,7 +104,18 @@ export default defineConfig({
       // is exercised by prod-smoke + capture-transcript at desktop
       // viewport, which is enough to catch engine-specific bugs
       // (AudioContext gesture unlock, BroadcastChannel, CSS calc).
-      testIgnore: ["**/prod-mobile.spec.ts", "**/narrow-mobile.spec.ts"]
+      //
+      // Project-level testIgnore overrides the root config's
+      // testIgnore (Playwright semantics, NOT additive). So we
+      // merge PROD_ONLY_SPECS in manually for the local case —
+      // otherwise the webkit lane would still try to run
+      // prod-smoke / dialogue-quality against the keyless local
+      // dev server in CI and time out.
+      testIgnore: [
+        "**/prod-mobile.spec.ts",
+        "**/narrow-mobile.spec.ts",
+        ...(REMOTE_BASE_URL ? [] : PROD_ONLY_SPECS)
+      ]
     }
   ],
   // Only auto-start the dev server when targeting localhost.

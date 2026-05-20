@@ -76,7 +76,14 @@ jobs:
         # configured in playwright.config.ts) and disables
         # reuseExistingServer so the workflow always boots a fresh
         # dev server.
-        run: npm run test:browser
+        #
+        # --project=chromium because this job only installs the
+        # Chromium binary (line 72). Without the flag, Playwright
+        # also tries to run the webkit project and fails with
+        # "Executable doesn't exist". The webkit lane is on-demand
+        # and run locally with `--project=webkit` against a deployed
+        # PLAYWRIGHT_BASE_URL.
+        run: npm run test:browser -- --project=chromium
         env:
           CI: "true"
 
