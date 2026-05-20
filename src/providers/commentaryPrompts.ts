@@ -206,7 +206,17 @@ const SHARED_HARD_RULES = [
 
   // --- CONVERSATIONAL DEVICES — write these FREELY ------------------
   "- WRITE LIKE PEOPLE TALK. The ElevenLabs v3 dialogue engine is built to deliver verbal fillers, breath sounds, laughter, and interruptions naturally — and they're what makes a turn feel HUMAN. Use them. Don't be precious about it.",
-  "- Inline fillers IN THE TEXT (not tags): 'uhhh,' 'hmm,' 'I mean,' 'you know,' 'so — like,' 'wait.' Use ~1-2 per turn when natural. Match the host: Theo / Cam use warm fillers liberally; Maya uses DRY ones — 'sure,' 'right,' 'mmhmm,' 'yeah no' — fewer in count but landed deliberately. Dry doesn't mean fewer beats — it means different beats.",
+  // --- PER-HOST FILLER VOCABULARIES (DO NOT MIX) -------------------
+  //
+  // Three hosts pulling from a SHARED filler pool sounds like one
+  // writer doing three voices. Real radio crews have host-specific
+  // tells — fillers a listener learns to recognize. The pools below
+  // are intentionally NON-OVERLAPPING. Each host pulls ONLY from
+  // their own list; do not give Maya a Cam beat or Cam a Theo beat.
+  "- MAYA's filler is SHORT, DRY, OFTEN COMPLETE TURNS BY THEMSELVES. Maya can answer with ONE of these alone (this is a full turn): 'Mmhmm.' / 'Sure.' / 'Yeah, no.' / 'Right.' / 'Sure, Cam.' / 'Maybe.' / 'Hm.' / 'Through three? Sure.' She does NOT use warm fillers ('I mean,' 'you know'). She does NOT do warm laughs ([laughs softly]); her texture is [deadpan], [skeptical], [sarcastic], [chuckles softly], [exhales]. When she's pushed, she escalates by GETTING SHORTER, not longer.",
+  "- CAM's filler is HOT-TAKE OPENERS + MOCKING TAGS. Cam pulls from: 'Lock it in.' / 'He's cooking.' / 'Brutal.' / 'Watch.' / 'Told you.' / 'Not gonna finish.' / 'Bench him.' / 'Nah, nah.' / 'Your guy's done.' / 'Maya, your spreadsheet missed that.' His tags are [laughs], [laughs softly], [sigh] (at others' takes). He does NOT use [deadpan] (that's Maya). He does NOT do handoffs ('Maya, math?' — that's Theo). He commits to a take and shrugs when wrong ('Fine. Had it backwards.').",
+  "- THEO's filler is FRAMING + HAND-OFFS. Theo pulls from: 'Maya?' / 'Cam, slow down.' / 'Hold on.' / 'Your guy.' / 'That's not it.' / 'Maya, math?' / 'Cam, take this one.' / 'Run it back.' / 'Drive killer.' / 'Alright, alright.' He's the anchor — he doesn't deliver takes, he sets up the others' takes. He uses [sighs] (when needed to settle the room) and [chuckles] (warm, not mocking). He does NOT pile on with Cam-style hot takes.",
+  "- The point of these vocabularies is that a listener should be able to identify the host from one filler word. If a line could be spoken by any of the three, it's wrong — rewrite using a tell from that host's specific list above.",
   "- Interruptions and overlaps: use a hyphen at the END of a phrase to cut a host off ('the throw was-'), then have the next host JUMP IN with `[jumping in]` or just resume the thought. Use this on major moments where the crew genuinely talks over each other.",
   "- Trailing off: ellipses for a host losing the thread or being lost in the moment ('I mean... yeah').",
   "- Audio tags are LIBERAL when they fit, not gated. The model handles overuse better than underuse — sparse tags make turns sound robotic. Allowed and encouraged:",
