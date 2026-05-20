@@ -3947,6 +3947,11 @@ function HuddleSidebar({
                   asset={resolveTeamMedia(mediaIndex, roster.team)}
                   label={roster.teamName}
                   size="sm"
+                  // Fantasy team owner — initials chip is the design,
+                  // no photo asset exists for arbitrary owner-given
+                  // team names ("Fourth & Snack" etc.). Skip the
+                  // missing-asset warning.
+                  expectInitials
                 />
                 <div className="sidebar-roster-info">
                   <strong>{roster.ownerName}</strong>
@@ -8274,7 +8279,14 @@ function sentenceCase(text: string) {
 function ScoreRow({ roster, mediaIndex }: { roster: { ownerName: string; teamName: string; team?: string; points: number }; mediaIndex: MediaLookupIndex }) {
   return (
     <div className="score-row">
-      <MediaAvatar asset={resolveTeamMedia(mediaIndex, roster.team)} label={roster.teamName} />
+      <MediaAvatar
+        asset={resolveTeamMedia(mediaIndex, roster.team)}
+        label={roster.teamName}
+        // Fantasy team owner — initials by design (no asset for
+        // arbitrary user-named teams). Suppresses the missing-asset
+        // warning so the console only flags real prod-quality gaps.
+        expectInitials
+      />
       <div>
         <strong>{roster.ownerName}</strong>
         <span>{roster.teamName}</span>
@@ -8350,7 +8362,25 @@ function logMediaAvatarOnce(kind: "missing-asset" | "missing-url" | "load-failed
   console.warn(JSON.stringify({ event: `media.avatar.${kind}`, ...payload }));
 }
 
-function MediaAvatar({ asset, src, label, size = "md" }: { asset?: CachedMediaAsset; src?: string; label: string; size?: "sm" | "md" }) {
+function MediaAvatar({
+  asset,
+  src,
+  label,
+  size = "md",
+  expectInitials = false
+}: {
+  asset?: CachedMediaAsset;
+  src?: string;
+  label: string;
+  size?: "sm" | "md";
+  /** Set true when the call site KNOWS the avatar will render as
+   *  initials only — e.g. fantasy team owners, who never have
+   *  associated photos in this product. Suppresses the
+   *  `media.avatar.missing-asset` console warning so it doesn't drown
+   *  out signals for cases that SHOULD have a photo (player
+   *  headshots, team logos). The render path is unchanged. */
+  expectInitials?: boolean;
+}) {
   const [failed, setFailed] = useState(false);
   const resolvedFromAsset = mediaAssetUrl(asset);
   const resolved = failed ? undefined : (src ?? resolvedFromAsset);
@@ -8369,8 +8399,12 @@ function MediaAvatar({ asset, src, label, size = "md" }: { asset?: CachedMediaAs
   }, [asset?.id, src]);
 
   // One-shot observability for the silent paths. Deduped by label so
-  // the same missing team logo doesn't spam on every render.
+  // the same missing team logo doesn't spam on every render. Skip
+  // entirely when the caller marked this avatar as expected-initials —
+  // owners, anonymous listener-state placeholders, etc. shouldn't
+  // pollute the signal we care about (real missing assets).
   useEffect(() => {
+    if (expectInitials) return;
     if (state === "missing-asset") {
       logMediaAvatarOnce("missing-asset", label, { label });
     } else if (state === "missing-url") {
@@ -8381,7 +8415,7 @@ function MediaAvatar({ asset, src, label, size = "md" }: { asset?: CachedMediaAs
         assetStatus: asset?.status
       });
     }
-  }, [state, label, asset?.id, asset?.kind, asset?.status]);
+  }, [state, label, asset?.id, asset?.kind, asset?.status, expectInitials]);
 
   const handleError = () => {
     setFailed(true);
