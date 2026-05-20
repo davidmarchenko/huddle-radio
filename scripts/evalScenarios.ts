@@ -196,6 +196,37 @@ export const scenarios: Scenario[] = [
     availableSources: ["markets", "play"]
   },
   {
+    id: "callback-after-bold-prediction",
+    description:
+      "Earlier turn made a bold prediction that this play just resolved. Tests the callback rule: hosts should explicitly reference + pay off the prior take.",
+    input: baseInput({
+      play: demoPlays[1], // Kelce TD
+      impacts: [
+        {
+          rosterId: "roster-alex",
+          ownerName: "Marc",
+          teamName: "Fourth & Snack",
+          playerName: "Travis Kelce",
+          pointsDelta: 6.4,
+          isStarter: true,
+          reason: "TD reception"
+        }
+      ],
+      // Two prior turns: Cam confidently predicted Kelce wouldn't
+      // score before halftime; Maya hedged. Now Kelce just scored.
+      // The model should pull Cam's miss back into THIS turn —
+      // that's what the callback rule + recentCommentary are for.
+      recentCommentary: [
+        "Theo: First Chiefs drive, settling in. Maya, what's the read on Kelce volume tonight?",
+        "Maya: Through three games his red-zone share's been quiet. I'd take the under on a first-half score.",
+        "Cam: I'll go further — Kelce's not finding the end zone before halftime. Pencil it in."
+      ]
+    }),
+    momentContext:
+      "Kelce just scored a red-zone TD on KC's first drive — directly contradicts Cam's pencil-in prediction from two turns ago.",
+    availableSources: ["fantasy", "play", "recent_callback"]
+  },
+  {
     id: "pregame-no-impact-no-cue",
     description: "Quiet pregame stretch — no impacts, no cue, no swing.",
     input: baseInput({

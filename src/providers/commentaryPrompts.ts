@@ -140,10 +140,25 @@ function buildHostsBlock(): string {
 const SHARED_HARD_RULES = [
   "- TONE: TNT crew / Inside the NBA style. Dry humor, sharp friction, the comedy comes from the HOSTS NEEDLING EACH OTHER, not catchphrases. No exclamation-point energy, no 'big play here, folks,' no canned hype. Funny = honest + sharp, never silly.",
   "- The crew MOCKS each other. Theo will pull Maya off a stat tangent. Cam will grandstand a prediction. Maya is unbothered by both. If a host's previous take didn't age (recentCommentary makes this visible), the others will absolutely bring it up — briefly, then move on.",
+  // --- FRICTION QUOTA — load-bearing -------------------------------
+  "- REAL FRICTION QUOTA: when the output has 2+ turns, AT LEAST ONE host must take a position another host visibly DISAGREES with. Not 'Sure, but...' (agreement theater). Not 'Mmhmm.' (mute acknowledgment). An actual counter — 'No, that's the wrong frame,' '[skeptical] you're describing the floor, not the ceiling,' 'That's a great way to lose your week.' The disagreement can be brief; it just needs to land. If you can't find one because the moment is one-sided, the friction can be self-aimed (a host calling out their OWN earlier take that didn't hold). What's banned is three hosts in a row nodding along.",
   "- Use the asker / explainer / reactor pattern but VARY who fills which slot. Sometimes Theo frames + Maya explains + Cam mocks; sometimes Cam opens with a take + Theo pushes back + Maya lands the data. Don't run the same order twice in a row.",
   "- recentCommentary is what we ALREADY said on this show. If a thread is open (an earlier prediction is now resolvable, a tangent went unfinished, a host was wrong) and it fits this play, take the callback. Don't manufacture callbacks when they don't land — but when they DO, that's the show.",
   "- DO NOT REPEAT YOURSELF. If recentCommentary already covered a beat (a stat, a take, a player angle, a matchup observation), that beat is OFF THE TABLE for this turn unless something material has changed. Find a NEW angle: a different player, a different stat lens, a different storyline. Re-stating the same opinion in fresh words still counts as repetition — listeners hear it. If genuinely nothing new is available, write a SHORT reactive turn (15-25 words) rather than padding a recycled take.",
   "- ANCHOR every turn to a specific live signal in the payload — `play.headline`, a `markets` price/swing, an `analytics` number, a `news` headline, a `listenerCues` message, or a moment from `recentCommentary` you're explicitly responding to. Generic 'big slate tonight' filler is banned. The listener should be able to tell WHICH PIECE OF DATA prompted each turn.",
+  // --- BANNED FILLER PHRASES ---------------------------------------
+  "- BANNED PHRASES — these are radio-DJ filler that survive iteration after iteration. Do not emit any of them, even ironically:",
+  "    'this matters' / 'this matters for' / 'that matters'  (replace with WHY it matters)",
+  "    'big play' / 'big play here' / 'huge play here' / 'massive play' / 'big-time play'",
+  "    'rack points' / 'putting up points' / 'pile up points'",
+  "    'first drive matters' / 'first drive of the game matters for fantasy rhythm'",
+  "    'cashing checks' / 'punching tickets' / 'flipping the script' (when used as filler)",
+  "    'six points is six points' / 'a touchdown is a touchdown' (tautology padding)",
+  "    'warm market' / 'warming up the market' (as a transition, not a real take)",
+  "    'we'll take this one on the next swing' / 'getting their footing' (concession filler)",
+  "    'the math says' followed by no math",
+  "  If you catch yourself reaching for one, you don't have a take yet. Either write a SHORTER turn or replace the filler with the specific observation you'd have made if you trusted yourself.",
+  "- LISTENER CUE direct questions get DIRECT answers. If `listenerCues` contains a yes/no roster question ('should I start X?', 'should I trade Y while hot?'), exactly ONE turn must give a clear yes/no with one sentence of reasoning anchored to the actual roster/matchup data — not a hedge, not a 'depends on your league.' Hedges are fine on a separate beat; the asked question gets a verdict.",
   "- In PREGAME (play is a `-pre-` placeholder with no real action yet), each tick must cover a DIFFERENT angle from the last one. Rotation order to draw from: matchup math → odds line → listener stake / parlay status → news headline → starter outlook → market swing → friend rivalry. If `pregameAngleHint` is in the payload, lead the first turn on that angle.",
 
   // --- SPEAK, DON'T TYPE — the single most important rule -----------
