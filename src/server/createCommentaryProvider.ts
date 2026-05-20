@@ -16,13 +16,24 @@ import { registerCommentaryChain } from "./metrics";
 export function createCommentaryProvider(): CommentaryProvider {
   const providers: CommentaryProvider[] = [];
 
-  if (config.RESOLVED_COMMENTARY_PROVIDER === "openai" && config.OPENAI_API_KEY) {
+  // RESOLVED_COMMENTARY_PROVIDER === "local" means "do not call any
+  // LLM commentary provider, just use the deterministic local
+  // templates." NODE_ENV=test forces this so the suite can't
+  // accidentally hit a real API. Previously the Anthropic + Google
+  // branches checked key presence in isolation and would add LLM
+  // providers to the chain even when the resolved mode was "local" —
+  // adding ANTHROPIC_API_KEY for evals broke 8 integration tests
+  // because they suddenly tried to call Anthropic against the real
+  // endpoint and timed out. Gate the LLM branches on the resolved
+  // mode so "local" really means local.
+  const wantLlm = config.RESOLVED_COMMENTARY_PROVIDER !== "local";
+  if (wantLlm && config.RESOLVED_COMMENTARY_PROVIDER === "openai" && config.OPENAI_API_KEY) {
     providers.push(new OpenAICommentaryProvider(config.OPENAI_API_KEY, config.RESOLVED_OPENAI_MODEL, config.OPENAI_REASONING_EFFORT));
   }
-  if (config.ANTHROPIC_API_KEY) {
+  if (wantLlm && config.ANTHROPIC_API_KEY) {
     providers.push(new AnthropicCommentaryProvider(config.ANTHROPIC_API_KEY, config.ANTHROPIC_COMMENTARY_MODEL));
   }
-  if (config.GOOGLE_API_KEY) {
+  if (wantLlm && config.GOOGLE_API_KEY) {
     providers.push(new GeminiCommentaryProvider(config.GOOGLE_API_KEY, config.GEMINI_COMMENTARY_MODEL));
   }
   // Terminal fallback — deterministic templates. Never throws.

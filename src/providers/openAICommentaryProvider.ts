@@ -324,37 +324,61 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
     const kind: CommentaryKind = input.kind ?? "play";
 
     // Token budget tuned for two competing risks:
-    //   - too low: a busy 3-turn play response truncates mid-string,
-    //     parseDialogueResponse fails, fallback dumps raw JSON ("{
-    //     \"turns\": [{ \"speaker\": ... ") as a single host line —
-    //     listener hears the broken artifact.
-    //   - too high: gpt-5-mini happily generates up to the cap, so
-    //     a 1500-token ceiling can push first-byte to 15-25s and
-    //     blow past the chain timeout — listener hears local
-    //     templates instead of LLM output.
-    // 850/600 sits in the sweet spot: 5-7 short opener turns fit
-    // comfortably (~600-700 tokens incl. JSON), 3-5 play turns fit
-    // (~400-500 tokens), and the typical wall-clock generation
-    // stays under 12s on gpt-5-mini.
+    //   - too low: gpt-5 family does reasoning by default and reasoning
+    //     tokens come OUT of max_output_tokens. The eval harness caught
+    //     gpt-5-mini consuming 576/600 tokens on reasoning alone and
+    //     emitting zero output text (`incomplete: max_output_tokens`,
+    //     outputItemTypes=["reasoning"]). Budget must be reasoning +
+    //     actual response, not just response.
+    //   - too high: latency scales with the cap when the model fills
+    //     it — opener already pushes 10-15s on gpt-5-mini.
+    // 4000/3000 leaves comfortable room for medium-effort reasoning
+    // + the 3-7 dialogue turns the prompt asks for. Wall-clock impact
+    // is bounded by the chain timeout (25s default) — if a turn
+    // genuinely takes longer we want the chain to fall through, not
+    // truncate the response into empty.
     const { system, payload } = selectCommentaryPrompt(input, persona, kind);
-    // gpt-5-mini rejects `reasoning.effort: "none"` (only low/medium/
-    // high) — so when the listener picked effort=none, omit the
-    // reasoning param entirely. Reasoning-capable models (gpt-5.2)
-    // fall back to their default behavior; non-reasoning variants
-    // (gpt-5-mini with effort=none) don't 400 on an unsupported value.
-    const reasoning =
-      this.model.startsWith("gpt-5") && this.reasoningEffort !== "none"
-        ? { effort: this.reasoningEffort }
-        : undefined;
+    // gpt-5-mini accepts reasoning.effort: "minimal" | "low" | "medium"
+    // | "high" (NOT "none"). The user-facing "none" preset maps to
+    // "minimal" for gpt-5-mini — the closest thing to no reasoning the
+    // model accepts. Previously this passed reasoning=undefined, which
+    // gpt-5-mini interpreted as medium effort, eating the entire
+    // output budget on reasoning. For non-gpt-5 models the param is
+    // omitted entirely (the old behavior).
+    const effort: "minimal" | "low" | "medium" | "high" =
+      this.reasoningEffort === "none" ? "minimal" : this.reasoningEffort;
+    const reasoning = this.model.startsWith("gpt-5") ? { effort } : undefined;
     const response = await this.client.responses.create({
       model: this.model,
-      max_output_tokens: kind === "opener" ? 850 : 600,
+      max_output_tokens: kind === "opener" ? 4000 : 3000,
       reasoning,
       instructions: system,
       input: JSON.stringify(payload)
     });
 
     const raw = response.output_text.trim();
+    // When raw is empty, surface the shape of the OpenAI response so
+    // we can tell WHY — reasoning-token-only completion, content
+    // filter, max-token cutoff before any text, etc. The diagnostic
+    // is critical because the silent-fallback path used to ship
+    // robotic seed text with no signal of root cause.
+    if (raw.length === 0) {
+      const r = response as unknown as {
+        status?: string;
+        usage?: { input_tokens?: number; output_tokens?: number; reasoning_tokens?: number };
+        incomplete_details?: { reason?: string };
+        output?: Array<{ type?: string }>;
+      };
+      console.warn(JSON.stringify({
+        event: "commentary.provider.empty_response_diagnostic",
+        providerId: "openai-commentary",
+        model: this.model,
+        status: r.status,
+        incompleteReason: r.incomplete_details?.reason,
+        usage: r.usage,
+        outputItemTypes: (r.output ?? []).map((o) => o.type)
+      }));
+    }
     const parsed = parseDialogueResponse(raw, leadHostId, input.group.listener.name);
     if (parsed && parsed.length > 0) {
       // Final guard on the joined transcript so the credential filter
