@@ -2471,6 +2471,18 @@ function App() {
     // showPrepared=true is what `deriveHuddlePhase` watches for to
     // route into `pregame` — without it we'd fall back to `empty`.
     setShowPrepared(true);
+    // If a show is ALREADY running and the listener picked a
+    // different game, switch the running engine to the new gameId
+    // instead of leaving the old show playing under a misleading
+    // new URL. Without this, clicking an NBA card while the demo
+    // NFL show was running left the listener hearing NFL audio
+    // with /watch/nba-... in the URL and the right rail showing
+    // KC@DET — a real reported bug. switchGame() is the existing
+    // mid-show pivot path; the engine handles the handoff cleanly
+    // and emits a new snapshot for the new game.
+    if (livecastActive && sportsGameId !== gameId) {
+      void startLivecast({ sportsGameId: gameId, bypassReadiness: true });
+    }
   };
 
   /**
