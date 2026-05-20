@@ -13,6 +13,7 @@
     "media:cache": "tsx scripts/cacheMediaAssets.ts",
     "build-player-ids": "tsx scripts/buildPlayerIdMap.ts",
     "verify:nemotron": "tsx scripts/verifyNemotron.ts",
+    "eval:prompts": "tsx scripts/evalPrompts.ts",
     "test": "vitest run",
     "test:providers": "vitest run --config vitest.providers.config.ts",
     "test:browser": "playwright test",
