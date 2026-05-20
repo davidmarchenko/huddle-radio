@@ -127,11 +127,18 @@ function buildHostsBlock(): string {
     "Hosts on the show:",
     ...Object.values(HOST_PERSONAS).map((persona) => {
       const tics = persona.speechTics.map((tic) => `  · ${tic}`).join("\n");
+      // Examples surface IN the system prompt (not just in the
+      // payload) because LiveKit + OpenAI Realtime Prompting Guide
+      // both find that the LLM imitates examples far more reliably
+      // than it follows adjectives. Show, don't tell.
+      const examples = persona.examples.map((line) => `  · "${line}"`).join("\n");
       return [
         `- ${persona.name} (${persona.role}, id: "${persona.id}"): ${persona.description}`,
         `  Voice: ${persona.directive}`,
         `  Speech tics:`,
-        tics
+        tics,
+        `  ${persona.name} talks like this (match the SHAPE and length variance, don't copy verbatim):`,
+        examples
       ].join("\n");
     })
   ].join("\n");
