@@ -126,6 +126,17 @@ function printResultText(scenarioId: string, r: RunResult): void {
     `  scores: spec ${s.specificity} / friction ${s.friction} / callbacks ${s.callbacks} / pacing ${s.pacing} / anti ${s.anti_genericity}`
   );
   console.log(`  stayTuned ${r.evaluation.stayTuned} — ${r.evaluation.rationale}`);
+  // Per-rule compliance (CheckEval-pattern). Each line is one rule
+  // with a ✓/✗/— flag and the judge's evidence quote. Shows whether
+  // the load-bearing rules actually fired on this scenario.
+  if (r.evaluation.ruleCompliance && r.evaluation.ruleCompliance.length > 0) {
+    console.log("  rule compliance:");
+    for (const rule of r.evaluation.ruleCompliance) {
+      const flag = rule.fired === "yes" ? "✓" : rule.fired === "no" ? "✗" : "—";
+      const evidence = rule.evidence ? ` — ${rule.evidence}` : "";
+      console.log(`    ${flag} ${rule.ruleId}${evidence}`);
+    }
+  }
   console.log(`  (${r.durationMs}ms, judge=${r.evaluation.evaluator})`);
   console.log("");
 }
@@ -140,6 +151,17 @@ function printSummaryText(results: RunResult[]): void {
   console.log(`  scenarios run:   ${results.length}`);
   console.log(`  mean stayTuned:  ${agg.meanStayTuned.toFixed(2)}`);
   console.log(`  mean dimensions: spec ${agg.mean.specificity.toFixed(1)} / friction ${agg.mean.friction.toFixed(1)} / callbacks ${agg.mean.callbacks.toFixed(1)} / pacing ${agg.mean.pacing.toFixed(1)} / anti ${agg.mean.anti_genericity.toFixed(1)}`);
+  // Per-rule pass rate — the CheckEval-pattern signal. % of
+  // applicable scenarios where the rule fired. "n/a" cases are
+  // excluded from both numerator and denominator (the rule didn't
+  // apply, so the answer isn't pass-or-fail).
+  if (Object.keys(agg.rulePassRates).length > 0) {
+    console.log(`  rule pass rates:`);
+    for (const [ruleId, stats] of Object.entries(agg.rulePassRates)) {
+      const pct = stats.applicable > 0 ? Math.round((stats.fired / stats.applicable) * 100) : 0;
+      console.log(`    ${ruleId.padEnd(24)} ${pct}%  (${stats.fired}/${stats.applicable} applicable, ${stats.nonApplicable} n/a)`);
+    }
+  }
   console.log(`  fastest:         ${agg.fastestMs}ms (${agg.fastestId})`);
   console.log(`  slowest:         ${agg.slowestMs}ms (${agg.slowestId})`);
 }
@@ -149,6 +171,7 @@ function aggregate(results: RunResult[]) {
     return {
       meanStayTuned: 0,
       mean: { specificity: 0, friction: 0, callbacks: 0, pacing: 0, anti_genericity: 0 },
+      rulePassRates: {} as Record<string, { fired: number; applicable: number; nonApplicable: number }>,
       fastestMs: 0,
       slowestMs: 0,
       fastestId: "",
@@ -168,6 +191,25 @@ function aggregate(results: RunResult[]) {
   );
   const n = results.length;
   const sortedByMs = [...results].sort((a, b) => a.durationMs - b.durationMs);
+  // Per-rule pass-rate aggregation. CheckEval pattern: tally
+  // yes/no/n/a counts per ruleId across the scenario set, then
+  // surface pass-rate over the APPLICABLE (non-n/a) subset. A rule
+  // marked n/a is invisible in the pass-rate so a friction_quota on
+  // single-turn outputs doesn't drag the denominator.
+  const rulePassRates: Record<string, { fired: number; applicable: number; nonApplicable: number }> = {};
+  for (const r of results) {
+    for (const rule of r.evaluation.ruleCompliance ?? []) {
+      if (!rulePassRates[rule.ruleId]) rulePassRates[rule.ruleId] = { fired: 0, applicable: 0, nonApplicable: 0 };
+      if (rule.fired === "yes") {
+        rulePassRates[rule.ruleId].fired += 1;
+        rulePassRates[rule.ruleId].applicable += 1;
+      } else if (rule.fired === "no") {
+        rulePassRates[rule.ruleId].applicable += 1;
+      } else {
+        rulePassRates[rule.ruleId].nonApplicable += 1;
+      }
+    }
+  }
   return {
     meanStayTuned: sum.stayTuned / n,
     mean: {
@@ -177,6 +219,7 @@ function aggregate(results: RunResult[]) {
       pacing: sum.pacing / n,
       anti_genericity: sum.anti_genericity / n
     },
+    rulePassRates,
     fastestMs: sortedByMs[0].durationMs,
     slowestMs: sortedByMs[sortedByMs.length - 1].durationMs,
     fastestId: sortedByMs[0].scenarioId,

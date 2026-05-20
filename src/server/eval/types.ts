@@ -30,6 +30,34 @@ export type EvalDimension =
   | "pacing"
   | "anti_genericity";
 
+/**
+ * Trackable prompt rules — narrow set we per-rule-judge against. NOT
+ * the full 42-rule shared list; just the load-bearing ones whose
+ * compliance we want to attribute over time. Adding a rule here means:
+ * the judge will score it, and the harness aggregates a pass-rate
+ * across the eval set.
+ *
+ * Per CheckEval / TICK pattern (EMNLP 2025): keep this list tight —
+ * 5-10 binary checks beat 42 mushy ones for judge agreement.
+ */
+export type TrackedRuleId =
+  | "friction_quota"           // ≥1 visible disagreement when 2+ turns
+  | "steel_man_two_step"       // restate strongest, then approve/reject with new reason/specific flaw
+  | "direct_listener_answer"   // yes/no roster questions get a verdict
+  | "turn_shape_payload"       // every turn carries one of (a)-(e) payloads
+  | "no_transition_filler";    // no 'this matters', 'big play', etc. in spoken text
+
+export type RuleComplianceCheck = {
+  ruleId: TrackedRuleId;
+  /** "yes" = rule's positive behavior is observable; "no" = had a
+   *  chance to satisfy and didn't; "n/a" = the rule didn't apply
+   *  (e.g. friction_quota on a single-turn output). */
+  fired: "yes" | "no" | "n/a";
+  /** Quote or short reason, ≤120 chars. Lets a human spot-check a
+   *  judge call without re-running. */
+  evidence: string;
+};
+
 export type TurnEvaluation = {
   /** turnId from TurnSummary — primary key for joining eval back to
    *  the turn that produced it. */
@@ -46,6 +74,12 @@ export type TurnEvaluation = {
   rationale: string;
   /** ISO timestamp the eval ran (not when the turn happened). */
   evaluatedAt: string;
+  /** Per-rule compliance checks. Optional for back-compat with
+   *  evaluations recorded before this field existed. The harness
+   *  aggregates pass-rates across the eval set to answer "which
+   *  load-bearing rules are actually firing?" — actionable for
+   *  prompt iteration in a way that holistic stayTuned isn't. */
+  ruleCompliance?: RuleComplianceCheck[];
 };
 
 export type EvalInput = {

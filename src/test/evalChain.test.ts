@@ -110,6 +110,51 @@ describe("parseEvalOutput", () => {
     const r = parseEvalOutput(raw, "k");
     expect(r.rationale.length).toBeGreaterThan(0);
   });
+
+  it("parses ruleCompliance entries with valid ruleIds + fired states", () => {
+    const raw = JSON.stringify({
+      scores: { specificity: 7, friction: 6, callbacks: 5, pacing: 7, anti_genericity: 7 },
+      stayTuned: 6.5,
+      rationale: "ok",
+      ruleCompliance: [
+        { ruleId: "friction_quota", fired: "yes", evidence: "Cam: 'No, that's not it'" },
+        { ruleId: "steel_man_two_step", fired: "no", evidence: "Maya restated vaguely; agreed without new reason" },
+        { ruleId: "no_transition_filler", fired: "yes", evidence: "no banned phrases" }
+      ]
+    });
+    const r = parseEvalOutput(raw, "k");
+    expect(r.ruleCompliance).toHaveLength(3);
+    expect(r.ruleCompliance![0].ruleId).toBe("friction_quota");
+    expect(r.ruleCompliance![0].fired).toBe("yes");
+    expect(r.ruleCompliance![1].fired).toBe("no");
+  });
+
+  it("drops unknown ruleIds and coerces invalid fired states to n/a", () => {
+    const raw = JSON.stringify({
+      scores: { specificity: 5, friction: 5, callbacks: 5, pacing: 5, anti_genericity: 5 },
+      stayTuned: 5,
+      rationale: "x",
+      ruleCompliance: [
+        { ruleId: "bogus_rule", fired: "yes", evidence: "should be dropped" },
+        { ruleId: "friction_quota", fired: "maybe", evidence: "invalid fired → n/a" },
+        { ruleId: "turn_shape_payload", fired: "yes", evidence: "kept" }
+      ]
+    });
+    const r = parseEvalOutput(raw, "k");
+    expect(r.ruleCompliance).toHaveLength(2);
+    expect(r.ruleCompliance!.find((c) => c.ruleId === "friction_quota")?.fired).toBe("n/a");
+    expect(r.ruleCompliance!.find((c) => (c as { ruleId: string }).ruleId === "bogus_rule")).toBeUndefined();
+  });
+
+  it("omits ruleCompliance field entirely when judge returns no entries (back-compat)", () => {
+    const raw = JSON.stringify({
+      scores: { specificity: 5, friction: 5, callbacks: 5, pacing: 5, anti_genericity: 5 },
+      stayTuned: 5,
+      rationale: "x"
+    });
+    const r = parseEvalOutput(raw, "k");
+    expect(r.ruleCompliance).toBeUndefined();
+  });
 });
 
 describe("evalStore", () => {
