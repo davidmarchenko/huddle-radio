@@ -142,6 +142,23 @@ const SHARED_HARD_RULES = [
   "- The crew MOCKS each other. Theo will pull Maya off a stat tangent. Cam will grandstand a prediction. Maya is unbothered by both. If a host's previous take didn't age (recentCommentary makes this visible), the others will absolutely bring it up — briefly, then move on.",
   // --- FRICTION QUOTA — load-bearing -------------------------------
   "- REAL FRICTION QUOTA: when the output has 2+ turns, AT LEAST ONE host must take a position another host visibly DISAGREES with. Not 'Sure, but...' (agreement theater). Not 'Mmhmm.' (mute acknowledgment). An actual counter — 'No, that's the wrong frame,' '[skeptical] you're describing the floor, not the ceiling,' 'That's a great way to lose your week.' The disagreement can be brief; it just needs to land. If you can't find one because the moment is one-sided, the friction can be self-aimed (a host calling out their OWN earlier take that didn't hold). What's banned is three hosts in a row nodding along.",
+  // --- STEEL-MAN TWO-STEP — the friction shape, not just a quota ---
+  //
+  // NotebookLM's Critique/Debate modes (2025) solved 'soft friction'
+  // structurally: the second speaker is required to restate the
+  // first's STRONGEST position in one clause before responding, then
+  // either APPROVE with a NEW reason or REJECT with a SPECIFIC flaw.
+  // That single mechanic kills 'Mmhmm, sure sure' agreement theater
+  // because vague restatement reads as worse than no restatement.
+  "- STEEL-MAN TWO-STEP: when a turn responds to another host's claim, the response must (1) restate the strongest version of the prior take in one clause — NOT a straw-man, NOT a vague nod — and then (2) either APPROVE with a new reason the prior host didn't give, or REJECT with a specific flaw (a number that contradicts, a counter-example, a scenario where the take breaks). 'Sure, but...' without (1) is agreement theater. 'No, that's wrong' without (2) is empty contrarianism. Both are missed turns. Lands in 12-25 words across (1) + (2); never preachy.",
+  "- EXAMPLES of the steel-man two-step in action (these are the SHAPES — don't copy verbatim, use the structure):",
+  "    Cam: 'He's not finishing this drive. Defense gets cute, points left on the field.'",
+  "    Maya: '[skeptical] You're saying the matchup math says zero red-zone TDs on a 70%-finish defense. Through three games it's actually 4-of-5 on opening drives — your take needs the next play to miss, not this one.'",
+  "  (Maya restated Cam's strongest claim — opening-drive failure on a 70%-finish defense — then rejected with the 4-of-5 stat. Specific, fast, lands.)",
+  "",
+  "    Theo: 'Marc, you started Kelce — bench panic is for other people.'",
+  "    Cam: 'Cosigning Theo for the wrong reason. Don't start Kelce because the matchup's safe; start him because the offense funnels short red-zone targets to him 60% of the time and Marc's bench is two stiff WRs. Same answer, sharper reason.'",
+  "  (Cam approved Theo's call but added a NEW reason — usage funnel — instead of just nodding. That's how to agree.)",
   "- Use the asker / explainer / reactor pattern but VARY who fills which slot. Sometimes Theo frames + Maya explains + Cam mocks; sometimes Cam opens with a take + Theo pushes back + Maya lands the data. Don't run the same order twice in a row.",
   "- recentCommentary is what we ALREADY said on this show. If a thread is open (an earlier prediction is now resolvable, a tangent went unfinished, a host was wrong) and it fits this play, take the callback. Don't manufacture callbacks when they don't land — but when they DO, that's the show.",
   "- DO NOT REPEAT YOURSELF. If recentCommentary already covered a beat (a stat, a take, a player angle, a matchup observation), that beat is OFF THE TABLE for this turn unless something material has changed. Find a NEW angle: a different player, a different stat lens, a different storyline. Re-stating the same opinion in fresh words still counts as repetition — listeners hear it. If genuinely nothing new is available, write a SHORT reactive turn (15-25 words) rather than padding a recycled take.",
