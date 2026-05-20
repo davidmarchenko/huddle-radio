@@ -446,6 +446,47 @@ export function buildDirectiveOpenerSystemPrompt(persona: HostPersona): string {
 }
 
 /**
+ * Stable version hash of the active commentary-prompt code. SHA-256
+ * (first 12 hex chars) over the rendered text of every prompt variant
+ * for a canonical persona — opener, play, directive-opener,
+ * directive-play. Any edit to a rule, schema block, persona-block
+ * builder, or shared-rule list flips the hash; persona data changes
+ * don't (we hash with Theo fixed).
+ *
+ * Eval store joins per-turn scores to this hash so a regression in
+ * one prompt variant is attributable to the exact code-version that
+ * shipped it — without it, every iteration is "did stayTuned drop
+ * because of last week's edit or this morning's?"
+ *
+ * Computed lazily + memoized; cheap to call from every TurnSummary.
+ */
+let cachedPromptVersion: string | undefined;
+export function getCommentaryPromptVersion(): string {
+  if (cachedPromptVersion) return cachedPromptVersion;
+  const canonical = resolveHostPersona("theo");
+  const rendered = [
+    buildOpenerSystemPrompt(canonical),
+    buildPlaySystemPrompt(canonical),
+    buildDirectiveOpenerSystemPrompt(canonical),
+    buildDirectivePlaySystemPrompt(canonical)
+  ].join("\n---\n");
+  // Lightweight FNV-1a hash — avoids pulling in node:crypto from a
+  // shared/* module that also imports into client surfaces. 12 hex
+  // chars is enough collision-resistance for a versioning tag (16^12
+  // ≈ 2.8 × 10^14 buckets vs. our handful of prompt versions). Format
+  // mirrors short Git SHAs so it reads naturally in eval reports.
+  let hash = BigInt("0xcbf29ce484222325");
+  const prime = BigInt("0x100000001b3");
+  const mask = BigInt("0xFFFFFFFFFFFFFFFF");
+  for (let i = 0; i < rendered.length; i += 1) {
+    hash = (hash ^ BigInt(rendered.charCodeAt(i))) & mask;
+    hash = (hash * prime) & mask;
+  }
+  cachedPromptVersion = hash.toString(16).padStart(16, "0").slice(0, 12);
+  return cachedPromptVersion;
+}
+
+/**
  * Single decision point for which prompt + payload variant to send.
  * Producer-driven path when the directive is present and non-empty;
  * legacy raw-payload path otherwise. All host LLM providers

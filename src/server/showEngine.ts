@@ -33,7 +33,7 @@ import { UserVideoProvider } from "../providers/userVideoProvider";
 import { demoGameIdToSport } from "../providers/demoSportsDataProvider";
 import { config } from "./config";
 import { fetchMarketSnapshots, pickRelevantMarketsForGame, teamIdentifiersFromMeta } from "./marketsProvider";
-import { detectClosingHandoff, detectMarketSwings, joinDialogueLines } from "../providers/commentaryPrompts";
+import { detectClosingHandoff, detectMarketSwings, getCommentaryPromptVersion, joinDialogueLines } from "../providers/commentaryPrompts";
 import { computeEntryStatus, getEntry } from "./picksStore";
 import { fetchLiveStats } from "./picksLiveStats";
 import {
@@ -310,7 +310,12 @@ function buildTickSummary(partial: Partial<TurnSummary>, startedAtIso: string): 
     totalMs: partial.totalMs ?? 0,
     errorReason: partial.errorReason,
     startedAt: partial.startedAt ?? startedAtIso,
-    lines: partial.lines
+    lines: partial.lines,
+    // Prompt version stamps every recorded turn so eval scores from
+    // `/api/diagnostics/eval` join back to the exact code version of
+    // the active prompts. Computed once + memoized inside
+    // getCommentaryPromptVersion.
+    promptVersion: partial.promptVersion ?? getCommentaryPromptVersion()
   };
 }
 
@@ -991,7 +996,10 @@ export class ShowEngine {
           startedAt: openerSummary.startedAt ?? openerStartedIso,
           producer: openerSummary.producer,
           producerBeats: openerSummary.producerBeats,
-          lines: openerSummary.lines
+          lines: openerSummary.lines,
+          // Stamp every opener summary with the active commentary
+          // prompt version. See buildTickSummary for rationale.
+          promptVersion: openerSummary.promptVersion ?? getCommentaryPromptVersion()
         });
       }
 

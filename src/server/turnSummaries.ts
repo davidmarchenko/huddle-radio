@@ -72,6 +72,16 @@ export type TurnSummary = {
    *  separate log scrape. Optional so legacy summaries (and tests
    *  that only assert telemetry) keep working. */
   lines?: { hostId: string; text: string }[];
+  /** SHA-256 (first 12 hex chars) of the rendered system prompt the
+   *  host LLM saw for this turn. Lets eval scores join back to the
+   *  exact prompt-version that produced the turn — without this,
+   *  every prompt iteration is unattributable ("did stayTuned drop
+   *  because of last week's prompt change, or this morning's?").
+   *  Computed at engine boot for the active commentary chain;
+   *  embedded per-turn so a mid-show prompt deploy is visible too.
+   *  Optional for back-compat with summaries written before the
+   *  versioning landed. */
+  promptVersion?: string;
 };
 
 export function recordTurn(summary: TurnSummary): void {
