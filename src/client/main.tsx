@@ -97,7 +97,33 @@ import {
   type HuddleSetupStep
 } from "./huddleViewModel";
 
+/**
+ * Blank-slate defaults. A fresh visitor (no localStorage, no profile,
+ * no opted-in demo) gets anonymous group settings so the hosts NEVER
+ * call out a fake roster, fake friends, or a fake favorite team they
+ * didn't claim. The product principle: demo data flows only when the
+ * listener has explicitly engaged it.
+ *
+ * Previously this was seeded with "Alex" + Alex/Maya friends + KC
+ * favorite team. The "Try the demo as me" + "Listen to a sample"
+ * CTAs override these at click time when the listener has explicitly
+ * opted into the demo persona.
+ */
 const defaultGroup: GroupSettings = {
+  listener: { name: "" },
+  tone: "pg",
+  homeTeamBias: "balanced",
+  friends: []
+};
+
+/**
+ * Group seed for the "Listen to a sample" / "Try the demo as me"
+ * CTAs. Carries the Alex-as-listener persona that ships in
+ * demoLeagueState so the sample show actually has a roster/friends
+ * for the hosts to talk about. Only loaded when the user explicitly
+ * opts into the demo experience.
+ */
+const demoGroupSeed: GroupSettings = {
   listener: { name: "Alex", rosterId: "roster-alex", favoriteTeam: "KC" },
   tone: "pg",
   homeTeamBias: "fantasy-first",
@@ -1208,7 +1234,16 @@ function App() {
         espnSeason,
         week,
         group: commentaryGroup,
-        customLeague: providerMode === "demo" ? customLeague : undefined,
+        // customLeague is the in-memory fantasy roster used by the
+        // demo flow. It's bound to demoMode (true only when the
+        // listener picked a `demo-*` game) — NOT to providerMode.
+        // providerMode is the FANTASY backend (demo / sleeper / espn)
+        // which defaults to "demo" for the menu list. Sending
+        // customLeague any time providerMode=demo was the bug: an
+        // anonymous listener clicking a real NBA game still got the
+        // demo NFL league as fantasy context, so hosts named Mahomes
+        // / Brown / Gibbs as if they were the listener's starters.
+        customLeague: demoMode && providerMode === "demo" ? customLeague : undefined,
         video: { mode: videoMode, url: videoUrl || undefined },
         ttsEnabled,
         ttsProviderOverride: ttsProviderOverride === "auto" ? undefined : ttsProviderOverride,
@@ -2492,6 +2527,19 @@ function App() {
    * a new show) still go straight here.
    */
   const pickAndStartLivecast = (gameId: string) => {
+    // "Listen to a sample" is the listener's explicit opt-in to the
+    // demo experience — populate the demo group seed (Alex listener,
+    // Alex/Maya friends, KC favorite team) at this moment so the
+    // sample show has a real roster + friends for the hosts to talk
+    // about. Without this, defaultGroup is anonymous (by design — no
+    // demo content leaks into REAL game shows), and the sample
+    // would play without listener-roster context.
+    //
+    // Skip if the listener already has a profile — they've chosen
+    // an identity (or are mid-flow), don't clobber it.
+    if (gameId.startsWith("demo-") && !profile) {
+      setGroup(demoGroupSeed);
+    }
     pickGameForPreview(gameId);
     startLivecast({ sportsGameId: gameId, bypassReadiness: true });
   };
