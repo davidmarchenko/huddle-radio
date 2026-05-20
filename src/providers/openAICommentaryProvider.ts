@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { CommentaryKind, DialogueLine, HostId, ProviderHealth } from "../shared/contracts";
 import { formatPeriodLabel } from "../shared/period";
 import {
+  detectClarityIssues,
   joinDialogueLines,
   parseDialogueResponse,
   resolveHostPersona,
@@ -392,6 +393,43 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
         logFallback("openai-commentary: credential filter detected secret-shaped tokens in LLM output");
         return fallbackDialogue(input.fallbackText, leadHostId);
       }
+      // Clarity gate. The first-pass output passed the JSON parser
+      // and credential filter — but does it actually sound like a
+      // person talking? User feedback ("I can't understand what
+      // they're talking about" — "Through three? Shai's usage rate
+      // spikes at home") landed because the model produces dry/short
+      // turns that omit the period qualifier or use analyst
+      // shorthand. The clarity-judge prompt rule alone wasn't enough
+      // for gpt-5-mini to consistently honor.
+      //
+      // Single deterministic retry: if heuristic flags issues, ship
+      // a focused correction directive ("your last output had these
+      // problems — rewrite the SAME content but fix each one"). If
+      // the retry still flags issues, ship the retry anyway (better
+      // than the original, and a second retry is diminishing
+      // returns + 10s of added latency for an interview-prep show).
+      const issues = detectClarityIssues(parsed);
+      if (issues.length > 0) {
+        console.warn(JSON.stringify({
+          event: "commentary.provider.clarity_retry",
+          providerId: "openai-commentary",
+          model: this.model,
+          issueCount: issues.length,
+          issues
+        }));
+        const retried = await this.retryForClarity({
+          originalText: joined,
+          issues,
+          system,
+          payload,
+          reasoning,
+          maxOutputTokens: kind === "opener" ? 4000 : 3000,
+          leadHostId,
+          fallbackText: input.fallbackText,
+          listenerName: input.group.listener.name
+        });
+        if (retried) return retried;
+      }
       return parsed;
     }
     // Unparseable response: try to recover the raw text as a single line
@@ -411,5 +449,67 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
       status: this.apiKey ? "ready" : "disabled",
       detail: this.apiKey ? `Configured for ${this.model} via the Responses API with reasoning=${this.reasoningEffort}.` : "Set OPENAI_API_KEY and COMMENTARY_PROVIDER=openai to enable."
     };
+  }
+
+  /**
+   * One-shot rewrite pass that feeds the original output + a list
+   * of detected clarity issues back to the model. The correction
+   * directive is intentionally narrow — same content, same speakers,
+   * same length budget, just fix the cited issues. Returns the
+   * rewritten dialogue if parsing + sanitization succeed; returns
+   * undefined to signal "keep the original" otherwise.
+   *
+   * Cost: one extra LLM round-trip per turn that fails clarity.
+   * Heuristic precision matters — if detectClarityIssues fires on
+   * everything we'd double every show's latency. The rules in
+   * detectClarityIssues are tuned narrow on purpose.
+   */
+  private async retryForClarity(args: {
+    originalText: string;
+    issues: string[];
+    system: string;
+    payload: object;
+    reasoning: { effort: "minimal" | "low" | "medium" | "high" } | undefined;
+    maxOutputTokens: number;
+    leadHostId: HostId;
+    fallbackText: string;
+    listenerName: string;
+  }): Promise<DialogueLine[] | undefined> {
+    if (!this.client) return undefined;
+    const correctionInstructions = [
+      args.system,
+      "",
+      "CLARITY REWRITE DIRECTIVE — your previous draft had these issues. Rewrite the SAME content (same speakers, same beats, same length budget) with each issue corrected:",
+      ...args.issues.map((issue) => `- ${issue}`),
+      "",
+      "Your previous draft (for reference; do not copy verbatim — rewrite the affected phrases):",
+      args.originalText,
+      "",
+      "Return the corrected dialogue in the same JSON schema. Do not acknowledge this directive in the output text."
+    ].join("\n");
+    try {
+      const response = await this.client.responses.create({
+        model: this.model,
+        max_output_tokens: args.maxOutputTokens,
+        reasoning: args.reasoning,
+        instructions: correctionInstructions,
+        input: JSON.stringify(args.payload)
+      });
+      const raw = response.output_text.trim();
+      if (raw.length === 0) return undefined;
+      const parsed = parseDialogueResponse(raw, args.leadHostId, args.listenerName);
+      if (!parsed || parsed.length === 0) return undefined;
+      const joined = joinDialogueLines(parsed);
+      const safe = sanitizeCommentary(joined, args.fallbackText);
+      if (safe === args.fallbackText) return undefined;
+      return parsed;
+    } catch (error) {
+      console.warn(JSON.stringify({
+        event: "commentary.provider.clarity_retry.failed",
+        providerId: "openai-commentary",
+        message: error instanceof Error ? error.message : String(error)
+      }));
+      return undefined;
+    }
   }
 }

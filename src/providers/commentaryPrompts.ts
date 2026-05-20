@@ -1043,3 +1043,72 @@ export function joinDialogueLines(lines: DialogueLine[]): string {
     .filter((t) => t.length > 0)
     .join(" ");
 }
+
+/**
+ * Heuristic clarity check. Pattern-matches against the smells the
+ * user flagged directly ("Through three?" / "playmaker lift" /
+ * "scorer bump" / "usage rate spikes") plus a few adjacent ones —
+ * bare period references and writerly LLM filler that survived the
+ * prompt push. Each finding is a one-line note the retry prompt can
+ * cite verbatim so the model knows exactly which phrase to rewrite.
+ *
+ * Returns the unique findings (deduped) so the retry directive
+ * doesn't redundantly call out the same issue. Empty array means
+ * the output passed and no retry is warranted.
+ *
+ * Heuristic, not LLM-judged: we want this to run synchronously on
+ * the host server before the first TTS chunk goes out. Trades
+ * recall for sub-millisecond runtime.
+ */
+export function detectClarityIssues(lines: DialogueLine[]): string[] {
+  const joined = joinDialogueLines(lines).toLowerCase();
+  const issues: string[] = [];
+  // Orphan period reference. "Through three" must be followed by
+  // "quarters" / "games" / "halves" / "innings" / "periods" / a
+  // standalone number-noun (e.g. "Through three quarters"). Catches
+  // "Through three?" / "Through three —" / "Through three Hill has".
+  if (/\bthrough\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\b(?!\s+(quarter|quarters|game|games|half|halves|inning|innings|period|periods|minute|minutes|drive|drives|tick|ticks))/i.test(joined)) {
+    issues.push('Orphan period reference: "Through [N]" needs a noun ("Through three quarters", "Through two games"). Bare "Through three" reads as unscannable by ear.');
+  }
+  // Analyst shorthand the user called out by name.
+  const shorthandPatterns: Array<{ pattern: RegExp; note: string }> = [
+    { pattern: /\bplaymaker\s+lift\b/, note: 'Analyst shorthand: "playmaker lift" — unpack to plain English (e.g. "his teammates score off his looks").' },
+    { pattern: /\bscorer\s+bump\b/, note: 'Analyst shorthand: "scorer bump" — unpack (e.g. "more buckets for him personally").' },
+    { pattern: /\busage\s+rate\s+spikes?\b/, note: 'Analyst shorthand: "usage rate spikes" — say "he\'s touching the ball more" or "the offense runs through him".' },
+    { pattern: /\bceiling\s+(swing|lift|bump)\b/, note: 'Writerly filler: "ceiling swing/lift/bump" — say what the actual upside number is.' },
+    { pattern: /\bfloor\s+(swing|lift|bump|opens? a notch)\b/, note: 'Writerly filler: "floor swing/lift/bump" — say what the actual concrete impact is.' },
+    { pattern: /\b(?:team\s+)?scoring\s+leverage\b/, note: 'Writerly filler: "scoring leverage" — replace with the concrete fantasy-point effect.' },
+    { pattern: /\btarget\s+(volume|share)\s+(over|across)\b/, note: 'Analyst shorthand: "target volume/share over X" — say it in plain English ("six catches in the half").' },
+    { pattern: /\bboom\s*[-/]?\s*or\s*[-/]?\s*bust\s+(pivot|swing)\b/, note: 'Writerly filler: "boom-or-bust pivot/swing" — concrete consequence beats the metaphor.' },
+    { pattern: /\bfantasy\s+gold\b/, note: 'Radio-DJ filler: "fantasy gold" — say the actual upside.' },
+    { pattern: /\bmini\s+payday\b/, note: 'Writerly filler: "mini payday" — say the actual point value.' }
+  ];
+  for (const { pattern, note } of shorthandPatterns) {
+    if (pattern.test(joined)) issues.push(note);
+  }
+  // Bare unit-less number references in standalone reactions:
+  // "six assists" / "twelve targets" / "twenty points" should have
+  // a period qualifier ("six assists in the half", "twelve targets
+  // through three quarters"). We can't catch every form heuristically
+  // but the most common pattern is a number-word followed by a plural
+  // noun with no qualifier in the next clause.
+  //
+  // Intentionally starts at "two" — "one [noun]" usually appears in
+  // grammar-error contexts ("lost one yards", "had one assist") or
+  // in singular-counting contexts ("one TD") that don't need a
+  // period qualifier the same way "twelve targets" does. The false
+  // positives on "one" cost a retry per occurrence — not worth it.
+  const bareCountPattern = /\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s+(assists|targets|catches|carries|threes|rebounds|attempts|passes|tackles|points|yards|sacks|completions)\b/g;
+  for (const match of joined.matchAll(bareCountPattern)) {
+    // Look ~30 chars forward for a period qualifier ("in the half",
+    // "through three quarters", "on the season", "tonight"). Lax
+    // window catches the common framings.
+    const tail = joined.slice(match.index! + match[0].length, match.index! + match[0].length + 80);
+    if (!/(through|in the|on the|tonight|so far|in his|over the|this half|this quarter|this game)/i.test(tail)) {
+      issues.push(`Bare count "${match[0]}" needs a period qualifier — say "${match[0]} in the half" / "${match[0]} through three quarters" / "${match[0]} tonight". Numbers without time-context aren't scannable by ear.`);
+    }
+  }
+  // Dedupe identical notes so a turn with three "ceiling swing"s
+  // doesn't yield three identical retry directives.
+  return Array.from(new Set(issues));
+}
