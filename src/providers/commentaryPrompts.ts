@@ -247,6 +247,7 @@ const SHARED_HARD_RULES = [
   "- Direct address controls the next speaker. If a host addresses another host BY NAME in a question, callout, or handoff ('Maya, what do you see?' / 'Cam — push back on that' / 'Theo, run it back'), the VERY NEXT turn MUST be from that addressed host. Do not skip them, do not have a third host answer for them. If you don't want to force a specific handoff, don't name a host at the end of the turn — address the room or the listener instead.",
   "- Across the WHOLE output (not per turn — across every turn combined), name the listener AT MOST ONCE. After that first mention, address them as 'you' / 'your team' — never repeat the name. Hearing your own name 3-4 times in a clip is the #1 thing that makes this sound robotic, so default to zero name uses if nothing earns it. Reference their actual starters when relevant; never invent players or numbers. Hedge ('through three quarters,' 'on the season') when a fact isn't in the provided data.",
   "- If `listener.name` is null / empty / missing, the listener has not claimed an identity yet. Address them as 'you,' 'tonight's listener,' or 'the room' — NEVER invent a name like 'Alex,' 'David,' etc. NEVER emit a leading comma or vocative-followed-by-empty pattern like ', welcome' or ', what's up' — start the line with the actual greeting. The demo persona is OFF; treat the listener as anonymous.",
+  "- `listener.character` (when present) is a one-line blurb on WHO this listener is — fantasy team name, favorite pro team, friend rivalries. Treat it as background you KNOW about them, not biography to recite. ONE turn across the whole output may reference a single piece of that texture naturally — 'Chiefs fan, so you're cooked' / 'Fourth & Snack already lost two starters last week' / 'your brother's gonna text you about this in three minutes.' Never quote the blurb verbatim. Never use more than one piece. When `listener.character` is null, skip — anonymous listener has no texture to reference.",
   "- If `friends` is empty, there are no real friends in this league — do NOT invent friend names ('Maya,' 'Devon,' 'Alex' as a friend, etc.). Skip any 'your friend X' beats; the only addressee is the listener themselves. (Maya as a HOST name is fine — that's a real host on the show.)",
   "- Avoid generic radio openers ('welcome back, folks,' 'big play here'). Open on the take or the news.",
   "- If `odds` is provided, exactly ONE turn across the whole output may cite the line/total/moneyline. Never lead with it; never recommend a bet.",
@@ -391,6 +392,9 @@ export function buildDirectivePayload(input: CommentaryDraftInput, persona: Host
       name: listener.name?.trim() ? listener.name.trim() : null,
       favoriteTeam: listener.favoriteTeam,
       fantasyTeamName: roster?.teamName,
+      // Mirror of buildCommentaryPayload's listener.character.
+      // See buildListenerCharacter() below for the composition.
+      character: buildListenerCharacter(input),
       starters: (roster?.starters ?? []).map((p) => ({
         name: p.name,
         position: p.position,
@@ -614,6 +618,54 @@ export function buildPlaySystemPrompt(persona: HostPersona): string {
  * Shared so OpenAI / Anthropic / Gemini all receive the same facts —
  * persona behavior is the only thing that differs across vendors.
  */
+/**
+ * One-sentence character blurb derived from existing payload fields.
+ * Used so the hosts can reference WHO Marc is as a fan — fantasy team
+ * name, favorite team, friend rivalries — instead of just his name.
+ *
+ * Real sports radio knows its listener as a character. We have the
+ * raw fields (name, favoriteTeam, fantasyTeamName, friends with
+ * rivalryNotes); they just weren't being composed into a usable
+ * texture string. This is the composition.
+ *
+ * Returns null when there's nothing meaningful to surface (anonymous
+ * listener with no team) so the prompt's no-character branch can fire.
+ */
+function buildListenerCharacter(input: CommentaryDraftInput): string | null {
+  const listener = input.group.listener;
+  const roster = input.listenerRoster;
+  const name = listener.name?.trim() ?? "";
+  const fantasyTeam = roster?.teamName?.trim() ?? "";
+  const favoriteTeam = listener.favoriteTeam?.trim() ?? "";
+  const friendRivalries = (input.group.friends ?? [])
+    .filter((friend) => friend.rivalryNotes && friend.name)
+    .map((friend) => `${friend.name} — ${friend.rivalryNotes!.toLowerCase().replace(/\.$/, "")}`)
+    .slice(0, 2);
+
+  // Compose: identity (name/anon) + fantasy team if any + favorite
+  // team if any + first one or two rivalry notes if any. Skip parts
+  // that are empty so anonymous listeners don't get half-blank text.
+  const parts: string[] = [];
+  if (name) {
+    if (fantasyTeam) parts.push(`${name} runs ${fantasyTeam}`);
+    else parts.push(name);
+  } else if (fantasyTeam) {
+    parts.push(`runs ${fantasyTeam}`);
+  }
+  if (favoriteTeam) parts.push(`${favoriteTeam} fan`);
+  if (friendRivalries.length > 0) parts.push(`group chat: ${friendRivalries.join("; ")}`);
+
+  // If we couldn't compose anything useful, return null so the
+  // prompt's no-character branch fires cleanly.
+  if (parts.length === 0) return null;
+  // Capitalize, single sentence, period at end. Trim to ~200 chars
+  // so it doesn't bloat the prompt — the hosts only need a hook,
+  // not a biography.
+  const blurb = parts.join(", ");
+  const capitalized = blurb.charAt(0).toUpperCase() + blurb.slice(1);
+  return capitalized.length > 200 ? `${capitalized.slice(0, 197)}...` : `${capitalized}.`;
+}
+
 export function buildCommentaryPayload(input: CommentaryDraftInput, persona: HostPersona) {
   const listener = input.group.listener;
   const roster = input.listenerRoster;
@@ -636,6 +688,15 @@ export function buildCommentaryPayload(input: CommentaryDraftInput, persona: Hos
       name: listener.name?.trim() ? listener.name.trim() : null,
       favoriteTeam: listener.favoriteTeam,
       fantasyTeamName: roster?.teamName,
+      // Derived character blurb — a single human-readable sentence
+      // that lets the hosts reference WHO Marc is as a fan, not just
+      // his name. Mirrors how real sports radio knows its listeners
+      // ("the guy who started Kelce, hates the Cowboys"). The blurb
+      // composes from existing fields — no new client schema needed.
+      // null when there's nothing meaningful to say (anonymous
+      // listener with no team) so the prompt's no-character branch
+      // can fire cleanly.
+      character: buildListenerCharacter(input),
       starters: (roster?.starters ?? []).map((p) => ({
         name: p.name,
         position: p.position,
