@@ -118,6 +118,54 @@ export function formatPeriodLabel(period: PeriodInfo): string {
 }
 
 /**
+ * Natural-language period for SPOKEN commentary. `formatPeriodLabel`
+ * returns UI badge codes ("OT", "Q1", "P2") that read fine on a score
+ * bug but sound robotic in a TTS feed — listener hears the literal
+ * letters. Use this in any code path that builds text destined for
+ * audio.
+ *
+ * Returns short phrases that fit naturally inside a sentence:
+ *   "in overtime" / "early in the first" / "late in the third" /
+ *   "top of the 7th" / "in extra time".
+ *
+ * Returns an empty string when there's nothing useful to say
+ * (pre-game with no detail) so callers can branch cleanly.
+ */
+export function formatPeriodSpoken(period: PeriodInfo): string {
+  const { number, kind, half, shortDetail } = period;
+  if (number <= 0) return "";
+
+  switch (kind) {
+    case "quarter":
+      if (number === 1) return "in the first quarter";
+      if (number === 2) return "in the second quarter";
+      if (number === 3) return "in the third quarter";
+      if (number === 4) return "in the fourth quarter";
+      return number === 5 ? "in overtime" : `in overtime`;
+    case "period":
+      if (number === 1) return "in the first period";
+      if (number === 2) return "in the second period";
+      if (number === 3) return "in the third period";
+      if (number === 4) return "in overtime";
+      return "in the shootout";
+    case "inning": {
+      const ord = `${number}${ordinalSuffix(number)}`;
+      if (half === "top") return `in the top of the ${ord}`;
+      if (half === "bottom") return `in the bottom of the ${ord}`;
+      // shortDetail like "Bot 7th" is more natural than the bare ordinal.
+      if (shortDetail && /\d/.test(shortDetail)) {
+        return `in the ${shortDetail.toLowerCase().replace(/^bot /, "bottom of the ").replace(/^top /, "top of the ")}`;
+      }
+      return `in the ${ord}`;
+    }
+    case "half":
+      if (number === 1) return "in the first half";
+      if (number === 2) return "in the second half";
+      return "in extra time";
+  }
+}
+
+/**
  * Tag a raw period number with the sport-appropriate kind. Producers
  * use this when they have the raw integer from upstream but haven't
  * decided how to label it yet.

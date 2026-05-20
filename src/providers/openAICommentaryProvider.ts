@@ -38,6 +38,23 @@ function fallbackDialogue(text: string, hostId: HostId): DialogueLine[] {
   return [{ hostId, text: sanitizeCommentary(text, text) }];
 }
 
+/**
+ * Single-line warn log for any silent fallback path inside the
+ * OpenAI commentary provider. Pre-this-helper, the provider fell
+ * back to seed text in four places without logging — listeners
+ * heard robot template output for hours with no signal anywhere
+ * (no chain warning, no error event, no diagnostics entry) that
+ * the LLM had silently stopped contributing. JSON-shaped so a
+ * future log scraper can find these by event name.
+ */
+function logFallback(reason: string): void {
+  console.warn(JSON.stringify({
+    event: "commentary.provider.silent_fallback",
+    providerId: "openai-commentary",
+    reason
+  }));
+}
+
 export class LocalCommentaryProvider implements CommentaryProvider {
   id = "local-commentary";
 
@@ -294,6 +311,12 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
   async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
     const leadHostId = input.hostId ?? "theo";
     if (!this.client) {
+      // Silent until now — fixed because the listener was hearing
+      // the engine's raw template seed text and we had no signal
+      // anywhere that the LLM wasn't running. Single concise log
+      // per call so a misconfigured key surfaces immediately in the
+      // server console instead of leaking robot dialogue.
+      logFallback("openai-commentary: no API client configured (set OPENAI_API_KEY)");
       return fallbackDialogue(input.fallbackText, leadHostId);
     }
 
@@ -342,6 +365,7 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
       // detects credentials — in that case we discard the dialogue
       // and fall back to a single-line response.
       if (safe === input.fallbackText) {
+        logFallback("openai-commentary: credential filter detected secret-shaped tokens in LLM output");
         return fallbackDialogue(input.fallbackText, leadHostId);
       }
       return parsed;
@@ -349,8 +373,10 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
     // Unparseable response: try to recover the raw text as a single line
     // so the listener still hears something rather than silence.
     if (raw) {
+      logFallback(`openai-commentary: unparseable JSON, salvaging raw text (len=${raw.length})`);
       return fallbackDialogue(sanitizeCommentary(raw.replace(/\s+/g, " "), input.fallbackText), leadHostId);
     }
+    logFallback("openai-commentary: empty response from LLM");
     return fallbackDialogue(input.fallbackText, leadHostId);
   }
 

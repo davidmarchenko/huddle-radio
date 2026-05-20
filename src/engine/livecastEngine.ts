@@ -9,7 +9,7 @@ import type {
   SportsPlay,
   VideoObservation
 } from "../shared/contracts";
-import { formatPeriodLabel } from "../shared/period";
+import { formatPeriodLabel, formatPeriodSpoken } from "../shared/period";
 import { selectHost } from "../shared/hostPersonas";
 import { rankFantasyImpacts } from "./fantasyImpact";
 
@@ -169,28 +169,69 @@ export function buildCommentaryText(input: {
   news: NewsItem[];
   recentCommentary?: string[];
 }): string {
+  // This is the FALLBACK text path — only reaches the listener when
+  // the LLM commentary chain falls all the way through to a local
+  // template. Goal: sound like a person, not a producer dashboard.
+  //
+  // Rewrite history: the old shape concatenated UI-badge codes
+  // ("OT, 0.0:"), producer telemetry ("Visual validation is uncertain"),
+  // framing-rule disclosures ("Fantasy impact gets priority over the
+  // scoreboard"), and oddball metaphors ("fantasy blast radius is
+  // low") into the spoken text. Listener heard producer scaffolding
+  // verbatim and it was the loudest "this app is robotic" signal in
+  // the whole flow.
+  //
+  // What stays: tone-led opener, optional moment headline, a natural
+  // play sentence, impact statements, optional friend / news color.
+  // What's dropped: period+clock prefix (use natural "in the third
+  // quarter" only when it adds meaning), observation/validation
+  // strings (producer-only), bias disclosure (the show's stance
+  // shouldn't be narrated — just be biased), extraImpacts spam.
   const topImpact = input.impacts[0];
   const moment = input.moment ?? assessMomentCue({ play: input.play, impacts: input.impacts, group: input.group });
   const friend = topImpact ? input.group.friends.find((candidate) => candidate.rosterId === topImpact.rosterId) : undefined;
   const recent = input.recentCommentary ?? [];
+
   const tonePrefix = chooseFresh(toneLeads(input.group.tone), recent, input.play.id);
+  // Moment lead: only fire on interrupts/majors, drop the
+  // "Interrupt-worthy:" stage direction.
+  const momentLead =
+    moment.priority === "interrupt" || moment.priority === "major"
+      ? `${moment.headline}.`
+      : "";
+  // Natural play sentence. For high-excitement plays, anchor with the
+  // period ("In the fourth quarter, KC strikes."); for routine plays
+  // just state the headline. Drop the bare "OT, 0.0:" prefix entirely.
+  const periodPhrase = formatPeriodSpoken(input.play.period);
+  const playHeadline = (input.play.headline ?? "").trim();
+  const playSentence =
+    playHeadline.length === 0
+      ? ""
+      : periodPhrase && input.play.excitement >= 4
+        ? `${capitalize(periodPhrase)}, ${playHeadline}.`
+        : `${playHeadline}.`;
+
   const eventLead = chooseFresh(eventLeads(input.play.excitement, input.play.type), recent, `${input.play.id}-event`);
   const impactText = topImpact
     ? impactLine(topImpact, recent, input.play.id)
     : chooseFresh(noImpactLines(), recent, `${input.play.id}-no-impact`);
-  const extraImpacts = input.impacts
-    .slice(1, 3)
-    .map((impact) => `${impact.ownerName} also moved ${impact.pointsDelta > 0 ? "+" : ""}${impact.pointsDelta} with ${impact.playerName}`)
-    .join("; ");
   const friendNeedle = friend?.rivalryNotes ? ` ${friend.name}, ${friend.rivalryNotes.toLowerCase()}.` : "";
-  const newsHook = input.news[0] && input.play.excitement >= 4 ? ` Context note: ${input.news[0].title}.` : "";
-  const observation = observationLine(input.observation);
-  const bias = biasLine(input.group.homeTeamBias, input.play.team, input.group.friends);
-  const momentLead = moment.priority === "interrupt" ? `Interrupt-worthy: ${moment.headline}.` : moment.priority === "major" ? `${moment.headline}.` : "";
+  const newsHook = input.news[0] && input.play.excitement >= 4 ? ` Worth noting: ${input.news[0].title}.` : "";
 
-  return `${tonePrefix} ${momentLead} ${formatPeriodLabel(input.play.period)}, ${input.play.clock}: ${input.play.headline}. ${eventLead} ${impactText} ${extraImpacts ? `${extraImpacts}.` : ""} ${observation} ${bias}${friendNeedle}${newsHook}`
+  // Drop observation + bias from the spoken text entirely — they were
+  // producer telemetry and framing-rule disclosures, not commentary.
+
+  return [tonePrefix, momentLead, playSentence, eventLead, impactText, friendNeedle, newsHook]
+    .filter(Boolean)
+    .join(" ")
     .replace(/\s+/g, " ")
+    .trim()
     .slice(0, 520);
+}
+
+function capitalize(s: string): string {
+  if (s.length === 0) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 export function assessMomentCue(input: { play: SportsPlay; impacts: ReturnType<typeof rankFantasyImpacts>; group: GroupSettings }): MomentCue {
@@ -305,17 +346,19 @@ function toneLeads(tone: GroupSettings["tone"]): string[] {
 }
 
 function eventLeads(excitement: SportsPlay["excitement"], type: SportsPlay["type"]) {
-  if (type === "turnover") return ["That is a full emotional tax audit.", "Turnover math is brutal in fantasy.", "That mistake changes the whole room."];
-  if (excitement >= 5) return ["That one matters right now.", "That is not background noise.", "That is a headline play for this matchup."];
-  if (excitement >= 4) return ["That was a real momentum play.", "Loud implications either way.", "That one nudges the matchup needle."];
-  return ["Small play, but the context is useful.", "Not every update is fireworks, but this one sets the table.", ""];
+  if (type === "turnover") return ["Brutal swing.", "Turnovers in fantasy land hit twice.", "That changes the whole drive."];
+  if (excitement >= 5) return ["That one matters.", "Loud one.", "Headline play for this matchup."];
+  if (excitement >= 4) return ["Real momentum play.", "That moves the needle.", "Definitely felt that one."];
+  // Routine plays — mostly stay quiet. Empty string lets the
+  // template skip the lead entirely so we don't pad the spoken text.
+  return ["Quick one.", "", ""];
 }
 
 function noImpactLines() {
   return [
-    "No direct fantasy starters moved, but the game script is shifting.",
-    "No rostered player got the points, so this is mostly scoreboard context.",
-    "The fantasy blast radius is low, which is its own kind of relief."
+    "No starters moved on that, but the game script is shifting.",
+    "No rostered points there — mostly scoreboard context.",
+    "Quiet on the roster front."
   ];
 }
 

@@ -41,7 +41,15 @@ describe("buildCommentaryText", () => {
     expect(text).not.toMatch(/api[_-]?key|secret|token/i);
   });
 
-  it("uses tentative language for lower-confidence observations", () => {
+  // Observation telemetry ("Model read is tentative", "Visual
+  // validation is unavailable", etc.) used to leak into the SPOKEN
+  // commentary text — listener heard producer scaffolding. These
+  // two tests previously enforced that leak. Now they pin the
+  // inverse contract: those producer-only strings must NEVER
+  // appear in the spoken text. The observation object is still
+  // consumed elsewhere (debug panel, eval ring buffer) — just not
+  // narrated to the listener.
+  it("does NOT leak observation telemetry into the spoken commentary text", () => {
     const text = buildCommentaryText({
       play: demoPlays[4],
       observation: {
@@ -62,11 +70,13 @@ describe("buildCommentaryText", () => {
       news: []
     });
 
-    expect(text).toContain("Model read is tentative");
-    expect(text).toContain("-2");
+    expect(text).not.toMatch(/Model read is tentative/i);
+    expect(text).not.toMatch(/Visual validation/i);
+    // Real content still lands — at least the play headline.
+    expect(text).toContain(demoPlays[4].headline);
   });
 
-  it("does not claim visual context when stream validation is unavailable", () => {
+  it("does NOT narrate stream-validation status to the listener (was producer telemetry)", () => {
     const text = buildCommentaryText({
       play: demoPlays[0],
       observation: {
@@ -95,8 +105,67 @@ describe("buildCommentaryText", () => {
       news: []
     });
 
-    expect(text).toContain("Visual validation is unavailable");
-    expect(text).toContain("official play feed");
+    expect(text).not.toMatch(/Visual validation/i);
+    expect(text).not.toMatch(/official play feed/i);
+    expect(text).not.toMatch(/YouTube embeds/i);
+  });
+
+  it("does NOT narrate framing-rule bias ('fantasy-first') as producer disclosure", () => {
+    const text = buildCommentaryText({
+      play: demoPlays[0],
+      observation: {
+        id: "obs",
+        source: "stream-url",
+        summary: "validated frame",
+        confidence: 0.9,
+        observedAt: new Date().toISOString(),
+        latencyMs: 50
+      },
+      group: {
+        listener: { name: "Alex", rosterId: "roster-alex" },
+        tone: "pg",
+        // This used to make every commentary line end with
+        // "Fantasy impact gets priority over the scoreboard here."
+        // — a meta-disclosure of the show's framing rule that
+        // listeners shouldn't have to hear. The fix drops biasLine
+        // from the spoken text entirely; the bias still drives
+        // host SELECTION upstream.
+        homeTeamBias: "fantasy-first",
+        friends: [{ id: "alex", name: "Alex", favoriteTeam: "KC", rosterId: "roster-alex" }]
+      },
+      impacts: rankFantasyImpacts(demoLeagueState, demoPlays[0]),
+      news: []
+    });
+
+    expect(text).not.toMatch(/Fantasy impact gets priority/i);
+    expect(text).not.toMatch(/priority over the scoreboard/i);
+  });
+
+  it("does NOT use the UI-badge period prefix ('OT, 0.0:') in spoken text", () => {
+    const text = buildCommentaryText({
+      play: { ...demoPlays[4], period: { number: 5, kind: "quarter", shortDetail: "OT" }, clock: "0.0" },
+      observation: {
+        id: "obs",
+        source: "stream-url",
+        summary: "validated",
+        confidence: 0.9,
+        observedAt: new Date().toISOString(),
+        latencyMs: 50
+      },
+      group: {
+        listener: { name: "Alex", rosterId: "roster-alex" },
+        tone: "pg",
+        homeTeamBias: "balanced",
+        friends: [{ id: "alex", name: "Alex", favoriteTeam: "KC", rosterId: "roster-alex" }]
+      },
+      impacts: rankFantasyImpacts(demoLeagueState, demoPlays[4]),
+      news: []
+    });
+
+    // The old format prepended "OT, 0.0: ${headline}" — the score-bug
+    // tokens read robotically when spoken.
+    expect(text).not.toMatch(/OT,\s*0\.0:/);
+    expect(text).not.toMatch(/^Q\d,\s/);
   });
 
   it("avoids recently used opener phrasing when possible", () => {
