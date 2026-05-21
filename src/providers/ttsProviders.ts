@@ -1,5 +1,6 @@
 import type { HostId, ProviderHealth, TTSAudioChunk, TTSProvider } from "../shared/contracts";
 import WebSocket from "ws";
+import { stripDeliveryTags } from "./commentaryPrompts";
 
 export class MockTTSProvider implements TTSProvider {
   id = "mock-tts";
@@ -57,7 +58,12 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     return ` Per-host voices configured for: ${hosts.join(", ")}.`;
   }
 
-  async *synthesize(input: { commentaryId: string; text: string; hostId?: HostId }): AsyncIterable<TTSAudioChunk> {
+  async *synthesize(input: {
+    commentaryId: string;
+    text: string;
+    hostId?: HostId;
+    signal?: AbortSignal;
+  }): AsyncIterable<TTSAudioChunk> {
     if (!this.apiKey) {
       throw new Error("ELEVENLABS_API_KEY is required when TTS_PROVIDER=elevenlabs.");
     }
@@ -75,11 +81,34 @@ export class ElevenLabsTTSProvider implements TTSProvider {
     const start = performance.now();
     const voiceId = this.resolveVoiceId(input.hostId);
     const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${this.modelId}&auto_mode=true`;
+    // Strip delivery tags before sending to the WS endpoint. Eleven's
+    // WS streaming model line (flash/turbo/multilingual_v2) does NOT
+    // interpret bracketed audio tags — they get spoken literally. Only
+    // T2D (synthesizeDialogue / HTTP eleven-text-to-dialogue) honors
+    // them reliably. Tags stay in DialogueLine.text for the T2D path.
+    const cleanText = stripDeliveryTags(input.text);
     const socket = new WebSocket(url, {
       headers: {
         "xi-api-key": this.apiKey
       }
     });
+    // Wire AbortSignal → socket.close. Engine aborts on per-line
+    // timeout or stop(); without this the WS stays open until the
+    // server-side decides to close (or the iterator naturally
+    // drains), which can leak the connection and the Creator-tier
+    // concurrent slot for tens of seconds.
+    const onAbort = () => {
+      try {
+        socket.close(1000, "client-aborted");
+      } catch {
+        // close() doesn't throw in spec'd implementations; if the
+        // socket is already CLOSING/CLOSED, ignore.
+      }
+    };
+    if (input.signal) {
+      if (input.signal.aborted) onAbort();
+      else input.signal.addEventListener("abort", onAbort, { once: true });
+    }
 
     const queue: TTSAudioChunk[] = [];
     let done = false;
@@ -95,7 +124,7 @@ export class ElevenLabsTTSProvider implements TTSProvider {
           voice_settings: { stability: 0.45, similarity_boost: 0.75 }
         })
       );
-      socket.send(JSON.stringify({ text: input.text, try_trigger_generation: true }));
+      socket.send(JSON.stringify({ text: cleanText, try_trigger_generation: true }));
       socket.send(JSON.stringify({ text: "" }));
     });
 
@@ -195,12 +224,22 @@ export class ElevenLabsTTSProvider implements TTSProvider {
    * and is yielded as a single chunk. Higher first-byte latency than
    * WS streaming but compatible with v3's expressive output.
    */
-  private async *synthesizeHttp(input: { commentaryId: string; text: string; hostId?: HostId }): AsyncIterable<TTSAudioChunk> {
+  private async *synthesizeHttp(input: {
+    commentaryId: string;
+    text: string;
+    hostId?: HostId;
+    signal?: AbortSignal;
+  }): AsyncIterable<TTSAudioChunk> {
     const start = performance.now();
     const voiceId = this.resolveVoiceId(input.hostId);
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`;
+    // Strip delivery tags for the HTTP per-line path too — v3 reads
+    // them more reliably than the WS path but plurals and unsupported
+    // adjectives still leak as spoken words. Tags stay in DialogueLine.text
+    // for the dedicated T2D path (synthesizeDialogue).
+    const cleanText = stripDeliveryTags(input.text);
     const body = JSON.stringify({
-      text: input.text,
+      text: cleanText,
       model_id: this.modelId,
       voice_settings: { stability: 0.45, similarity_boost: 0.75 }
     });
@@ -222,7 +261,8 @@ export class ElevenLabsTTSProvider implements TTSProvider {
           "content-type": "application/json",
           "accept": "audio/mpeg"
         },
-        body
+        body,
+        signal: input.signal
       });
       if (response.ok) break;
       if (response.status !== 429) {

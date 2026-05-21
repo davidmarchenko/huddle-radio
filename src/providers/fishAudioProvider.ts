@@ -1,6 +1,7 @@
 import { encode as msgpackEncode, decode as msgpackDecode } from "@msgpack/msgpack";
 import WebSocket from "ws";
 import type { HostId, ProviderHealth, TTSAudioChunk, TTSProvider } from "../shared/contracts";
+import { stripDeliveryTags } from "./commentaryPrompts";
 import { config } from "../server/config";
 
 /**
@@ -51,15 +52,24 @@ export class FishAudioTTSProvider implements TTSProvider {
    * For multi-host turn-sets, use synthesizeDialogue instead — it
    * routes voices natively in one WS connection.
    */
-  async *synthesize(input: { commentaryId: string; text: string; hostId?: HostId }): AsyncIterable<TTSAudioChunk> {
+  async *synthesize(input: {
+    commentaryId: string;
+    text: string;
+    hostId?: HostId;
+    signal?: AbortSignal;
+  }): AsyncIterable<TTSAudioChunk> {
     if (!this.apiKey) {
       throw new Error("FISH_API_KEY is required when TTS_PROVIDER=fish.");
     }
     const voiceId = this.resolveVoiceId(input.hostId);
+    // Strip delivery tags before per-line synth — Fish reads bracketed
+    // tags literally. Tags stay in line.text so synthesizeDialogue (T2D-
+    // style, single-stream multi-speaker) can route them; only the
+    // per-line fallback gets the cleaned version.
     yield* this.runStream({
       commentaryId: input.commentaryId,
       referenceIds: [voiceId],
-      text: input.text
+      text: stripDeliveryTags(input.text)
     });
   }
 

@@ -1,5 +1,6 @@
 import type { HostId, ProviderHealth, TTSAudioChunk, TTSProvider, WordTiming } from "../shared/contracts";
 import { config } from "../server/config";
+import { stripDeliveryTags } from "./commentaryPrompts";
 
 /**
  * Inworld TTS-2 provider — experimental alternative to ElevenLabs + Fish.
@@ -20,6 +21,10 @@ import { config } from "../server/config";
  */
 
 export type InworldHostVoiceMap = Partial<Record<HostId, string>>;
+
+/** Module-level one-shot flag for the wordTimings-shape diagnostic.
+ *  See the log site in synthesize() for context. */
+let inworldTimingsLogged = false;
 
 export class InworldTtsProvider implements TTSProvider {
   id = "inworld-tts-2";
@@ -58,18 +63,40 @@ export class InworldTtsProvider implements TTSProvider {
    * each turn round-trips separately. Latency per turn is ~250-500ms
    * (Inworld's <250ms first-byte spec + network round-trip).
    */
-  async *synthesize(input: { commentaryId: string; text: string; hostId?: HostId }): AsyncIterable<TTSAudioChunk> {
+  async *synthesize(input: {
+    commentaryId: string;
+    text: string;
+    hostId?: HostId;
+    /** Honored on best-effort — passed to fetch() so the streaming
+     *  response body is interrupted when the engine times out a per-
+     *  line synth or stops the show. */
+    signal?: AbortSignal;
+  }): AsyncIterable<TTSAudioChunk> {
     if (!this.apiKey) {
       throw new Error("INWORLD_API_KEY is required when TTS_PROVIDER=inworld.");
     }
     const start = performance.now();
     const voiceId = this.resolveVoiceId(input.hostId);
 
+    // Strip delivery tags BEFORE sending to Inworld. In theory Inworld
+    // TTS-2 interprets `[deadpan]`/`[skeptical]`/`[laughs]` as audio
+    // direction, but in practice unrecognized variants (plurals like
+    // `[laughs]` vs the doc's singular `[laugh]`; uncommon steering
+    // adjectives) get spoken aloud as literal words — the listener
+    // hears "skeptical six targets through three quarters." We keep
+    // the tags in DialogueLine.text for the T2D path (synthesizeDialogue
+    // on ElevenLabs interprets a wider tag vocabulary reliably) but
+    // strip here so the per-line synth path delivers clean audio.
+    // Side benefit: wordTimings come back aligned to the stripped
+    // text, which matches what the client renders, so the karaoke
+    // word-highlight works without any extra token gymnastics.
+    const cleanText = stripDeliveryTags(input.text);
+
     // Inworld is hard-capped at 2,000 chars per request. We're well
     // under that for individual turns (30-60 words ≈ 200-400 chars),
     // but trim defensively in case a future prompt produces a long
     // paragraph — better to truncate than to 400 the whole turn.
-    const safeText = input.text.length > 1900 ? input.text.slice(0, 1900) : input.text;
+    const safeText = cleanText.length > 1900 ? cleanText.slice(0, 1900) : cleanText;
 
     const body = JSON.stringify({
       text: safeText,
@@ -79,10 +106,14 @@ export class InworldTtsProvider implements TTSProvider {
         audioEncoding: "MP3",
         sampleRateHertz: 44100
       },
-      // CREATIVE delivery mode unlocks the expressive non-verbals
-      // (audio tags + real disfluencies). STABLE is what we'd use if
-      // we needed deterministic enterprise voice; for an entertaining
-      // sports show, CREATIVE is the right default.
+      // CREATIVE delivery mode AMPLIFIES expressive non-verbals (audio
+      // tags like [deadpan]/[skeptical] and real disfluencies). Tags
+      // themselves work in all modes per Inworld's docs — CREATIVE
+      // just gives the model more latitude to act on them. STABLE is
+      // what we'd use if we needed deterministic enterprise voice; for
+      // an entertaining sports show, CREATIVE is the right default.
+      // (Also: tags MUST lead the utterance — see normalizeDeliveryTags
+      // in commentaryPrompts.ts for placement guarantees.)
       deliveryMode: "CREATIVE",
       temperature: 1.0,
       // Word-level alignment fires the audio-synced live transcript
@@ -111,7 +142,8 @@ export class InworldTtsProvider implements TTSProvider {
           "content-type": "application/json",
           accept: "application/json"
         },
-        body
+        body,
+        signal: input.signal
       });
       if (response.ok && response.body) break;
       if (response.status !== 429 && response.status < 500) {
@@ -173,6 +205,27 @@ export class InworldTtsProvider implements TTSProvider {
     }
     const combined = Buffer.concat(audioParts);
     const wordTimings = parseInworldWordTimings({ timestampInfo: lastTimingPayload });
+    // One-shot diagnostic for the wordTimings/audio-tag interaction:
+    // log the shape the FIRST time a turn contains delivery tags. We
+    // need to know whether Inworld's word-level timings exclude
+    // bracketed steering tags (good — karaoke alignment works) or
+    // include them as tokens (then the client-side display-strip
+    // doesn't match wordTimings indices). One log per process lifetime
+    // is enough; set INWORLD_LOG_TIMINGS=1 to force it on every turn
+    // for deeper debugging.
+    if (
+      !inworldTimingsLogged &&
+      wordTimings.length > 0 &&
+      /\[[a-zA-Z][a-zA-Z_\s,]{0,40}\]/.test(safeText)
+    ) {
+      inworldTimingsLogged = true;
+      console.warn(JSON.stringify({
+        event: "inworld.tts.first_tagged_timings",
+        textPreview: safeText.slice(0, 200),
+        timingCount: wordTimings.length,
+        firstFiveTimings: wordTimings.slice(0, 5).map((t) => t.text)
+      }));
+    }
     yield {
       id: crypto.randomUUID(),
       commentaryId: input.commentaryId,

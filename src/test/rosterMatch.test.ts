@@ -27,14 +27,22 @@ describe("rosterForListener", () => {
     expect(result?.ownerName).toBe("Sam");
   });
 
-  it("falls back to the first roster when rosterId doesn't match", () => {
+  it("returns undefined when rosterId doesn't match — no longer invents ownership", () => {
+    // History: this used to fall back to the first roster ("Alex").
+    // That gave a real listener with a stale rosterId a stranger's team
+    // narrated to them on-air. The fix is to refuse and let the host-
+    // side prompts handle the empty-starters branch.
     const result = rosterForListener(league([roster("a", "Alex"), roster("b", "Sam")]), "missing");
-    expect(result?.ownerName).toBe("Alex");
+    expect(result).toBeUndefined();
   });
 
-  it("falls back to the first roster when no rosterId is provided", () => {
+  it("returns undefined when no rosterId is provided — anonymous listener has no roster", () => {
+    // The user-reported bug: a fresh anonymous user (empty default
+    // profile) heard "Fourth & Snack — Mahomes, St. Brown, McCaffrey"
+    // because the first demo roster got auto-assigned. Refuse the
+    // fallback so anonymous broadcast mode actually fires clean.
     const result = rosterForListener(league([roster("a", "Alex"), roster("b", "Sam")]));
-    expect(result?.ownerName).toBe("Alex");
+    expect(result).toBeUndefined();
   });
 
   it("returns undefined when the league has no rosters", () => {

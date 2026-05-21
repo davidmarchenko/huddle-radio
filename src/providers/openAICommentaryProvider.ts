@@ -4,6 +4,7 @@ import { formatPeriodLabel } from "../shared/period";
 import {
   detectClarityIssues,
   joinDialogueLines,
+  normalizeDeliveryTags,
   parseDialogueResponse,
   resolveHostPersona,
   sanitizeCommentary,
@@ -15,6 +16,21 @@ export type { CommentaryDraftInput } from "./commentaryPrompts";
 
 export interface CommentaryProvider {
   id: string;
+  /**
+   * OPTIONAL — true streaming variant. When the provider implements
+   * this, the engine MAY consume turns as they arrive instead of
+   * waiting for the full draft. Saves ~5-10s on opener latency
+   * because TTS for line 1 can start before the LLM finishes
+   * line 3.
+   *
+   * Yields DialogueLine values as soon as each complete turn object
+   * lands in the streamed buffer. The consumer is expected to push
+   * each line into TTS immediately.
+   *
+   * Falls back to .draft() (full-wait) for providers that don't
+   * implement this — the engine checks for its presence.
+   */
+  draftStream?(input: CommentaryDraftInput, options?: { signal?: AbortSignal }): AsyncIterable<DialogueLine>;
   /**
    * Generate one TURN of multi-speaker dialogue. Returns ≥1 lines.
    * The first line's `hostId` is always `input.hostId` (the lead host
@@ -37,6 +53,128 @@ export interface CommentaryProvider {
  */
 function fallbackDialogue(text: string, hostId: HostId): DialogueLine[] {
   return [{ hostId, text: sanitizeCommentary(text, text) }];
+}
+
+/**
+ * Greedy partial-JSON extractor for the streaming dialogue path.
+ * Walks forward from `cursor` looking for complete `{speaker, text}`
+ * turn objects inside the `"turns": [...]` array. Returns each fully-
+ * closed object as it's found, plus the cursor position to resume
+ * from on the next chunk.
+ *
+ * Brace-counting only — no real JSON parser. We need to support
+ * partial buffers where the array hasn't closed and the most recent
+ * object is still mid-stream. Handles strings + backslash escapes so
+ * a brace inside a quoted text field doesn't bump the depth count.
+ */
+export function extractCompleteTurns(buffer: string, cursor: number): { turns: unknown[]; nextCursor: number } {
+  // First time through, advance the cursor to just past the '['
+  // that opens the turns array. After that, cursor points at the
+  // position to resume from (just past the last closed object).
+  //
+  // Prefer to anchor on `"turns": [` so preamble keys like
+  // `{"thinking": [...], "turns": [...]}` don't make us try to parse
+  // the wrong array. The naive first-`[` anchor breaks for any JSON
+  // that includes another array before the turns array — gpt-5-mini
+  // has been observed inserting auxiliary keys.
+  //
+  // The "turns" key itself may also stream in piece by piece. If we
+  // haven't seen the full `"turns": [` token yet, return empty and
+  // wait — extractCompleteTurns is called again on the next chunk
+  // with cursor still 0, so we re-try the anchor each time.
+  if (cursor === 0) {
+    const turnsMatch = buffer.match(/"turns"\s*:\s*\[/);
+    let arrayOpen: number;
+    if (turnsMatch && typeof turnsMatch.index === "number") {
+      arrayOpen = turnsMatch.index + turnsMatch[0].length - 1;
+    } else {
+      // No `"turns":` key seen yet. Wait — DO NOT fall back to the
+      // first `[`. If a model decides to emit a preamble array (e.g.
+      // `{"meta": ["a", "b", ...], "turns": [...]}`), the first `[`
+      // belongs to the meta array and parsing it as turn objects
+      // pollutes the output with strings we can't coerce into
+      // DialogueLines. Better to wait — if no `"turns":` ever
+      // arrives, the streaming path yields nothing and the caller
+      // falls back to parseDialogueResponse on the final
+      // output_text.done text, which has its own schema-tolerance.
+      return { turns: [], nextCursor: 0 };
+    }
+    cursor = arrayOpen + 1;
+  }
+  const turns: unknown[] = [];
+  let pos = cursor;
+  while (pos < buffer.length) {
+    // Skip whitespace + commas between objects.
+    while (pos < buffer.length && /[\s,]/.test(buffer[pos])) pos++;
+    if (pos >= buffer.length) break;
+    if (buffer[pos] === "]") {
+      // Array closed. Advance cursor past it so we don't re-scan.
+      return { turns, nextCursor: pos + 1 };
+    }
+    if (buffer[pos] !== "{") {
+      // Unexpected char — likely partial token mid-write. Wait for
+      // more buffer; don't advance cursor.
+      break;
+    }
+    // Find the matching close brace, tracking strings + escapes.
+    const objStart = pos;
+    let depth = 1;
+    let inString = false;
+    let escape = false;
+    let i = pos + 1;
+    while (i < buffer.length && depth > 0) {
+      const ch = buffer[i];
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\" && inString) {
+        escape = true;
+      } else if (ch === '"') {
+        inString = !inString;
+      } else if (!inString) {
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+      }
+      i++;
+    }
+    if (depth !== 0) {
+      // Object isn't closed yet — wait for more buffer. Don't
+      // advance cursor; this same object will be re-tested next chunk.
+      break;
+    }
+    const objStr = buffer.slice(objStart, i);
+    try {
+      turns.push(JSON.parse(objStr));
+    } catch {
+      // Malformed object. Give up on streaming — caller falls back to
+      // full-parse on the final buffer. Returning what we have so far.
+      return { turns, nextCursor: pos };
+    }
+    pos = i;
+  }
+  return { turns, nextCursor: pos };
+}
+
+/**
+ * Coerce one streamed JSON turn object into a DialogueLine. Mirrors
+ * the same validation parseDialogueResponse does on the
+ * non-streaming path: speaker must be a known host id, text must be
+ * a non-empty string post-sanitization. Returns undefined to skip
+ * the streamed turn cleanly (e.g. unknown speaker, empty text).
+ */
+function coerceStreamedTurn(raw: unknown, leadHostId: HostId): DialogueLine | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as { speaker?: unknown; text?: unknown };
+  const speakerRaw = typeof r.speaker === "string" ? r.speaker.toLowerCase() : "";
+  const knownHosts: HostId[] = ["maya", "theo", "cam"];
+  const hostId: HostId = (knownHosts as string[]).includes(speakerRaw)
+    ? (speakerRaw as HostId)
+    : leadHostId;
+  const textRaw = typeof r.text === "string" ? r.text.trim() : "";
+  if (textRaw.length === 0) return undefined;
+  // Mirror coerceSingleTurn: hoist delivery tags to the front so
+  // Inworld interprets them rather than reading them aloud. Tags stay
+  // in line.text; the client strips them for display.
+  return { hostId, text: normalizeDeliveryTags(textRaw) };
 }
 
 /**
@@ -449,6 +587,120 @@ export class OpenAICommentaryProvider implements CommentaryProvider {
       status: this.apiKey ? "ready" : "disabled",
       detail: this.apiKey ? `Configured for ${this.model} via the Responses API with reasoning=${this.reasoningEffort}.` : "Set OPENAI_API_KEY and COMMENTARY_PROVIDER=openai to enable."
     };
+  }
+
+  /**
+   * Streaming variant of draft(). Yields each complete turn as soon
+   * as its JSON object closes in the streamed buffer — engine pipes
+   * directly into per-line TTS. Saves ~5-10s on opener latency.
+   *
+   * Does NOT run the clarity retry (the retry needs the full output
+   * + a second LLM round-trip, which would defeat the streaming
+   * speedup). The streaming path is for opener/first-impression
+   * latency; the clarity retry path is for the synchronous .draft()
+   * call where a second pass is acceptable. Tick commentary uses
+   * .draft() so it still benefits from the retry.
+   *
+   * Yields nothing and returns when:
+   *   - No API client configured.
+   *   - Stream fails mid-way (logs a fallback event so the engine
+   *     can decide whether to retry full-draft).
+   *   - JSON streamer can't extract a single valid turn from the
+   *     finished buffer (model returned something we can't parse).
+   */
+  async *draftStream(
+    input: CommentaryDraftInput,
+    options?: { signal?: AbortSignal }
+  ): AsyncIterable<DialogueLine> {
+    if (!this.client) {
+      logFallback("openai-commentary: no API client configured (set OPENAI_API_KEY)");
+      return;
+    }
+    const leadHostId: HostId = input.hostId ?? "theo";
+    const persona = resolveHostPersona(leadHostId);
+    const kind: CommentaryKind = input.kind ?? "play";
+    const { system, payload } = selectCommentaryPrompt(input, persona, kind);
+    const effort: "minimal" | "low" | "medium" | "high" =
+      this.reasoningEffort === "none" ? "minimal" : this.reasoningEffort;
+    const reasoning = this.model.startsWith("gpt-5") ? { effort } : undefined;
+    let stream;
+    try {
+      // The OpenAI SDK accepts AbortSignal via the second-arg
+      // request options. Threading it from the engine's `stopped`
+      // flag means a listener disconnect server-aborts the stream
+      // instead of letting it run to completion on our bill.
+      stream = await this.client.responses.create(
+        {
+          model: this.model,
+          max_output_tokens: kind === "opener" ? 4000 : 3000,
+          reasoning,
+          instructions: system,
+          input: JSON.stringify(payload),
+          stream: true
+        },
+        options?.signal ? { signal: options.signal } : undefined
+      );
+    } catch (error) {
+      logFallback(`openai-commentary: stream open failed: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    let buffer = "";
+    let cursor = 0;
+    let extracted = 0;
+    // Some Responses API events emit a final `output_text.done` with
+    // the canonical text. If the delta-only path missed any tokens
+    // (or model didn't emit deltas at all — happens with very short
+    // responses), we fall back to this text post-stream.
+    let doneText: string | undefined;
+    try {
+      for await (const event of stream as AsyncIterable<{
+        type: string;
+        delta?: string;
+        text?: string;
+      }>) {
+        if (options?.signal?.aborted) break;
+        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+          buffer += event.delta;
+          const result = extractCompleteTurns(buffer, cursor);
+          cursor = result.nextCursor;
+          for (const turn of result.turns) {
+            extracted += 1;
+            const line = coerceStreamedTurn(turn, leadHostId);
+            if (line) yield line;
+          }
+        } else if (event.type === "response.output_text.done" && typeof event.text === "string") {
+          doneText = event.text;
+        }
+      }
+    } catch (error) {
+      // Abort surfaces as an AbortError here; log and exit cleanly
+      // without throwing — engine's draft() fallback handles empty
+      // streams. Non-abort errors are logged at the same level so
+      // operators see the signal.
+      const msg = error instanceof Error ? error.message : String(error);
+      const isAbort = options?.signal?.aborted || /aborted|cancel/i.test(msg);
+      logFallback(
+        `openai-commentary: stream loop ${isAbort ? "aborted" : "threw"}: ${msg}`
+      );
+      if (isAbort) return;
+    }
+    // If we extracted nothing from deltas, fall back to the canonical
+    // done text (preferred) or the accumulated buffer. parseDialogueResponse
+    // handles markdown fences, preamble keys, and other quirks the
+    // streaming parser intentionally skips.
+    if (extracted === 0) {
+      const finalText = doneText && doneText.length > buffer.length ? doneText : buffer;
+      if (finalText.trim().length > 0) {
+        const parsed = parseDialogueResponse(finalText, leadHostId, input.group.listener.name);
+        if (parsed && parsed.length > 0) {
+          for (const line of parsed) yield line;
+        } else {
+          logFallback(
+            `openai-commentary: stream finished with unextractable buffer (delta-len=${buffer.length}, done-len=${doneText?.length ?? 0})`
+          );
+        }
+      }
+    }
   }
 
   /**

@@ -12739,6 +12739,20 @@ body {
   min-width: 0;
 }
 
+/* Stabilize the meta-text column width during the opening warmup. The
+   warmup cycles three status lines of different lengths every 2.5s
+   ("Cam's at the desk." / "Maya's pulling stats." / "Theo's reading
+   the room.") and the parent motion.div has a `layout` prop, which
+   animates a width change whenever the inner text resizes. Pinning a
+   floor wide enough for the longest warmup line means the cycle does
+   NOT trigger a parent layout animation — the mini-host-stack stays
+   put instead of getting dragged sideways with every status flip.
+   Later (post-warmup) messages can still grow the column past this
+   floor; once it grows it stays grown, which is fine. */
+.huddle-app .player-show-meta {
+  min-width: 14rem;
+}
+
 .huddle-app .player-show strong {
   font-size: 0.92rem;
   font-weight: var(--hr-weight-semi);

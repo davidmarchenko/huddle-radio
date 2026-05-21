@@ -18,9 +18,21 @@ const HOSTS_BY_ID = Object.fromEntries(HUDDLE_HOSTS.map((host) => [host.id, host
 // drop any token that sits inside an unclosed `[...]` span. The
 // pure-regex check below remains for callers that only have a
 // single token in hand.
-const AUDIO_TAG_PATTERN = /^\s*\[[a-z_][a-z_\s]*\]\s*$/i;
+// Token-level audio tag check — matches when a whole wordTimings token
+// IS a complete tag (e.g. "[laughs]"). Comma support matches the
+// server-side normalizer which combines tags into "[deadpan, skeptical]".
+const AUDIO_TAG_PATTERN = /^\s*\[[a-zA-Z][a-zA-Z_\s,]{0,40}\]\s*$/;
 function isAudioTagToken(text: string): boolean {
   return AUDIO_TAG_PATTERN.test(text);
+}
+
+/** Strip every audio tag span from a chunk of display text. Used at
+ *  the static-fallback render sites (no karaoke wordTimings) so the
+ *  spotlight + transcript don't show `[deadpan] Six targets...` as
+ *  visible text. Mirrors the server-side stripDeliveryTags shape. */
+const DISPLAY_AUDIO_TAG_PATTERN = /\[[a-zA-Z][a-zA-Z_\s,]{0,40}\]/g;
+export function stripAudioTagsForDisplay(text: string): string {
+  return text.replace(DISPLAY_AUDIO_TAG_PATTERN, "").replace(/\s+/g, " ").trim();
 }
 
 /** Drop every token that's part of an audio-tag span — whether the
@@ -267,7 +279,9 @@ function SpotlightTranscript({
             {activeTimings?.wordTimings && activeTimings.wordTimings.length > 0 ? (
               <KaraokeText wordTimings={activeTimings.wordTimings} elapsedMs={elapsedMs} />
             ) : (
-              <span className="live-transcript-word is-current">{activeLine?.text ?? ""}</span>
+              <span className="live-transcript-word is-current">
+                {activeLine ? stripAudioTagsForDisplay(activeLine.text) : ""}
+              </span>
             )}
             {activeTimings?.mentionCues && activeTimings.mentionCues.length > 0 && (
               <MentionChipRow
@@ -452,7 +466,9 @@ export function PlayerBarCaptions({
               {timings?.wordTimings && timings.wordTimings.length > 0 ? (
                 <KaraokeText wordTimings={timings.wordTimings} elapsedMs={elapsedMs} />
               ) : (
-                <span className="live-transcript-word is-current">{line.text}</span>
+                <span className="live-transcript-word is-current">
+                  {stripAudioTagsForDisplay(line.text)}
+                </span>
               )}
               <span className="player-captions-tail" aria-hidden="true" />
             </div>
@@ -530,7 +546,7 @@ function PriorCaption({ turn, lineIndex }: { turn: LivecastCommentary; lineIndex
   const host = HOSTS_BY_ID[line.hostId];
   // Strip audio tags from the prior-line preview text — they're
   // performance cues, not words listeners want to scan back over.
-  const text = line.text.replace(/\[[a-z_][a-z_\s]*\]/gi, "").replace(/\s+/g, " ").trim();
+  const text = stripAudioTagsForDisplay(line.text);
   return (
     <p className="spotlight-prior-line" data-accent={host?.accent ?? "violet"}>
       <span className="spotlight-prior-speaker">{host?.name ?? line.hostId}</span>
@@ -683,7 +699,7 @@ function TranscriptLine({
           // No timings (other TTS providers, or chunk hasn't arrived
           // yet) — render the full text without karaoke. Still readable.
           <span className={isActive ? "live-transcript-word is-current" : "live-transcript-word"}>
-            {text}
+            {stripAudioTagsForDisplay(text)}
           </span>
         )}
       </div>

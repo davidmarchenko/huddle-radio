@@ -289,6 +289,204 @@ async function* streamDialogueAudio(
   }
 }
 
+/**
+ * Compose multiple AbortSignals into one. Uses the native
+ * `AbortSignal.any` when available (Node 20+, modern browsers); falls
+ * back to a manual listener-based merge on older runtimes.
+ *
+ * The streaming opener uses this to layer a per-opener "first-line
+ * watchdog" signal on top of the engine-wide stop signal — either
+ * triggering aborts the LLM stream, neither lives past show end.
+ */
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  const native = (AbortSignal as unknown as { any?: (s: AbortSignal[]) => AbortSignal }).any;
+  if (typeof native === "function") return native.call(AbortSignal, signals);
+  const composite = new AbortController();
+  for (const s of signals) {
+    if (s.aborted) {
+      composite.abort(s.reason);
+      return composite.signal;
+    }
+    s.addEventListener("abort", () => composite.abort(s.reason), { once: true });
+  }
+  return composite.signal;
+}
+
+/**
+ * Streaming variant of `streamDialogueAudio` for the opener path: lines
+ * arrive from the LLM stream instead of being known up-front, so per-line
+ * TTS synth kicks off the instant each line lands. End-to-end win: TTS
+ * for line 1 can start while the LLM is still emitting line 2/3, saving
+ * roughly the LLM's tail-emit time on the listener's clock.
+ *
+ * Same head-of-line drain contract as the array version: chunks are
+ * yielded strictly in line order. `collectInto` is populated as a
+ * side-effect — the caller needs the full lines array AFTER the
+ * generator completes for downstream summary recording, handoff
+ * detection, and recordCommentary book-keeping.
+ *
+ * This path is only wired into the opener and only when the provider
+ * exposes draftStream AND the TTS provider lacks synthesizeDialogue
+ * (T2D needs the full turn list, so streaming buys nothing there).
+ */
+async function* streamDialogueAudioFromStream(
+  lineStream: AsyncIterable<DialogueLine>,
+  commentaryId: string,
+  synthesize: (input: {
+    commentaryId: string;
+    text: string;
+    hostId?: HostId;
+    signal?: AbortSignal;
+  }) => AsyncIterable<TTSAudioChunk>,
+  isStopped: () => boolean,
+  logger: ShowEngineLogger,
+  collectInto: DialogueLine[],
+  // Called synchronously the moment a new line is appended to
+  // `collectInto`, BEFORE its TTS synth launches. The engine uses this
+  // to push a cumulative commentary event so the client has the line
+  // text before any audio chunks for that line arrive — without this
+  // the transcript panel is empty while audio plays.
+  onLineCollected?: (line: DialogueLine) => void
+): AsyncGenerator<TTSAudioChunk> {
+  type LineState = {
+    chunks: TTSAudioChunk[];
+    done: boolean;
+    error: Error | undefined;
+    line: DialogueLine;
+  };
+  // Per-line synth timeout — one stuck TTS request shouldn't hang the
+  // whole opener. 20s is generous (real synth runs ~300ms-2s) but
+  // bounded enough that listeners get an audio gap and move on rather
+  // than a frozen page.
+  const PER_LINE_SYNTH_TIMEOUT_MS = 20_000;
+  const lineStates: LineState[] = [];
+  const launches: Promise<void>[] = [];
+  let streamDone = false;
+  let notify: (() => void) | undefined;
+  const ping = () => {
+    const cb = notify;
+    notify = undefined;
+    cb?.();
+  };
+
+  // Consumer: as each line arrives from the LLM stream, push to
+  // collectInto for the caller, fire the onLineCollected callback
+  // (engine pushes commentary update), push to lineStates for the
+  // drainer, and kick off this line's TTS synth in the background.
+  const consumer = (async () => {
+    try {
+      for await (const line of lineStream) {
+        if (isStopped()) break;
+        const lineIndex = lineStates.length;
+        collectInto.push(line);
+        try {
+          onLineCollected?.(line);
+        } catch (cbErr) {
+          logger.warn(
+            { err: cbErr instanceof Error ? cbErr.message : String(cbErr) },
+            "onLineCollected callback threw (continuing)"
+          );
+        }
+        lineStates.push({ chunks: [], done: false, error: undefined, line });
+        const launch = (async () => {
+          // Per-line AbortController feeds the signal to the underlying
+          // synth (HTTP fetch / WS socket close). When the timeout fires
+          // we abort, which gets the provider to release its resources
+          // promptly instead of leaking the connection until the
+          // iterator naturally finishes (could be 60+ seconds on a stuck
+          // ElevenLabs WS, billable + connection-pool-eating).
+          const lineAbort = new AbortController();
+          let synthTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            const synthIter = synthesize({
+              commentaryId,
+              text: line.text,
+              hostId: line.hostId,
+              signal: lineAbort.signal
+            });
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              synthTimer = setTimeout(() => {
+                lineAbort.abort();
+                reject(new Error(`Per-line synth timeout after ${PER_LINE_SYNTH_TIMEOUT_MS}ms`));
+              }, PER_LINE_SYNTH_TIMEOUT_MS);
+            });
+            const synthLoop = (async () => {
+              for await (const chunk of synthIter) {
+                if (isStopped()) {
+                  lineAbort.abort();
+                  return;
+                }
+                const annotated: TTSAudioChunk = { ...chunk, lineIndex, lineHostId: line.hostId };
+                lineStates[lineIndex].chunks.push(annotated);
+                ping();
+              }
+            })();
+            await Promise.race([synthLoop, timeoutPromise]);
+          } catch (error) {
+            lineStates[lineIndex].error = error instanceof Error ? error : new Error(String(error));
+            logger.warn(
+              {
+                commentaryId,
+                lineIndex,
+                hostId: line.hostId,
+                textPreview: line.text.slice(0, 80),
+                err: lineStates[lineIndex].error?.message
+              },
+              "Per-line TTS synthesis failed (streaming opener path)"
+            );
+          } finally {
+            if (synthTimer) clearTimeout(synthTimer);
+            lineStates[lineIndex].done = true;
+            ping();
+          }
+        })();
+        launches.push(launch);
+        ping();
+      }
+    } catch (error) {
+      logger.warn(
+        {
+          commentaryId,
+          err: error instanceof Error ? error.message : String(error)
+        },
+        "Opener line stream threw mid-flight"
+      );
+    } finally {
+      streamDone = true;
+      ping();
+    }
+  })();
+
+  let currentLine = 0;
+  let totalYielded = 0;
+  while (!streamDone || currentLine < lineStates.length) {
+    if (isStopped()) break;
+    if (currentLine >= lineStates.length) {
+      // No new lines yet — wait for the consumer to push one.
+      await new Promise<void>((resolve) => { notify = resolve; });
+      continue;
+    }
+    while (lineStates[currentLine].chunks.length > 0) {
+      const chunk = lineStates[currentLine].chunks.shift()!;
+      totalYielded += 1;
+      yield chunk;
+    }
+    if (lineStates[currentLine].done) {
+      currentLine += 1;
+      continue;
+    }
+    await new Promise<void>((resolve) => { notify = resolve; });
+  }
+
+  await consumer;
+  await Promise.allSettled(launches);
+
+  if (totalYielded === 0 && collectInto.length > 0) {
+    const firstError = lineStates.find((s) => s.error)?.error;
+    if (firstError) throw firstError;
+  }
+}
+
 /** Coerce a partial TurnSummary into the full shape, falling back to safe
  *  defaults so a half-populated summary (early failure) still serializes
  *  cleanly to JSON and the diagnostics UI. */
@@ -368,6 +566,17 @@ export class ShowEngine {
   private readonly logger: ShowEngineLogger;
 
   private stopped = false;
+  /** Aborts in-flight commentary streams the moment stop() is called.
+   *  Without this, an OpenAI streaming response continues consuming
+   *  tokens (and billing us) until the model finishes — even after
+   *  the listener has disconnected. The opener path passes this
+   *  signal to the provider's draftStream. */
+  private readonly abortCtrl = new AbortController();
+  /** Set during the streaming opener path. setPaused(false) reads it
+   *  to emit a "catch-up" commentary push for whatever lines were
+   *  collected during the pause window. Cleared once the stream
+   *  completes or aborts. */
+  private openerInFlight?: LivecastCommentary;
   /** Listener-initiated pause. When true, the tick interval handler
    *  short-circuits BEFORE any LLM / TTS calls — no commentary tokens,
    *  no voice credits, no audio chunks shipped over SSE. Heartbeat +
@@ -478,6 +687,17 @@ export class ShowEngine {
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    // Abort any in-flight LLM stream so we stop paying for tokens
+    // the listener will never hear. The signal is consumed by the
+    // OpenAI Responses API client; the streaming opener loop catches
+    // the AbortError cleanly without throwing.
+    try {
+      this.abortCtrl.abort();
+    } catch {
+      // AbortController.abort() doesn't throw in any spec'd browser
+      // or Node version, but defensively swallow — we don't want the
+      // stop() path to throw during shutdown.
+    }
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.healthTimer) clearInterval(this.healthTimer);
     this.tickTimer = undefined;
@@ -504,6 +724,22 @@ export class ShowEngine {
         : "Resumed — back on the air.",
       level: "info"
     });
+    // Streaming-opener catch-up on resume. While paused, the streaming
+    // opener path defers its cumulative commentary pushes (otherwise
+    // the transcript runs ahead of the audio the listener can't hear).
+    // On resume, fire one catch-up push with whatever was collected.
+    // The audio chunks themselves landed in the SSE queue normally and
+    // are already buffered client-side — the client's per-chunk
+    // isPaused() check holds them until the listener unpauses — so
+    // the listener gets the full opener (transcript + audio) on
+    // resume. Stays a no-op when there's no streaming opener in flight.
+    if (!paused && this.openerInFlight) {
+      this.queue.push({
+        type: "commentary",
+        commentary: this.openerInFlight,
+        partial: true
+      });
+    }
   }
 
   async start(request: LivecastRequest): Promise<void> {
@@ -650,7 +886,41 @@ export class ShowEngine {
             ? realCommentaryProvider.lastProviderId ?? realCommentaryProvider.id
             : realCommentaryProvider.id;
         return lines;
-      }
+      },
+      // Streaming opener path. Exposed only when:
+      //   - We're not budget-degraded (Local doesn't stream and the
+      //     downstream wrapper would block on a synchronous template).
+      //   - The chain / provider has a draftStream method.
+      // The engine's opener path checks `typeof draftStream === function`
+      // to decide; returning undefined here disables streaming cleanly.
+      draftStream: typeof realCommentaryProvider.draftStream === "function"
+        ? (
+            input: Parameters<typeof realCommentaryProvider.draft>[0],
+            options?: { signal?: AbortSignal }
+          ): AsyncIterable<DialogueLine> => {
+            if (budget.isCommentaryDegraded()) {
+              return (async function* () { /* fall back to .draft() in the engine */ })();
+            }
+            incrementCounter("commentaryRequests");
+            const stream = realCommentaryProvider.draftStream!(input, options);
+            // After the stream completes, stamp lastCommentaryProviderId
+            // so the turn summary reflects which provider handled this
+            // opener. The chain updates _lastProviderId only after at
+            // least one line is yielded.
+            return (async function* () {
+              try {
+                for await (const line of stream) {
+                  yield line;
+                }
+              } finally {
+                lastCommentaryProviderId =
+                  realCommentaryProvider instanceof CommentaryProviderChain
+                    ? realCommentaryProvider.lastProviderId ?? realCommentaryProvider.id
+                    : realCommentaryProvider.id;
+              }
+            })();
+          }
+        : undefined
     };
     const commentaryProviderLabel = () => lastCommentaryProviderId;
 
@@ -665,6 +935,9 @@ export class ShowEngine {
     const ttsProvider = {
       synthesize: (input: Parameters<typeof realTtsProvider.synthesize>[0]) => {
         incrementCounter("ttsRequests");
+        // Forward the optional `signal` to the real provider so timeouts /
+        // listener disconnects propagate down to fetch + WS. The mock
+        // provider ignores it (no resources to release).
         return budget.isTtsDegraded()
           ? mockTtsProvider.synthesize(input)
           : realTtsProvider.synthesize(input);
@@ -815,6 +1088,19 @@ export class ShowEngine {
       };
       try {
         const listenerRoster = rosterForListener(fantasy, request.group.listener.rosterId);
+        // Detect anonymous-broadcast mode using the SAME signals the
+        // prompt anonymous-mode check uses — empty name + no starters
+        // + no friends + no favoriteTeam. Includes favoriteTeam because
+        // buildListenerCharacter returns non-null when ONLY favoriteTeam
+        // is set ("KC fan"), and the prompt's personalized-mode trigger
+        // fires whenever character is non-null. Mismatching this log
+        // with the prompt trigger would leave operators unable to tell
+        // which mode actually fired.
+        const isAnonymousBroadcast =
+          !request.group.listener.name?.trim() &&
+          !request.group.listener.favoriteTeam?.trim() &&
+          (listenerRoster?.starters.length ?? 0) === 0 &&
+          (request.group.friends?.length ?? 0) === 0;
         this.logger.info(
           {
             listenerName: request.group.listener.name,
@@ -822,7 +1108,8 @@ export class ShowEngine {
             listenerRosterTeamName: listenerRoster?.teamName,
             starterCount: listenerRoster?.starters.length ?? 0,
             starters: listenerRoster?.starters.map((s) => `${s.name} (${s.position}, ${s.proTeam})`),
-            hostId: "theo"
+            hostId: "theo",
+            anonymousBroadcast: isAnonymousBroadcast
           },
           "Show opener context"
         );
@@ -891,12 +1178,175 @@ export class ShowEngine {
           );
           openerSummary.producer = `${producerAgent.id}:error`;
         }
-        const openerLines = await commentaryProvider.draft({
-          ...openerDraftInput,
-          kind: "opener",
-          priorContext: request.priorContext,
-          directive: openerDirective
-        });
+        // Streaming opener path — only when ALL of these hold:
+        //   1. The provider exposes draftStream (currently
+        //      OpenAICommentaryProvider only).
+        //   2. TTS is enabled (otherwise no audio dispatch to overlap
+        //      with the LLM stream, so the speedup vanishes).
+        //   3. The TTS provider lacks synthesizeDialogue (T2D demands
+        //      the full turn list as one call, so the streaming path
+        //      buys nothing for ElevenLabs T2D / Inworld). Per-line
+        //      streaming providers benefit because line-1 synth can
+        //      start while the LLM is still emitting line-3.
+        // Falls through to the array-based draft() path otherwise.
+        let useStreamingOpener =
+          typeof commentaryProvider.draftStream === "function" &&
+          request.ttsEnabled &&
+          !ttsProvider.synthesizeDialogue;
+        const openerLines: DialogueLine[] = [];
+        // Tracks whether at least one cumulative commentary event was
+        // pushed during streaming. If true, the post-stream block
+        // pushes a final cumulative commentary instead of a fresh one,
+        // letting the client merge by id and end up with the complete
+        // lines array. If false (no lines streamed OR fallback path),
+        // the post-stream block pushes the canonical single commentary
+        // event the array path uses.
+        let pushedDuringStream = false;
+        if (useStreamingOpener) {
+          // Pre-emit budget check + degrade notice on the OPENER text
+          // length we expect. We don't have opener.text yet (lines
+          // arrive incrementally), so honor the current budget snapshot
+          // and let the post-stream block do the final recordTts /
+          // recordCommentary call with the real length.
+          if (this.budget.shouldDegradeTts()) {
+            this.logger.warn(
+              { snapshot: this.budget.snapshot() },
+              "Show TTS budget exceeded; degrading to mock"
+            );
+            this.queue.push({
+              type: "status",
+              message: "TTS budget reached — silent for the rest of the show.",
+              level: "warn"
+            });
+          }
+          // Per-opener AbortController layered on top of the engine-wide
+          // stop signal. Fires when the first-line watchdog trips —
+          // the watchdog cancels just this opener, NOT the engine. We
+          // can't reuse this.abortCtrl because that's the stop signal
+          // and aborting it would tear down the whole show.
+          const openerAbort = new AbortController();
+          // 6s no-first-line watchdog. If the LLM stream is going to
+          // produce zero turns (model rejected the prompt, off-rails
+          // output, weird empty response), bail early instead of
+          // waiting the full max_output_tokens budget — which on
+          // gpt-5-mini reasoning paths can stretch to 15-20s. With the
+          // watchdog, worst-case empty stream is 6s + draft() fallback
+          // (~5-7s) ≈ 13s. Without, it was 20-25s of dead air.
+          const FIRST_LINE_TIMEOUT_MS = 6000;
+          const firstLineTimer = setTimeout(() => {
+            this.logger.warn(
+              { commentaryId: opener.id, timeoutMs: FIRST_LINE_TIMEOUT_MS },
+              "Streaming opener: no first line in watchdog window — aborting + falling back to draft()"
+            );
+            openerAbort.abort();
+          }, FIRST_LINE_TIMEOUT_MS);
+          const composedSignal = anySignal([this.abortCtrl.signal, openerAbort.signal]);
+          const draftStreamIter = commentaryProvider.draftStream!(
+            {
+              ...openerDraftInput,
+              kind: "opener",
+              priorContext: request.priorContext,
+              directive: openerDirective
+            },
+            { signal: composedSignal }
+          );
+          try {
+            for await (const audio of streamDialogueAudioFromStream(
+              draftStreamIter,
+              opener.id,
+              ttsProvider.synthesize,
+              () => this.stopped,
+              this.logger,
+              openerLines,
+              (newLine) => {
+                // Clear the no-first-line watchdog the moment the
+                // first line actually lands. The watchdog is only
+                // protective; once we're getting output we trust
+                // the stream to complete.
+                if (openerLines.length === 1) {
+                  clearTimeout(firstLineTimer);
+                  this.lastCommentaryAtMs = Date.now();
+                }
+                // Build the cumulative commentary snapshot. We always
+                // update `openerInFlight` so setPaused(false) can do a
+                // catch-up push on resume — but we only PUSH it onto
+                // the SSE queue when NOT paused. Without this, the
+                // transcript panel runs ahead of audio while the
+                // listener has the show paused: client receives lines
+                // 2/3 over the wire even though audio isn't allowed to
+                // play, defeating the "never show a future turn the
+                // listener hasn't heard yet" invariant.
+                opener.lines = [...openerLines];
+                opener.text = joinDialogueLines(openerLines);
+                opener.hostId = openerLines[0].hostId;
+                opener.producerBeats = openerDirective?.beats.map((b) => b.sourceKind);
+                this.openerInFlight = opener;
+                if (!this.paused) {
+                  this.queue.push({
+                    type: "commentary",
+                    commentary: opener,
+                    partial: true
+                  });
+                  pushedDuringStream = true;
+                }
+                void newLine;
+              }
+            )) {
+              if (this.stopped) break;
+              opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
+              // Note: openerLines is populated as lines arrive, so
+              // lookup by chunk.lineIndex resolves the moment the
+              // chunk's line lands. The chunk can't arrive before its
+              // line is in the array (synth is launched in the same
+              // tick the line is pushed).
+              const enriched = enrichChunkWithMentionCues(audio, openerLines, {
+                starters: listenerRoster?.starters,
+                game,
+                markets: undefined,
+                listenerName: request.group.listener?.name
+              });
+              this.queue.push({ type: "tts", audio: enriched });
+              openerSummary.ttsChunks = (openerSummary.ttsChunks ?? 0) + 1;
+            }
+          } catch (streamErr) {
+            // If the streaming opener throws (e.g. partial stream + no
+            // recoverable buffer), fall through to the array path so
+            // the listener still gets an opener. Logging keeps the
+            // signal visible in diagnostics.
+            this.logger.warn(
+              { err: streamErr instanceof Error ? streamErr.message : String(streamErr) },
+              "Streaming opener path threw — falling back to draft()"
+            );
+            openerLines.length = 0;
+          } finally {
+            clearTimeout(firstLineTimer);
+            this.openerInFlight = undefined;
+          }
+          if (openerLines.length === 0) {
+            // Stream produced nothing (closed early, parser couldn't
+            // extract a turn). Fall back to the synchronous draft path
+            // AND flip useStreamingOpener=false so the TTS dispatch
+            // block below actually runs — otherwise the fallback path
+            // would have lines but never emit audio.
+            const fallback = await commentaryProvider.draft({
+              ...openerDraftInput,
+              kind: "opener",
+              priorContext: request.priorContext,
+              directive: openerDirective
+            });
+            openerLines.push(...fallback);
+            useStreamingOpener = false;
+            pushedDuringStream = false;
+          }
+        } else {
+          const drafted = await commentaryProvider.draft({
+            ...openerDraftInput,
+            kind: "opener",
+            priorContext: request.priorContext,
+            directive: openerDirective
+          });
+          openerLines.push(...drafted);
+        }
         opener.lines = openerLines;
         opener.text = joinDialogueLines(openerLines);
         opener.hostId = openerLines[0].hostId;
@@ -934,38 +1384,43 @@ export class ShowEngine {
         }
         if (request.ttsEnabled) {
           this.budget.recordTts(opener.text);
-          if (this.budget.shouldDegradeTts()) {
-            this.logger.warn(
-              { snapshot: this.budget.snapshot() },
-              "Show TTS budget exceeded; degrading to mock"
-            );
-            this.queue.push({
-              type: "status",
-              message: "TTS budget reached — silent for the rest of the show.",
-              level: "warn"
-            });
-          }
-          // Per-line streaming TTS, parallelized across lines but
-          // emitted in line order via streamDialogueAudio. First
-          // audio reaches the listener in ~300ms (flash WS first
-          // byte) regardless of how many lines the opener has.
-          for await (const audio of selectTTSStrategy(
-            openerLines,
-            opener.id,
-            ttsProvider,
-            () => this.stopped,
-            this.logger
-          )) {
-            if (this.stopped) break;
-            opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
-            const enriched = enrichChunkWithMentionCues(audio, openerLines, {
-              starters: listenerRoster?.starters,
-              game,
-              markets: undefined,
-              listenerName: request.group.listener?.name
-            });
-            this.queue.push({ type: "tts", audio: enriched });
-            openerSummary.ttsChunks = (openerSummary.ttsChunks ?? 0) + 1;
+          if (!useStreamingOpener) {
+            // Array-based path: dispatch all TTS after lines are known.
+            // Honor the same degrade notice the streaming path emits
+            // before dispatch.
+            if (this.budget.shouldDegradeTts()) {
+              this.logger.warn(
+                { snapshot: this.budget.snapshot() },
+                "Show TTS budget exceeded; degrading to mock"
+              );
+              this.queue.push({
+                type: "status",
+                message: "TTS budget reached — silent for the rest of the show.",
+                level: "warn"
+              });
+            }
+            // Per-line streaming TTS, parallelized across lines but
+            // emitted in line order via streamDialogueAudio. First
+            // audio reaches the listener in ~300ms (flash WS first
+            // byte) regardless of how many lines the opener has.
+            for await (const audio of selectTTSStrategy(
+              openerLines,
+              opener.id,
+              ttsProvider,
+              () => this.stopped,
+              this.logger
+            )) {
+              if (this.stopped) break;
+              opener.latency.ttsFirstAudioMs ??= audio.latencyMs;
+              const enriched = enrichChunkWithMentionCues(audio, openerLines, {
+                starters: listenerRoster?.starters,
+                game,
+                markets: undefined,
+                listenerName: request.group.listener?.name
+              });
+              this.queue.push({ type: "tts", audio: enriched });
+              openerSummary.ttsChunks = (openerSummary.ttsChunks ?? 0) + 1;
+            }
           }
           openerSummary.ttsFirstByteMs = opener.latency.ttsFirstAudioMs;
         }

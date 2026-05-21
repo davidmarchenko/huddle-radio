@@ -132,8 +132,16 @@ function buildProducerSystemPrompt(): string {
     "",
     "If `slate` is set in the payload, the show is in DISCOVERY mode — it's surveying tonight's whole slate, not bound to one game. The opener beat (when `openerMode` is also true) should reference `slate.totalGames` and `slate.starterGames` to signal breadth. After the opener, slate mode auto-pivots between games at game-end (the engine fires gamePivotMode for you); your tick-level beats stay anchored on the current game.",
     "",
-    "If `openerMode === true`, this is the SHOW OPENER — the very first turn the listener will hear. The whole show pivots on whether they smile in the first 15 seconds. Output 2-3 beats:",
-    "  • Beat 1 (turnCount 2): lead host frames the room — name the listener (AT MOST ONCE across the whole open), name their fantasy team, name the matchup (`play.team` is in the game), set tone. Avoid 'welcome back / welcome to.' sourceKind: 'play'.",
+    "If `openerMode === true`, this is the SHOW OPENER — the very first turn the listener will hear. The whole show pivots on whether they smile in the first 15 seconds.",
+    "",
+    "If listener.name is EMPTY AND listener.starters is empty AND friends is empty, ANONYMOUS BROADCAST MODE applies — the listener hasn't told us who they are. Output 2-3 short beats that are PURE SPORTSCENTER (no listener address, no fantasy framing, no team-allegiance assumption):",
+    "  • Beat 1 (turnCount 1): lead host opens on the MATCHUP itself or a HEADLINE PLAYER in the game. Like a televised broadcast cold-open. sourceKind: 'play'. NO listener address.",
+    "  • Beat 2 (turnCount 1): a different host adds a take or a storyline angle on the same game. sourceKind: 'play'.",
+    "  • Beat 3 (turnCount 1, optional): close with a forward beat — what to watch next series. sourceKind: 'play'.",
+    "Total: sum of turnCounts ≤ 3. Each turn is 8-20 words. No 'welcome.' No 'your team.' Anchor on names/numbers.",
+    "",
+    "OTHERWISE (PERSONALIZED MODE — listener.name is set OR starters has entries), output 2-3 beats:",
+    "  • Beat 1 (turnCount 2): lead host frames the room — name the listener (AT MOST ONCE across the whole open), name their fantasy team if present, name the matchup (`play.team` is in the game), set tone. Avoid 'welcome back / welcome to.' sourceKind: 'play'.",
     "  • Beat 2 (turnCount 1-2): a different host pulls on the listener's lineup — `listener.starters` carries name/position/proTeam. Pick the headliner; find ONE angle (matchup, role, prediction). If starters is empty, pivot to the matchup itself; do NOT invent players. sourceKind: 'enrichment' if anchored to a starter, else 'play'.",
     "  • Beat 3 (turnCount 1, optional): close with a forward take that hands off into the live show. Cam-shaped energy. sourceKind: 'play'.",
     "Total open should fit ~45-60s of audio (sum of turnCounts ≤ 5).",
@@ -247,8 +255,28 @@ export function parseProducerOutput(raw: string): ProducerDirective {
   if (beats.length === 0) {
     throw new Error("Producer output produced no usable beats");
   }
+  // Total-turn cap. The producer prompt asks for ≤5 turns total for
+  // personalized openers and ≤3 for anonymous/ticks, but doesn't always
+  // honor it — we observed 7- and 8-line ticks in live testing. That
+  // wrecks the SportsCenter cadence and bloats audio time. Hard cap at
+  // 5 by trimming the LAST beats' turnCounts (preserving the first
+  // beat's full count so the lead-host setup never gets clipped).
+  const HARD_TOTAL_CAP = 5;
+  const cappedBeats = beats.slice(0, 3);
+  let running = 0;
+  for (let i = 0; i < cappedBeats.length; i += 1) {
+    const remaining = HARD_TOTAL_CAP - running;
+    if (remaining <= 0) {
+      cappedBeats.length = i;
+      break;
+    }
+    if (cappedBeats[i].turnCount > remaining) {
+      cappedBeats[i] = { ...cappedBeats[i], turnCount: remaining as 1 | 2 | 3 };
+    }
+    running += cappedBeats[i].turnCount;
+  }
   return {
-    beats: beats.slice(0, 3) as ProducerDirective["beats"],
+    beats: cappedBeats as ProducerDirective["beats"],
     showState: typeof parsed.showState === "string" ? parsed.showState : ""
   };
 }

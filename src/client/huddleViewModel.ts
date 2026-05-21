@@ -783,6 +783,10 @@ function stripMarkdown(text: string) {
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/\*(.*?)\*/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
+    // Drop Inworld delivery tags ([deadpan], [skeptical], etc.) so
+    // the host-turn cards on the recap don't show them as visible
+    // text. Server keeps them on line.text for the Inworld TTS path.
+    .replace(/\[[a-zA-Z][a-zA-Z_\s,]{0,40}\]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }

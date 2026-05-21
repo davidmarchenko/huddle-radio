@@ -53,7 +53,7 @@ import { claimShowLeadership, newTabId, watchForLeadershipChange } from "./showL
 import { clearLivecastSnapshot, loadLivecastSnapshot, saveLivecastSnapshot } from "./livecastSnapshot";
 import { DebugPanel } from "./DebugPanel";
 import { LinkPreview } from "./LinkPreview";
-import { FloatingMentionChips, LiveTranscriptPanel, PlayerBarCaptions } from "./LiveTranscriptPanel";
+import { FloatingMentionChips, LiveTranscriptPanel, PlayerBarCaptions, stripAudioTagsForDisplay } from "./LiveTranscriptPanel";
 import { MarketPreview } from "./MarketPreview";
 import { useDiscoverySignals, useGameSignals } from "./useDiscoverySignals";
 import type { DiscoverySignal } from "../server/discoverySignals";
@@ -114,23 +114,6 @@ const defaultGroup: GroupSettings = {
   tone: "pg",
   homeTeamBias: "balanced",
   friends: []
-};
-
-/**
- * Group seed for the "Listen to a sample" / "Try the demo as me"
- * CTAs. Carries the Alex-as-listener persona that ships in
- * demoLeagueState so the sample show actually has a roster/friends
- * for the hosts to talk about. Only loaded when the user explicitly
- * opts into the demo experience.
- */
-const demoGroupSeed: GroupSettings = {
-  listener: { name: "Alex", rosterId: "roster-alex", favoriteTeam: "KC" },
-  tone: "pg",
-  homeTeamBias: "fantasy-first",
-  friends: [
-    { id: "alex", name: "Alex", favoriteTeam: "KC", rosterId: "roster-alex", rivalryNotes: "you are one Kelce catch away from unbearable confidence" },
-    { id: "maya", name: "Maya", favoriteTeam: "DET", rosterId: "roster-maya", rivalryNotes: "do not pretend you were calm during that drive" }
-  ]
 };
 
 // Profile + multi-sport identity primitives live in profileMemory so the
@@ -438,6 +421,21 @@ function App() {
   // TTS doesn't bloat memory — only commentaries with actual audio
   // bytes get stored.
   const clipChunksRef = useRef<Map<string, { mimeType: string; chunks: string[] }>>(new Map());
+  // Per-commentary id: number of lines we've already spoken via mock
+  // TTS (browser speechSynthesis). Streaming-opener pushes the same
+  // commentary id multiple times with cumulative lines; we only want
+  // to speak the NEW lines on each push, otherwise utterances stack
+  // up overlapping in the browser's speech queue and the listener
+  // hears the opener mashed up. Used only on the mock path; the real
+  // TTS providers (ElevenLabs/Inworld) ship audio chunks directly.
+  const linesSpokenRef = useRef<Map<string, number>>(new Map());
+  // Per-commentary id: whether we've ever registered this id in the
+  // "pending audio" pip state. Streaming-opener cumulative pushes
+  // would otherwise race with audio-chunk arrivals (add → remove →
+  // re-add → remove → ...) and the recording pip would flicker.
+  // First sighting is the only sighting that matters; the chunk
+  // arrival clears the pip the same way it always did.
+  const commentaryEverSeenRef = useRef<Set<string>>(new Set());
   const frameTimerRef = useRef<number | undefined>(undefined);
   const livecastSessionRef = useRef(0);
   // Count of transient-error reconnect attempts for the CURRENT user
@@ -1453,7 +1451,23 @@ function App() {
         // and pushes the paused-on line off the array, which leaves
         // PlayerBarCaptions with no match for `activePlayback` or
         // `playedLineKeys` → returns null → bar collapses.
-        setCommentary((current) => [message.commentary, ...current].slice(0, 50));
+        // Streaming opener path can emit multiple commentary events
+        // for the same `id` as lines arrive — each carries the
+        // cumulative lines array so far. Dedupe by id: replace in
+        // place when we already have this commentary, otherwise
+        // prepend as before. Without this, the streaming opener would
+        // bloat the array with partial copies and ScreenTranscript
+        // would `.find()` the partial one (most recently prepended)
+        // and miss the later, complete state.
+        setCommentary((current) => {
+          const existing = current.findIndex((c) => c.id === message.commentary.id);
+          if (existing >= 0) {
+            const next = current.slice();
+            next[existing] = message.commentary;
+            return next;
+          }
+          return [message.commentary, ...current].slice(0, 50);
+        });
         // Mark this commentary as audio-pending so the card shows a
         // "recording" indicator until the first TTS chunk lands.
         // T2D buffers the whole MP3 before delivery (~2-5s), and
@@ -1461,26 +1475,48 @@ function App() {
         // if the show froze.
         if (ttsEnabled && !usingMockTts) {
           const commId = message.commentary.id;
-          setPendingAudioCommentaryIds((prev) => {
-            if (prev.has(commId)) return prev;
-            const next = new Set(prev);
-            next.add(commId);
-            return next;
-          });
+          if (!commentaryEverSeenRef.current.has(commId)) {
+            commentaryEverSeenRef.current.add(commId);
+            setPendingAudioCommentaryIds((prev) => {
+              if (prev.has(commId)) return prev;
+              const next = new Set(prev);
+              next.add(commId);
+              return next;
+            });
+          }
         }
         if (ttsEnabled && usingMockTts && "speechSynthesis" in window) {
-          const utterance = new SpeechSynthesisUtterance(message.commentary.text);
-          utterance.rate = speechRate;
-          utterance.onstart = () => {
-            if (livecastSessionRef.current === sessionId) setAudioPlaying(true);
-          };
-          utterance.onend = () => {
-            if (livecastSessionRef.current === sessionId) setAudioPlaying(false);
-          };
-          utterance.onerror = () => {
-            if (livecastSessionRef.current === sessionId) setAudioPlaying(false);
-          };
-          window.speechSynthesis.speak(utterance);
+          // Delta-only mock-TTS speak. The streaming opener pushes
+          // commentary multiple times with cumulative lines (line 1,
+          // [line 1, line 2], [line 1, 2, 3], final). Speaking the
+          // full `commentary.text` on every push would stack four
+          // overlapping utterances. Track lines-already-spoken per
+          // id and speak only the new tail. Non-streaming pushes have
+          // linesSpoken=0 → speak full text exactly once.
+          const commId = message.commentary.id;
+          const lines = message.commentary.lines ?? [];
+          const previouslySpoken = linesSpokenRef.current.get(commId) ?? 0;
+          const newLines = lines.slice(previouslySpoken);
+          if (newLines.length > 0) {
+            // Strip audio tags before sending to browser speechSynthesis —
+            // otherwise the browser literally pronounces "deadpan",
+            // "skeptical", etc. Server keeps the tags in line.text so
+            // Inworld can interpret them on the real-TTS path.
+            const deltaText = newLines.map((line) => stripAudioTagsForDisplay(line.text)).join(" ");
+            const utterance = new SpeechSynthesisUtterance(deltaText);
+            utterance.rate = speechRate;
+            utterance.onstart = () => {
+              if (livecastSessionRef.current === sessionId) setAudioPlaying(true);
+            };
+            utterance.onend = () => {
+              if (livecastSessionRef.current === sessionId) setAudioPlaying(false);
+            };
+            utterance.onerror = () => {
+              if (livecastSessionRef.current === sessionId) setAudioPlaying(false);
+            };
+            window.speechSynthesis.speak(utterance);
+            linesSpokenRef.current.set(commId, lines.length);
+          }
         }
       }
       if (message.type === "observation") setLastObservation(message.observation);
@@ -2527,19 +2563,12 @@ function App() {
    * a new show) still go straight here.
    */
   const pickAndStartLivecast = (gameId: string) => {
-    // "Listen to a sample" is the listener's explicit opt-in to the
-    // demo experience — populate the demo group seed (Alex listener,
-    // Alex/Maya friends, KC favorite team) at this moment so the
-    // sample show has a real roster + friends for the hosts to talk
-    // about. Without this, defaultGroup is anonymous (by design — no
-    // demo content leaks into REAL game shows), and the sample
-    // would play without listener-roster context.
-    //
-    // Skip if the listener already has a profile — they've chosen
-    // an identity (or are mid-flow), don't clobber it.
-    if (gameId.startsWith("demo-") && !profile) {
-      setGroup(demoGroupSeed);
-    }
+    // Picking a game without a real profile = anonymous broadcast.
+    // The hosts call the game like SportsCenter rather than addressing
+    // a fabricated persona the listener never asked for. The previous
+    // version of this code path silently injected an Alex/Chiefs demo
+    // profile for demo-* games; we removed it. Anyone who wants
+    // personalized commentary needs to set up a real profile.
     pickGameForPreview(gameId);
     startLivecast({ sportsGameId: gameId, bypassReadiness: true });
   };
@@ -6846,12 +6875,18 @@ function HuddlePlayerBar({
               >
                 <motion.div
                   className="mini-host-stack"
-                  layout
-                  // Also pulse during the opening warmup so the bar
-                  // visibly breathes while the LLM cooks — without
-                  // it, the gap between sting end (~1.2s) and first
-                  // TTS audio (~18s) reads as dead air even with the
-                  // rotating status text.
+                  // Intentionally NO `layout` prop. The stack's own
+                  // size is fixed (3 small avatars with -0.4rem overlap)
+                  // and the only animation we want is the CSS
+                  // `transform: scale(var(--host-pulse))` driven by
+                  // audio amplitude. With `layout`, Motion was tracking
+                  // the parent .player-show's text-width changes (the
+                  // 2.5s warmup cycle resizes the status text) and
+                  // sliding the host stack sideways to "follow" the
+                  // re-flow — visible to the listener as a distracting
+                  // resize during the loading state. Pinning a min-width
+                  // on .player-show-meta + removing this layout prop
+                  // keeps the squircles still.
                   data-pulsing={(audioPlaying && !isPaused) || inOpeningWarmup ? "true" : "false"}
                   style={{ ["--host-pulse" as string]: pulseScale.toFixed(3) }}
                 >
@@ -7034,7 +7069,7 @@ function HostTurns({ turns, compact = false }: { turns: HuddleHostTurn[]; compac
                   <strong className="host-turn-line-speaker" data-accent={line.host.accent}>
                     {line.host.name}:
                   </strong>{" "}
-                  {line.text}
+                  {stripAudioTagsForDisplay(line.text)}
                 </p>
               ))
             ) : (
@@ -8711,6 +8746,23 @@ function getOrCreateListenerId(): string {
  */
 function normalizeGroupSettings(group?: GroupSettings): GroupSettings {
   if (!group || !Array.isArray(group.friends)) return defaultGroup;
+  // Migration: prior versions seeded the persisted state with a hard-
+  // coded Alex/Chiefs/Storm-Surge demo profile, which then leaked into
+  // every show as "you're a Chiefs fan" / "your guy Kelce." If the
+  // persisted shape EXACTLY matches that old default (listener name
+  // "Alex" + rosterId "roster-alex" + favoriteTeam "KC" + the two
+  // canonical demo friends), treat it as a stale default and snap to
+  // the new anonymous default. Real user-customized profiles miss at
+  // least one of those signals and pass through untouched.
+  const isStaleDemoDefault =
+    group.listener?.name === "Alex" &&
+    group.listener?.rosterId === "roster-alex" &&
+    group.listener?.favoriteTeam === "KC" &&
+    group.friends.length === 2 &&
+    group.friends.every((f) => f.rosterId === "roster-alex" || f.rosterId === "roster-maya") &&
+    group.friends.some((f) => f.id === "alex") &&
+    group.friends.some((f) => f.id === "maya");
+  if (isStaleDemoDefault) return defaultGroup;
   return {
     listener: group.listener ?? defaultGroup.listener,
     tone: group.tone ?? defaultGroup.tone,

@@ -615,7 +615,24 @@ export type TTSAudioChunk = {
 export type ClientServerEvent =
   | { type: "snapshot"; fantasy: FantasyLeagueState; game: SportsGameState; health: ProviderHealth[]; providers: ActiveProviderSummary }
   | { type: "play"; play: SportsPlay; game: SportsGameState }
-  | { type: "commentary"; commentary: LivecastCommentary }
+  | {
+      type: "commentary";
+      commentary: LivecastCommentary;
+      /** Set true on the in-stream cumulative pushes the streaming
+       *  opener path emits; omitted (treated as false) on the final
+       *  push and on every push from the non-streaming draft() path.
+       *
+       *  The client uses this to:
+       *    1. Avoid firing mock-TTS speechSynthesis for a turn that's
+       *       still growing — otherwise the browser stacks overlapping
+       *       utterances with progressively-longer text and the
+       *       listener hears the opener mashed up.
+       *    2. Skip re-adding the "recording pip" pending state after
+       *       the first audio chunk has already cleared it.
+       *  Non-streaming and post-stream final pushes omit it so existing
+       *  consumers see the same shape they did before streaming. */
+      partial?: boolean;
+    }
   | { type: "observation"; observation: VideoObservation }
   | { type: "tts"; audio: TTSAudioChunk }
   | { type: "health"; health: ProviderHealth[] }
@@ -842,7 +859,19 @@ export interface TTSProvider {
    * route to a per-host voice when configured; providers that don't
    * support per-host voices ignore it.
    */
-  synthesize(input: { commentaryId: string; text: string; hostId?: HostId }): AsyncIterable<TTSAudioChunk>;
+  synthesize(input: {
+    commentaryId: string;
+    text: string;
+    hostId?: HostId;
+    /** Optional cancel signal. When the engine times out a per-line
+     *  synth (streaming opener) or stops the show mid-flight, it
+     *  aborts this signal so the underlying WebSocket / fetch closes
+     *  promptly instead of leaking until the iterator naturally
+     *  finishes. Providers SHOULD honor it but are not required to —
+     *  unsupported providers ignore the field, fall back to natural
+     *  iterator-drain behavior. */
+    signal?: AbortSignal;
+  }): AsyncIterable<TTSAudioChunk>;
   /**
    * Optional purpose-built multi-speaker generation. When implemented,
    * the engine sends ALL turns in a single call and gets back one

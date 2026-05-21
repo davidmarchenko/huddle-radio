@@ -364,6 +364,13 @@ export function buildDirectivePlaySystemPrompt(persona: HostPersona): string {
     "",
     "Direct address controls handoff: if you name a host at the END of your turn, the very next turn MUST be from that host. If you don't want to force a handoff, address the room or the listener instead.",
     "",
+    "ANONYMOUS BROADCAST MODE — fires when listener.name is empty/null AND listener.starters is empty AND friends is empty.",
+    "- NEVER address the listener. No 'you,' no 'your team,' no 'your guys.' Talk about the game, not the listener.",
+    "- NEVER reference fantasy. No 'lineup,' no 'roster,' no 'your week.' The listener didn't tell you they play fantasy.",
+    "- NEVER assume team allegiance.",
+    "- Treat the show as a televised broadcast: players, scores, momentum, takes about the game itself. SportsCenter, not personalized radio.",
+    "- If a producer beat is sourceKind='listener' in this mode, treat it as a general broadcast moment instead (the producer doesn't know the listener is anonymous; the prompt overrides).",
+    "",
     "Hard rules (voice / safety only — the producer handles signal selection):",
     ...VOICE_ONLY_RULES,
     "",
@@ -483,16 +490,26 @@ export function buildDirectiveOpenerSystemPrompt(persona: HostPersona): string {
     "- The directive replaces the old per-field rules: there is NO odds / markets / news / analytics / listenerCues / pickContext fields in the payload. Anchor only on what the directive gives you + the listener block.",
     "",
     "Opener-specific guidance:",
-    "- Avoid 'welcome back, folks,' 'welcome to the show,' or any canned radio open. Open on a take, a tease, or a warm but specific address.",
-    "- If `slate` is in the payload, the show is in DISCOVERY mode — think SportsCenter, NOT single-game booth. The frame is 'here's what's happening across the league tonight,' not 'here's the matchup we're locked into.' Lead with breadth: how many games, which of YOUR guys are live in the same window, the headline storyline of the night. Hosts can name 2-3 players across 2-3 different games — that's the point of SportsCenter vibes. AVOID the single-matchup voice (no 'KC at DET tonight'); the listener hasn't picked a game yet. `slate.totalGames` / `slate.starterGames` / `slate.upcomingHighlights` are the editorial inputs. Tone: punchy headline sequence over deep matchup take. When `slate` is absent, the show is single-game and the opener anchors on the matchup as usual.",
-    "- DISCOVERY/SLATE EXAMPLE (when slate is present):",
-    "    Theo: 'Eight games tonight, Marc. Your guys — Mahomes, Brown, McCaffrey — three different windows.'",
-    "    Maya: '[deadpan] McCaffrey's the floor. Brown's the spike. Mahomes is the wild card.'",
-    "    Cam: 'Wilson goes for thirty again. Lock it in.'",
-    "  Notice: three players across three games in three turns. No deep matchup take, no single-game anchor. SportsCenter, not booth.",
-    "- Mention the listener's name AT MOST ONCE across the whole open. After that first mention, address as 'you' / 'your team.' If `listener.name` is empty, never invent a name — address as 'you' / 'tonight's listener.'",
-    "- Reference the listener's actual starters (`listener.starters`) when a beat anchors on the lineup. Never invent players or numbers.",
-    "- Each turn 30-60 words. Total open ~45-60 seconds of audio. ONE audio tag across the whole open if it lands (e.g., a `[laughs]` or `[deadpan]`).",
+    "- Avoid 'welcome back, folks,' 'welcome to the show,' or any canned radio open. Open on a take, a tease, or a specific play call.",
+    "- ANONYMOUS BROADCAST MODE — fires when listener.name is empty/null AND listener.starters is empty AND friends is empty. The listener gave no profile data, so the show is PURE SPORTSCENTER. Hard rules in this mode:",
+    "  * NEVER address the listener directly. No 'you,' no 'your team,' no 'your guys,' no 'your week,' no 'tonight's listener.' Call the game like a televised broadcast, not a personalized radio show.",
+    "  * NEVER reference fantasy, fantasy stakes, lineups, rosters, friends, or any 'you've got X starting' framing. The listener didn't tell you they play fantasy. Don't assume.",
+    "  * NEVER assume team allegiance. No 'you're a X fan' — listener.favoriteTeam is empty by definition in this mode.",
+    "  * DO talk about: the players in the game, the score, the storyline, recent action, what's coming up. Like Scott Van Pelt opening the 11 PM SportsCenter — names, plays, energy, takes.",
+    "  * Example anonymous opener (single-game): Theo: 'Chiefs and Lions, Sunday night.' / Maya: 'Mahomes is six-for-eight, eighty yards.' / Cam: 'Goff's gonna get exposed by halftime.' Three turns, total ~6 seconds, no listener address, all signal.",
+    "  * Example anonymous opener (slate/discovery): Theo: 'Eight games tonight.' / Maya: 'Three primetime windows. Mahomes opens.' / Cam: 'Lions, Bills, Eagles — all live by nine.' Same shape: no 'you,' no fantasy, pure SportsCenter.",
+    "- PERSONALIZED MODE — fires when listener.character is non-null OR listener.starters has entries. The hosts CAN address the listener and reference fantasy:",
+    "  * Mention the listener's name AT MOST ONCE across the whole open. After that, address as 'you' / 'your team.'",
+    "  * Reference the listener's actual starters (`listener.starters`) when a beat anchors on the lineup. Never invent players or numbers.",
+    "  * If `slate` is in the payload, this is DISCOVERY mode — name 2-3 of the listener's starters across 2-3 different games. Breadth, not depth.",
+    "  * SLATE EXAMPLE (personalized): Theo: 'Eight games tonight, Marc. Your guys — Mahomes, Brown, McCaffrey — three different windows.' / Maya: '[deadpan] McCaffrey's the floor. Brown's the spike. Mahomes is the wild card.' / Cam: 'Wilson goes for thirty again. Lock it in.'",
+    "- CADENCE — applies to both modes:",
+    "  * Cap the opener at 3 TURNS. No four-turn openers. The first 6-10 seconds either hook the listener or lose them.",
+    "  * Each turn 8-20 words. Short. Punchy. Headline cadence.",
+    "  * Banned vague framings: 'big slate,' 'primetime windows,' 'headache or a gift,' 'shapes your lineups,' 'quick read on.' SportsCenter never says these.",
+    "  * Handoffs are SHORT: 'Maya?' beats 'Maya, what's the quick read on how the schedule shapes your lineups tonight?' Long handoffs kill momentum.",
+    "  * First turn MUST name a specific player or team that's in the actual game/slate — no abstract framing as the open.",
+    "  * ONE audio tag across the whole open if it lands (e.g., `[deadpan]`).",
     "",
     "How this room actually sounds:",
     "",
@@ -595,6 +612,13 @@ export function buildOpenerSystemPrompt(persona: HostPersona): string {
     "",
     "Each turn 30-60 words. Total open ~45-60 seconds of audio. Use ONE audio tag across the whole open if it lands (e.g., the third host with `[excited]` for the handoff).",
     "",
+    "ANONYMOUS BROADCAST MODE — fires when listener.name is empty/null AND listener.starters is empty AND friends is empty. The listener gave NO profile data, so:",
+    "- NEVER address the listener directly. No 'you,' 'your team,' 'your guys,' 'your lineup.' This is a televised broadcast, not personalized radio.",
+    "- NEVER reference fantasy at all. No 'ceiling night for the trio,' no 'your starters,' no fantasy team name. The listener didn't tell you they play fantasy.",
+    "- NEVER assume team allegiance.",
+    "- Talk about the actual game: players in the matchup, score, momentum, storyline. SportsCenter cold-open, not 'tonight on Huddle Radio.'",
+    "- Cap the open at 3 SHORT turns. Each turn 8-20 words. No 'welcome.'",
+    "",
     "Hard rules:",
     ...SHARED_HARD_RULES,
     "",
@@ -617,6 +641,12 @@ export function buildPlaySystemPrompt(persona: HostPersona): string {
     "  • interrupt: 3 turns with the highest energy in this format. Use `[jumping in]` on at least one turn — the crew genuinely talks over each other here. 2-3 audio tags total. Still dry-witty, never cartoonish.",
     "",
     "Turn length: vary it. Longer beats (30-60 words) for takes and explanations; short beats (5-20 words) for reactions, callbacks, and one-liners. At least one short reactive turn when there are ≥2 turns. Total audio ~10-30 seconds. Use the asker/explainer/reactor pattern — if the lead opens with a hot take, the next turn might be 'no, that's not it.'",
+    "",
+    "ANONYMOUS BROADCAST MODE — fires when listener.name is empty/null AND listener.starters is empty AND friends is empty. The listener gave NO profile data:",
+    "- NEVER address the listener. No 'you,' 'your team,' 'your guys.' Talk about the game, not the listener.",
+    "- NEVER reference fantasy. No 'lineup,' 'roster,' 'ceiling for the trio.' Listener didn't tell you they play fantasy.",
+    "- NEVER assume team allegiance.",
+    "- Pure play-call mode: what happened, what it means, what's next. SportsCenter texture.",
     "",
     "Hard rules:",
     ...SHARED_HARD_RULES,
@@ -841,6 +871,85 @@ export function detectMarketSwings(
   return best;
 }
 
+/**
+ * Match a steering / non-verbal audio tag — a square-bracketed,
+ * letter-led, short phrase. Examples: [deadpan], [skeptical],
+ * [chuckles softly], [exhales], [laugh, breathy].
+ *
+ * Deliberately strict: the first character inside the brackets must be
+ * a letter (excludes stat brackets like [Q2], [+2.1], [22%], [#3]) and
+ * the body is letters/spaces/commas only (excludes time codes, hashes,
+ * etc.). Long-form brackets — over 40 chars inside — are also excluded:
+ * we don't want to eat a legitimate stat callout the model happened to
+ * wrap in square brackets.
+ *
+ * Shared by `normalizeDeliveryTags` (server, places tags correctly for
+ * Inworld) and `stripDeliveryTags` (client, removes them for display).
+ */
+const DELIVERY_TAG_PATTERN = /\[[a-zA-Z][a-zA-Z_\s,]{0,40}\]/g;
+
+/**
+ * Normalize all `[delivery tag]` instances in a turn's text to a SINGLE
+ * combined tag at the FRONT of the turn — which is the only placement
+ * Inworld TTS-2 reliably interprets for steering tags. Mid-sentence
+ * steering tags get spoken literally; combined-at-front tags are
+ * interpreted as expressive direction.
+ *
+ * Examples:
+ *   "Six targets [deadpan] through three quarters."
+ *      → "[deadpan] Six targets through three quarters."
+ *   "[deadpan] [skeptical] Wait, what?"
+ *      → "[deadpan, skeptical] Wait, what?"
+ *   "Through three. [exhales]"
+ *      → "[exhales] Through three."
+ *
+ * Per Inworld's docs, comma-separated tag combinations
+ * ("[deadpan, slow]") are valid natural-language steering. No-op
+ * (returns the input verbatim) when the text contains no tags.
+ *
+ * Refs:
+ *  - https://docs.inworld.ai/tts/best-practices/prompting-for-tts
+ *  - https://docs.inworld.ai/tts/capabilities/generating-audio
+ */
+export function normalizeDeliveryTags(text: string): string {
+  const tags: string[] = [];
+  const stripped = text
+    .replace(DELIVERY_TAG_PATTERN, (match) => {
+      const inner = match.slice(1, -1).trim();
+      if (inner) tags.push(inner);
+      return "";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+  if (tags.length === 0) return text;
+  // Dedupe — a model that emits "[deadpan] Yeah. [deadpan] no." doesn't
+  // need both. Preserve first-seen order; comma-join for Inworld's
+  // natural-language steering.
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const t of tags) {
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(t);
+  }
+  // Trim handles the all-tags-no-content edge case: "[deadpan]" alone
+  // → tags=["deadpan"], stripped="" → "[deadpan] " with trailing space.
+  return `[${unique.join(", ")}] ${stripped}`.trim();
+}
+
+/**
+ * Remove all `[delivery tag]` instances from text. Used on the CLIENT
+ * for transcript display so listeners don't see `[deadpan]` as visible
+ * text on the spotlight card — and used in mock-TTS speech synthesis
+ * so the browser doesn't speak "deadpan" aloud. The server keeps the
+ * tags in `DialogueLine.text` so Inworld's audio interpretation still
+ * fires.
+ */
+export function stripDeliveryTags(text: string): string {
+  return text.replace(DELIVERY_TAG_PATTERN, "").replace(/\s+/g, " ").trim();
+}
+
 export function sanitizeCommentary(text: string, fallbackText: string): string {
   // Catch credential-shaped phrases in any reasonable spelling so a
   // jailbroken model echoing the system prompt can't leak the key:
@@ -1022,9 +1131,18 @@ function coerceSingleTurn(speakerRaw: unknown, textRaw: string, leadHostId: Host
   const speaker = typeof speakerRaw === "string" && VALID_HOST_IDS.has(speakerRaw as HostId)
     ? (speakerRaw as HostId)
     : leadHostId;
+  // Hoist any delivery tags ([deadpan], [skeptical], [chuckles softly])
+  // to the start of the turn — Inworld TTS-2 only interprets steering
+  // tags reliably when they lead the utterance. Tags scattered mid-
+  // sentence get spoken literally ("deadpan six targets..."), which
+  // is the exact bug the user flagged. We KEEP the tags in the
+  // resulting line.text so Inworld still gets the expressive cue;
+  // the client strips them at display time so the transcript card
+  // doesn't show "[deadpan]" visibly.
+  const normalized = normalizeDeliveryTags(text);
   // Cap at 600 chars: at 25-50 words/turn this gives generous headroom
   // but stops a runaway model from generating a 90-second monologue.
-  return { hostId: speaker, text: text.slice(0, 600) };
+  return { hostId: speaker, text: normalized.slice(0, 600) };
 }
 
 /**
@@ -1036,7 +1154,12 @@ function coerceSingleTurn(speakerRaw: unknown, textRaw: string, leadHostId: Host
  * renderer filters them per-token at display time; this strips them
  * everywhere the joined string flows.
  */
-const AUDIO_TAG_PATTERN = /\[[a-z_][a-z_\s]*\]/gi;
+// Same shape as DELIVERY_TAG_PATTERN above — accept underscores AND
+// commas (so combined tags like [deadpan, skeptical] from
+// normalizeDeliveryTags get stripped here too). Kept as a separate
+// const since this one uses /g for replace-all while DELIVERY_TAG_PATTERN
+// is shared between replace + test.
+const AUDIO_TAG_PATTERN = /\[[a-zA-Z][a-zA-Z_\s,]{0,40}\]/g;
 export function joinDialogueLines(lines: DialogueLine[]): string {
   return lines
     .map((line) => line.text.replace(AUDIO_TAG_PATTERN, "").replace(/\s+/g, " ").trim())

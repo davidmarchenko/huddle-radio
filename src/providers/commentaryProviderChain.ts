@@ -44,6 +44,48 @@ export class CommentaryProviderChain implements CommentaryProvider {
     return this._lastTurnErrors;
   }
 
+  /**
+   * Streaming variant — delegates to the first provider in the chain
+   * that implements draftStream. We do NOT cascade through providers
+   * mid-stream (you can't unstream lines you already emitted); on
+   * stream-side failure the caller is expected to fall back to
+   * `draft()` which DOES cascade.
+   *
+   * Yields nothing when no provider exposes draftStream — the engine
+   * treats "stream produced zero lines" as the fallback signal.
+   */
+  async *draftStream(
+    input: CommentaryDraftInput,
+    options?: { signal?: AbortSignal }
+  ): AsyncIterable<DialogueLine> {
+    // Reset per-turn error tracking to match draft() semantics —
+    // without this, the engine's openerSummary.errorReason picks up
+    // stale errors from a previous draft() call.
+    this._lastTurnErrors = [];
+    const streamer = this.providers.find((p) => typeof p.draftStream === "function");
+    if (!streamer || !streamer.draftStream) return;
+    try {
+      let yielded = 0;
+      for await (const line of streamer.draftStream(input, options)) {
+        yielded += 1;
+        yield line;
+      }
+      if (yielded > 0) this._lastProviderId = streamer.id;
+    } catch (error) {
+      // Listener-initiated abort isn't a provider failure — don't
+      // bump the fallback counter or log a synthetic
+      // "commentary.chain.fallback" event for it. Operators chasing
+      // those logs would see noise from every disconnect mid-opener.
+      const isAbort =
+        options?.signal?.aborted ||
+        (error instanceof Error && (error.name === "AbortError" || /abort/i.test(error.message)));
+      if (!isAbort) {
+        this.recordFallback(streamer.id, error);
+      }
+      throw error;
+    }
+  }
+
   async draft(input: CommentaryDraftInput): Promise<DialogueLine[]> {
     this._lastTurnErrors = [];
     let lastError: unknown;

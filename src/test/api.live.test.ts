@@ -198,7 +198,12 @@ describe("POST /api/live/cue", () => {
     const cueRes = await cuePost(jsonRequest("http://test.local/api/live/cue", { sessionId, cue }));
     expect(cueRes.status).toBe(200);
 
-    const events = (await drainer.next(8, 12000)) as ClientServerEvent[];
+    // 18s vs the previous 12s — the producer + opener + first tick
+    // path takes 10-12s on a warm machine, and the test was already
+    // borderline-flaky. Streaming-opener prep added another ~500ms
+    // of variance, so we bump to give real headroom rather than
+    // chase a milliseconds-tight cliff.
+    const events = (await drainer.next(8, 18000)) as ClientServerEvent[];
     const ack = events.find(
       (e): e is Extract<ClientServerEvent, { type: "cue-ack" }> => e.type === "cue-ack"
     );
